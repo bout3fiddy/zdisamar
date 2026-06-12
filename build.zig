@@ -80,6 +80,32 @@ fn addTestStep(
     return run_tests;
 }
 
+fn addReferenceDataSync(b: *std.Build, sync_files: *std.Build.Step.UpdateSourceFiles) void {
+    // addReferenceDataSync --------------------------------------------------------------------------------- |
+    // Copy package reference-data assets into the ignored source-checkout resource tree used by Python.      |
+    // -------------------------------------------------------------------------------------------------------|
+    var data_dir = std.fs.cwd().openDir("data/reference_data", .{ .iterate = true }) catch |err| {
+        std.debug.panic("open data/reference_data: {s}", .{@errorName(err)});
+    };
+    defer data_dir.close();
+
+    var walker = data_dir.walk(b.allocator) catch |err| {
+        std.debug.panic("walk data/reference_data: {s}", .{@errorName(err)});
+    };
+    defer walker.deinit();
+
+    while (walker.next() catch |err| {
+        std.debug.panic("walk next data/reference_data: {s}", .{@errorName(err)});
+    }) |entry| {
+        if (entry.kind != .file) continue;
+
+        sync_files.addCopyFileToSource(
+            b.path(b.fmt("data/reference_data/{s}", .{entry.path})),
+            b.fmt("python/zdisamar/reference_data/assets/{s}", .{entry.path}),
+        );
+    }
+}
+
 pub fn build(b: *std.Build) void {
     // build ------------------------------------------------------------------------------------------------ |
     // Define the explicit-dataflow library, unit-test roots, focused WP3 gates, and fast local checks.       |
@@ -193,9 +219,10 @@ pub fn build(b: *std.Build) void {
         c_api_lib.getEmittedBin(),
         b.fmt("python/zdisamar/bindings/{s}", .{c_api_lib.out_filename}),
     );
+    addReferenceDataSync(b, sync_python_package_files);
     const sync_python_package_step = b.step(
         "sync-python-package",
-        "Build and sync the native C API library into the Python package",
+        "Build and sync native C API and reference data into the Python package",
     );
     sync_python_package_step.dependOn(&sync_python_package_files.step);
 
