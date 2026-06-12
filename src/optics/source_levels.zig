@@ -85,14 +85,40 @@ pub fn fillSourceLevelsAtWavelength(
 
         const aerosol_above_index = aerosolAboveSupportRowIndex(layer_grid, level_index);
         const aerosol_below_index = aerosolBelowSupportRowIndex(layer_grid, level_index);
+
         const gas_scattering_per_km =
             rayleigh_sigma_cm2 *
             layer_grid.support_air_number_densities_cm3[boundary_support_index] *
             1.0e5;
-        const aerosol_above_per_km = aerosolScatteringPerKm(support_rows, aerosol_above_index);
-        const aerosol_below_per_km = aerosolScatteringPerKm(support_rows, aerosol_below_index);
+
+        const has_aerosol_above_support =
+            aerosol_above_index != invalid_support_row_index and aerosol_above_index < support_rows.len;
+        const has_aerosol_below_support =
+            aerosol_below_index != invalid_support_row_index and aerosol_below_index < support_rows.len;
+
+        const aerosol_above_per_km =
+            if (has_aerosol_above_support)
+                support_rows[aerosol_above_index].aerosol_scattering_optical_depth_per_km
+            else
+                0.0;
+        const aerosol_below_per_km =
+            if (has_aerosol_below_support)
+                support_rows[aerosol_below_index].aerosol_scattering_optical_depth_per_km
+            else
+                0.0;
+
         const source_aerosol_per_km = aerosol_above_per_km;
         const total_scattering_per_km = gas_scattering_per_km + source_aerosol_per_km;
+
+        const phase_aerosol_weight, const phase_rayleigh2_weight = phase_weights: {
+            if (total_scattering_per_km <= 0.0) break :phase_weights .{ 0.0, rayleigh_phase2 };
+
+            const inv_total = 1.0 / total_scattering_per_km;
+            break :phase_weights .{
+                source_aerosol_per_km * inv_total,
+                gas_scattering_per_km * inv_total * rayleigh_phase2,
+            };
+        };
 
         level.* = .{
             .altitude_km = layer_grid.support_mid_altitudes_km[boundary_support_index],
@@ -101,12 +127,8 @@ pub fn fillSourceLevelsAtWavelength(
             .aerosol_ksca_above_per_km = aerosol_above_per_km,
             .aerosol_ksca_below_per_km = aerosol_below_per_km,
             .aerosol_ksca_jacobian = 0.0,
-            .phase_aerosol_weight = phaseAerosolWeight(gas_scattering_per_km, source_aerosol_per_km),
-            .phase_rayleigh2_weight = phaseRayleigh2Weight(
-                rayleigh_phase2,
-                gas_scattering_per_km,
-                source_aerosol_per_km,
-            ),
+            .phase_aerosol_weight = phase_aerosol_weight,
+            .phase_rayleigh2_weight = phase_rayleigh2_weight,
         };
     }
 
@@ -151,21 +173,6 @@ fn aerosolBelowSupportRowIndex(layer_grid: atmosphere_layers.LayerGrid, level_in
     const count: usize = @intCast(layer_grid.layer_support_counts[below_layer]);
     if (count <= 2) return invalid_support_row_index;
     return start + count - 2;
-}
-
-fn aerosolScatteringPerKm(
-    support_rows: []const layer_depths.SupportOptics,
-    support_index: usize,
-) f64 {
-    // aerosolScatteringPerKm ---------------------------------------------------------------------------------|
-    // Convert an active support-row aerosol scattering optical depth back to a per-km carrier.                |
-    // --------------------------------------------------------------------------------------------------------|
-    if (support_index == invalid_support_row_index or support_index >= support_rows.len) return 0.0;
-
-    const row = support_rows[support_index];
-    const path_length_km = row.path_length_cm / 1.0e5;
-    if (path_length_km <= 0.0) return 0.0;
-    return row.aerosol_scattering_optical_depth / path_length_km;
 }
 
 fn fillSharedAerosolSourceJacobiansFromLayers(
@@ -249,18 +256,31 @@ fn fillIntervalWeights(
 
         const interior_level_count = interval_stop - interval_start - 1;
         if (interior_level_count > 0) {
+            if (interior_level_count > max_source_interval_nodes) return error.InvalidShape;
+
+            const lower_altitude_km = layer_grid.layer_bottom_altitudes_km[interval_start];
+            const upper_altitude_km = layer_grid.layer_top_altitudes_km[interval_stop - 1];
+            const altitude_span_km = @max(upper_altitude_km - lower_altitude_km, 0.0);
+
+            // main:`state_build/shared_geometry.zig` resolveGaussRule reads retained small rules first.
+            if (interior_level_count <= 10) {
+                const rule = gauss_legendre.rule(@intCast(interior_level_count)) catch return error.InvalidShape;
+                for (0..interior_level_count) |offset| {
+                    out_levels[interval_start + 1 + offset].weight_km =
+                        0.5 * rule.weights[offset] * altitude_span_km;
+                }
+                interval_start = interval_stop;
+                continue;
+            }
+
             var nodes: [max_source_interval_nodes]f64 = undefined;
             var weights: [max_source_interval_nodes]f64 = undefined;
-            if (interior_level_count > nodes.len) return error.InvalidShape;
             gauss_legendre.fillNodesAndWeights(
                 @intCast(interior_level_count),
                 nodes[0..interior_level_count],
                 weights[0..interior_level_count],
             ) catch return error.InvalidShape;
 
-            const lower_altitude_km = layer_grid.layer_bottom_altitudes_km[interval_start];
-            const upper_altitude_km = layer_grid.layer_top_altitudes_km[interval_stop - 1];
-            const altitude_span_km = @max(upper_altitude_km - lower_altitude_km, 0.0);
             for (0..interior_level_count) |offset| {
                 out_levels[interval_start + 1 + offset].weight_km =
                     0.5 * weights[offset] * altitude_span_km;
@@ -269,22 +289,4 @@ fn fillIntervalWeights(
 
         interval_start = interval_stop;
     }
-}
-
-fn phaseAerosolWeight(gas_scattering: f64, aerosol_scattering: f64) f64 {
-    // phaseAerosolWeight -------------------------------------------------------------------------------------|
-    // Return the aerosol fraction of the local source scattering carrier.                                     |
-    // --------------------------------------------------------------------------------------------------------|
-    const total = gas_scattering + aerosol_scattering;
-    if (total <= 0.0) return 0.0;
-    return aerosol_scattering / total;
-}
-
-fn phaseRayleigh2Weight(rayleigh_phase2: f64, gas_scattering: f64, aerosol_scattering: f64) f64 {
-    // phaseRayleigh2Weight -----------------------------------------------------------------------------------|
-    // Return the Rayleigh l=2 coefficient weighted by the gas fraction of source scattering.                  |
-    // --------------------------------------------------------------------------------------------------------|
-    const total = gas_scattering + aerosol_scattering;
-    if (total <= 0.0) return rayleigh_phase2;
-    return gas_scattering / total * rayleigh_phase2;
 }

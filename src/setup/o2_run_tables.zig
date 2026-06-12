@@ -16,16 +16,16 @@ const Allocator = std.mem.Allocator;
 // Package boundary for setup tables below radiance math.                                                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 1904 B (1.859 KiB), align: 8 B                                                                        |
+// size: 1920 B (1.875 KiB), align: 8 B                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
-// [   0.. 383] layers    : LayerGrid                                                                          |
-// [ 384.. 495] lines     : O2LineTable                                                                        |
-// [ 496.. 519] cia       : O2CiaTable                                                                         |
-// [ 520.. 583] aerosol   : AerosolLayerTable                                                                  |
-// [ 584..1807] phase     : PhaseTable                                                                         |
-// [1808..1871] instrument: InstrumentTable                                                                    |
-// [1872..1903] solar     : SolarTable                                                                         |
+// [   0.. 399] layers    : LayerGrid                                                                          |
+// [ 400.. 511] lines     : O2LineTable                                                                        |
+// [ 512.. 535] cia       : O2CiaTable                                                                         |
+// [ 536.. 599] aerosol   : AerosolLayerTable                                                                  |
+// [ 600..1823] phase     : PhaseTable                                                                         |
+// [1824..1887] instrument: InstrumentTable                                                                    |
+// [1888..1919] solar     : SolarTable                                                                         |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   This owner groups table families only for top-level setup/run functions. Later optics/transport code      |

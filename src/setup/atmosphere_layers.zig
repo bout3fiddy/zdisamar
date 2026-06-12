@@ -41,7 +41,7 @@ pub const AtmosphereProfileTable = struct {
 // Computed atmosphere layer and support-row setup arrays.                                                     |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 384 B (0.375 KiB), align: 8 B                                                                         |
+// size: 400 B (0.391 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0.. 15] source_profile                 : AtmosphereProfileTable                                          |
@@ -52,8 +52,8 @@ pub const AtmosphereProfileTable = struct {
 // [ 56.. 63] surface_pressure_hpa           : f64                                                             |
 // [ 64..223] layer f64 arrays               : 10 slice headers                                                |
 // [224..271] layer u32 arrays               : 3 slice headers                                                 |
-// [272..367] support f64 arrays             : 6 slice headers                                                 |
-// [368..383] support u32 arrays             : 1 slice header                                                  |
+// [272..383] support f64 arrays             : 7 slice headers                                                 |
+// [384..399] support u32 arrays             : 1 slice header                                                  |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Every array is owned. source_profile holds the old-route densified climatology used for vertical setup.   |
@@ -85,6 +85,7 @@ pub const LayerGrid = struct {
     support_temperatures_k: []f64,
     support_air_number_densities_cm3: []f64,
     support_o2_number_densities_cm3: []f64,
+    support_path_lengths_km: []f64,
     support_path_lengths_cm: []f64,
     support_interval_indices_1based: []u32,
 
@@ -112,6 +113,7 @@ pub const LayerGrid = struct {
         allocator.free(self.support_temperatures_k);
         allocator.free(self.support_air_number_densities_cm3);
         allocator.free(self.support_o2_number_densities_cm3);
+        allocator.free(self.support_path_lengths_km);
         allocator.free(self.support_path_lengths_cm);
         allocator.free(self.support_interval_indices_1based);
         self.* = undefined;
@@ -504,6 +506,8 @@ fn allocate(
     errdefer allocator.free(support_air_number_densities_cm3);
     const support_o2_number_densities_cm3 = try allocator.alloc(f64, support_count);
     errdefer allocator.free(support_o2_number_densities_cm3);
+    const support_path_lengths_km = try allocator.alloc(f64, support_count);
+    errdefer allocator.free(support_path_lengths_km);
     const support_path_lengths_cm = try allocator.alloc(f64, support_count);
     errdefer allocator.free(support_path_lengths_cm);
     const support_interval_indices_1based = try allocator.alloc(u32, support_count);
@@ -534,6 +538,7 @@ fn allocate(
         .support_temperatures_k = support_temperatures_k,
         .support_air_number_densities_cm3 = support_air_number_densities_cm3,
         .support_o2_number_densities_cm3 = support_o2_number_densities_cm3,
+        .support_path_lengths_km = support_path_lengths_km,
         .support_path_lengths_cm = support_path_lengths_cm,
         .support_interval_indices_1based = support_interval_indices_1based,
     };
@@ -563,7 +568,8 @@ fn fillSupportRow(
     grid.support_temperatures_k[index] = temperature_k;
     grid.support_air_number_densities_cm3[index] = air_density_cm3;
     grid.support_o2_number_densities_cm3[index] = air_density_cm3 * oxygen_volume_mixing_ratio;
-    grid.support_path_lengths_cm[index] = @max(path_length_km, 0.0) * centimeters_per_kilometer;
+    grid.support_path_lengths_km[index] = @max(path_length_km, 0.0);
+    grid.support_path_lengths_cm[index] = grid.support_path_lengths_km[index] * centimeters_per_kilometer;
     grid.support_interval_indices_1based[index] = interval_index_1based;
 }
 
