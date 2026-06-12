@@ -8,6 +8,8 @@ test "O2RunTables match WP1 baseline table evidence" {
     );
     defer tables.deinit(std.testing.allocator);
 
+    try std.testing.expectEqual(@as(usize, 1848), @sizeOf(internal.setup.o2_run_tables.O2RunTables));
+
     try std.testing.expectEqual(@as(usize, 45), tables.layers.layer_pressures_hpa.len);
     try std.testing.expectEqual(@as(usize, 226), tables.layers.support_pressures_hpa.len);
     try std.testing.expectEqual(@as(usize, 45), tables.layers.layer_temperatures_k.len);

@@ -33,6 +33,7 @@ test {
     _ = @import("spectrum/radiance_results_test.zig");
     _ = @import("spectrum/radiance_wavelengths_test.zig");
     _ = @import("spectrum/sampling_table_test.zig");
+    _ = @import("spectrum/solar_lookup_test.zig");
     _ = @import("instrumentation/facades_test.zig");
 }
 
