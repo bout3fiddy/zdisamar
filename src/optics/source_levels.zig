@@ -75,7 +75,7 @@ pub fn fillSourceLevelsAtWavelength(
     }
 
     const rayleigh_sigma_cm2 = rayleigh.crossSectionCm2(wavelength_nm);
-    const rayleigh_phase2 = rayleighPhaseCoefficient2AtWavelength(wavelength_nm);
+    const rayleigh_phase2 = rayleigh.phaseCoefficient2(wavelength_nm);
 
     for (out_levels, 0..) |*level, level_index| {
         const boundary_support_index = boundarySupportRowIndex(layer_grid, level_index);
@@ -238,13 +238,4 @@ fn phaseRayleigh2Weight(rayleigh_phase2: f64, gas_scattering: f64, aerosol_scatt
     const total = gas_scattering + aerosol_scattering;
     if (total <= 0.0) return rayleigh_phase2;
     return gas_scattering / total * rayleigh_phase2;
-}
-
-fn rayleighPhaseCoefficient2AtWavelength(wavelength_nm: f64) f64 {
-    // rayleighPhaseCoefficient2AtWavelength ------------------------------------------------------------------|
-    // Convert wavelength-dependent air depolarization into the Rayleigh l=2 phase coefficient.                |
-    // --------------------------------------------------------------------------------------------------------|
-    const depolarization = rayleigh.depolarizationFactorAir(wavelength_nm);
-    const eps = 45.0 * depolarization / (6.0 - 7.0 * depolarization);
-    return (45.0 + eps) / (90.0 + 20.0 * eps);
 }

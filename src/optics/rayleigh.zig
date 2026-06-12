@@ -21,17 +21,26 @@ const fraction_co2 = 0.036;
 const reference_number_density_cm3 = 2.5468993e19;
 
 fn kingFactorN2(wavelength_nm: f64) f64 {
+    // kingFactorN2 ------------------------------------------------------------------------------------------ |
+    // Return the Bates wavelength-dependent King factor for nitrogen.                                         |
+    // ------------------------------------------------------------------------------------------------------- |
     const sigma_um_inv = 1000.0 / @max(wavelength_nm, 1.0);
     return 1.034 + 3.17e-4 * sigma_um_inv * sigma_um_inv;
 }
 
 fn kingFactorO2(wavelength_nm: f64) f64 {
+    // kingFactorO2 ------------------------------------------------------------------------------------------ |
+    // Return the Bates wavelength-dependent King factor for oxygen.                                           |
+    // ------------------------------------------------------------------------------------------------------- |
     const sigma_um_inv = 1000.0 / @max(wavelength_nm, 1.0);
     const sigma_sq = sigma_um_inv * sigma_um_inv;
     return 1.096 + 1.385e-3 * sigma_sq + 1.448e-4 * sigma_sq * sigma_sq;
 }
 
 fn kingFactorAir(wavelength_nm: f64) f64 {
+    // kingFactorAir ----------------------------------------------------------------------------------------- |
+    // Return the dry-air mixture King factor using the old reference gas fractions.                           |
+    // ------------------------------------------------------------------------------------------------------- |
     const weighted_sum =
         fraction_n2 * kingFactorN2(wavelength_nm) +
         fraction_o2 * kingFactorO2(wavelength_nm) +
@@ -41,6 +50,9 @@ fn kingFactorAir(wavelength_nm: f64) f64 {
 }
 
 pub fn refractiveIndexDryAir(wavelength_nm: f64) f64 {
+    // refractiveIndexDryAir --------------------------------------------------------------------------------- |
+    // Evaluate the old dry-air refractive-index fit at one wavelength.                                        |
+    // ------------------------------------------------------------------------------------------------------- |
     const sigma_um_inv = 1000.0 / @max(wavelength_nm, 1.0);
     const sigma_sq = sigma_um_inv * sigma_um_inv;
     const refractivity =
@@ -51,8 +63,29 @@ pub fn refractiveIndexDryAir(wavelength_nm: f64) f64 {
 }
 
 pub fn depolarizationFactorAir(wavelength_nm: f64) f64 {
+    // depolarizationFactorAir ------------------------------------------------------------------------------- |
+    // Convert the dry-air King factor to the wavelength-dependent depolarization factor.                      |
+    // ------------------------------------------------------------------------------------------------------- |
     const king_factor_air = kingFactorAir(wavelength_nm);
     return 6.0 * (king_factor_air - 1.0) / (3.0 + 7.0 * king_factor_air);
+}
+
+pub fn phaseCoefficient2(wavelength_nm: f64) f64 {
+    // phaseCoefficient2 ------------------------------------------------------------------------------------- |
+    // Convert wavelength-dependent dry-air depolarization into the Rayleigh l=2 phase coefficient consumed    |
+    // by LABOS source and non-integrated scattering paths.                                                    |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports main:`src/forward_model/radiative_transfer/labos/phase_function.zig`                            |
+    //   `get_ph2_rayleigh`.                                                                                   |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   eps = 45 * depol / (6 - 7 * depol)                                                                    |
+    //   phase2 = (45 + eps) / (90 + 20 * eps)                                                                 |
+    // --------------------------------------------------------------------------------------------------------|
+    const depolarization = depolarizationFactorAir(wavelength_nm);
+    const eps = 45.0 * depolarization / (6.0 - 7.0 * depolarization);
+    return (45.0 + eps) / (90.0 + 20.0 * eps);
 }
 
 pub fn crossSectionCm2(wavelength_nm: f64) f64 {

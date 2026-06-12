@@ -4,10 +4,12 @@ const internal = @import("internal");
 
 const controls = internal.transport.controls;
 const jacobian_states = internal.transport.jacobian_states;
+const layer_depths = internal.optics.layer_depths;
 const radiance_results = internal.spectrum.radiance_results;
 const radiance_wavelengths = internal.spectrum.radiance_wavelengths;
 const readers = internal.assets.readers;
 const sampling_table = internal.spectrum.sampling_table;
+const solve = internal.transport.solve;
 const solar_table = internal.setup.solar_table;
 const spectrum_run = internal.spectrum.spectrum_run;
 
@@ -179,6 +181,172 @@ test "prefetchRadianceRowsSingleWorker checks result shape and propagates comput
         ),
     );
     try std.testing.expectEqual(@as(usize, 2), context.call_count);
+}
+
+test "radianceAtWavelength wires optics direct transport and radiance scaling" {
+    const allocator = std.testing.allocator;
+    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+        allocator,
+        internal.input.defaults.referenceCase(),
+    );
+    defer tables.deinit(allocator);
+
+    const support_count = tables.layers.support_mid_altitudes_km.len;
+    const layer_count = tables.layers.layer_pressures_hpa.len;
+    const line_sigma = try allocator.alloc(f64, support_count);
+    defer allocator.free(line_sigma);
+    @memset(line_sigma, 0.0);
+
+    const expected_support = try allocator.alloc(layer_depths.SupportOptics, support_count);
+    defer allocator.free(expected_support);
+    const actual_support = try allocator.alloc(layer_depths.SupportOptics, support_count);
+    defer allocator.free(actual_support);
+    const expected_layers = try allocator.alloc(layer_depths.LayerOptics, layer_count);
+    defer allocator.free(expected_layers);
+    const actual_layers = try allocator.alloc(layer_depths.LayerOptics, layer_count);
+    defer allocator.free(actual_layers);
+    const source_levels = try allocator.alloc(internal.optics.source_levels.SourceLevel, layer_count + 1);
+    defer allocator.free(source_levels);
+    const curved_samples = try allocator.alloc(internal.optics.curved_sun_path.CurvedSunPathSample, support_count);
+    defer allocator.free(curved_samples);
+    const curved_level_starts = try allocator.alloc(usize, layer_count + 1);
+    defer allocator.free(curved_level_starts);
+    const curved_level_altitudes = try allocator.alloc(f64, layer_count + 1);
+    defer allocator.free(curved_level_altitudes);
+
+    const wavelength_nm = 760.0;
+    const surface_albedo = 0.4;
+    const solar_irradiance = 141.5;
+    const angles = solve.ViewAngles{
+        .solar_mu = 0.62,
+        .view_mu = 0.48,
+        .relative_azimuth_rad = 0.35,
+    };
+    const solve_config = controls.SolveConfig{
+        .derivative_mode = .semi_analytical,
+        .derivative_state_mask = jacobian_states.stateMask(.surface_albedo),
+        .controls = .{
+            .scattering = .none,
+            .integrate_source_function = false,
+        },
+    };
+
+    try layer_depths.fillSupportOpticsAtWavelength(
+        wavelength_nm,
+        tables.layers,
+        line_sigma,
+        tables.cia,
+        tables.aerosol,
+        expected_support,
+    );
+    try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, expected_support, expected_layers);
+    layer_depths.fillLayerAerosolJacobians(tables.aerosol, solve_config.derivative_state_mask, expected_layers);
+
+    const expected_reflectance = solve.directSurfaceOnly(
+        angles,
+        surface_albedo,
+        testTotalOpticalDepth(expected_layers),
+        solve_config.derivative_mode,
+        solve_config.derivative_state_mask,
+    );
+    const expected = radiance_results.scaleReflectanceToRadiance(
+        solve_config,
+        expected_reflectance,
+        angles.solar_mu,
+        solar_irradiance,
+    );
+
+    var memory = internal.cache.transport_worker_memory.TransportWorkerMemory{};
+    const actual = try spectrum_run.radianceAtWavelength(
+        wavelength_nm,
+        angles,
+        surface_albedo,
+        tables.layers,
+        line_sigma,
+        tables.cia,
+        tables.aerosol,
+        tables.phase,
+        solar_irradiance,
+        solve_config,
+        actual_support,
+        actual_layers,
+        source_levels,
+        curved_samples,
+        curved_level_starts,
+        curved_level_altitudes,
+        &memory,
+    );
+
+    try std.testing.expectApproxEqAbs(expected.radiance, actual.radiance, 1.0e-14);
+    try std.testing.expectApproxEqAbs(expected.jacobian[0], actual.jacobian[0], 1.0e-14);
+    try std.testing.expectApproxEqAbs(0.0, actual.jacobian[1], 0.0);
+    try std.testing.expectApproxEqAbs(0.0, actual.jacobian[2], 0.0);
+    try std.testing.expectApproxEqAbs(
+        expected_layers[0].total_optical_depth,
+        actual_layers[0].total_optical_depth,
+        0.0,
+    );
+    try std.testing.expectApproxEqAbs(
+        expected_layers[1].total_optical_depth,
+        actual_layers[1].total_optical_depth,
+        0.0,
+    );
+    try std.testing.expectApproxEqAbs(
+        expected_support[1].gas_scattering_optical_depth,
+        actual_support[1].gas_scattering_optical_depth,
+        0.0,
+    );
+}
+
+test "radianceAtWavelength checks caller-owned row shapes" {
+    const allocator = std.testing.allocator;
+    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+        allocator,
+        internal.input.defaults.referenceCase(),
+    );
+    defer tables.deinit(allocator);
+
+    const support_count = tables.layers.support_mid_altitudes_km.len;
+    const layer_count = tables.layers.layer_pressures_hpa.len;
+    const line_sigma = try allocator.alloc(f64, support_count);
+    defer allocator.free(line_sigma);
+    @memset(line_sigma, 0.0);
+    const support = try allocator.alloc(layer_depths.SupportOptics, support_count);
+    defer allocator.free(support);
+    const layers = try allocator.alloc(layer_depths.LayerOptics, layer_count);
+    defer allocator.free(layers);
+    const source_levels = try allocator.alloc(internal.optics.source_levels.SourceLevel, layer_count + 1);
+    defer allocator.free(source_levels);
+    const curved_samples = try allocator.alloc(internal.optics.curved_sun_path.CurvedSunPathSample, support_count);
+    defer allocator.free(curved_samples);
+    const curved_level_starts = try allocator.alloc(usize, layer_count + 1);
+    defer allocator.free(curved_level_starts);
+    const short_curved_level_altitudes = try allocator.alloc(f64, layer_count);
+    defer allocator.free(short_curved_level_altitudes);
+    var memory = internal.cache.transport_worker_memory.TransportWorkerMemory{};
+
+    try std.testing.expectError(
+        error.ShapeMismatch,
+        spectrum_run.radianceAtWavelength(
+            760.0,
+            .{ .solar_mu = 0.62, .view_mu = 0.48 },
+            0.4,
+            tables.layers,
+            line_sigma,
+            tables.cia,
+            tables.aerosol,
+            tables.phase,
+            141.5,
+            .{ .controls = .{ .scattering = .none, .integrate_source_function = false } },
+            support,
+            layers,
+            source_levels,
+            curved_samples,
+            curved_level_starts,
+            short_curved_level_altitudes,
+            &memory,
+        ),
+    );
 }
 
 test "gatherProductRows gathers radiance irradiance and active Jacobian lanes" {
@@ -546,4 +714,13 @@ fn testRadianceCompute(
         .radiance = wavelength_nm * 0.01,
         .jacobian = .{ wavelength_nm, @floatFromInt(worker_index), @floatFromInt(call_index) },
     };
+}
+
+fn testTotalOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {
+    // testTotalOpticalDepth -------------------------------------------------------------------------------  |
+    // Test-local mirror of the scalar direct-route reduction used by old LABOS.                              |
+    // -------------------------------------------------------------------------------------------------------|
+    var total: f64 = 0.0;
+    for (layers) |layer| total += layer.total_optical_depth;
+    return total;
 }

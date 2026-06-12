@@ -3,12 +3,21 @@ const builtin = @import("builtin");
 
 const instrument_average = @import("instrument_average.zig");
 const jacobian_states = @import("../transport/jacobian_states.zig");
+const aerosol_tables = @import("../setup/aerosol_tables.zig");
+const atmosphere_layers = @import("../setup/atmosphere_layers.zig");
+const cia_table = @import("../setup/cia_table.zig");
+const curved_sun_path = @import("../optics/curved_sun_path.zig");
+const layer_depths = @import("../optics/layer_depths.zig");
+const phase_table = @import("../setup/phase_table.zig");
+const rayleigh = @import("../optics/rayleigh.zig");
 const radiance_results = @import("radiance_results.zig");
 const radiance_wavelengths = @import("radiance_wavelengths.zig");
 const sampling_table = @import("sampling_table.zig");
+const solve = @import("../transport/solve.zig");
 const solar_lookup = @import("solar_lookup.zig");
 const solar_irradiance_memory = @import("../cache/solar_irradiance_memory.zig");
 const solar_table = @import("../setup/solar_table.zig");
+const source_levels = @import("../optics/source_levels.zig");
 const transport_worker_memory = @import("../cache/transport_worker_memory.zig");
 const controls = @import("../transport/controls.zig");
 const Trace = @import("../instrumentation/trace.zig");
@@ -44,6 +53,157 @@ pub const worker_limit_env = "ZDISAMAR_WORKER_LIMIT";
 pub const min_parallel_radiance_count: usize = 32;
 pub const radiance_prefetch_chunk_size: usize = 8;
 pub const radiance_prefetch_pooled_chunk_size: usize = 8;
+
+pub fn radianceAtWavelength(
+    wavelength_nm: f64,
+    angles: solve.ViewAngles,
+    surface_albedo: f64,
+    layer_grid: atmosphere_layers.LayerGrid,
+    line_sigma_cm2_per_molecule: []const f64,
+    cia: cia_table.O2CiaTable,
+    aerosol: aerosol_tables.AerosolLayerTable,
+    phase: phase_table.PhaseTable,
+    solar_irradiance: f64,
+    solve_config: controls.SolveConfig,
+    out_support: []layer_depths.SupportOptics,
+    out_layers: []layer_depths.LayerOptics,
+    out_source_levels: []source_levels.SourceLevel,
+    out_curved_samples: []curved_sun_path.CurvedSunPathSample,
+    out_curved_level_starts: []usize,
+    out_curved_level_altitudes_km: []f64,
+    worker_memory: *transport_worker_memory.TransportWorkerMemory,
+) !radiance_results.RadianceResult {
+    // radianceAtWavelength ---------------------------------------------------------------------------------   |
+    // Execute one explicit high-resolution wavelength from setup rows through optics, transport, and           |
+    // radiance scaling.                                                                                        |
+    //                                                                                                          |
+    // provenance                                                                                               |
+    //   Ports the call shape of main:                                                                          |
+    //   `src/forward_model/instrument_grid/grid_calculation/spectral_forward.zig`                              |
+    //   `computeForwardSampleAtWavelengthWithScratch`, where one exact wavelength fills configured optical     |
+    //   rows, runs LABOS transport, and scales reflectance into the prefetched radiance row.                   |
+    //                                                                                                          |
+    // memory                                                                                                   |
+    //   All row and transport storage is caller-owned. Scattering callers must reserve worker memory before    |
+    //   entering this per-wavelength helper through `TransportWorkerMemory.ensureCapacity`.                    |
+    //                                                                                                          |
+    // unsupported old routes                                                                                   |
+    //   Source-level and curved-sun rows are only filled for controls that request those old routes. The       |
+    //   current transport solver still rejects integrated-source and spherical-correction controls after       |
+    //   their explicit rows are present.                                                                       |
+    // -------------------------------------------------------------------------------------------------------- |
+    const support_count = layer_grid.support_mid_altitudes_km.len;
+    const layer_count = layer_grid.layer_pressures_hpa.len;
+    if (out_support.len != support_count or
+        out_layers.len != layer_count or
+        out_source_levels.len != layer_count + 1 or
+        out_curved_level_starts.len != layer_count + 1 or
+        out_curved_level_altitudes_km.len != layer_count + 1)
+    {
+        return error.ShapeMismatch;
+    }
+
+    // instrumentation: trace zone: one exact-wavelength forward sample --------------------------------------  |
+    // captures: setup-optics, optional source/curved rows, transport, and radiance scaling for one wavelength  |
+    // why: separates solve-count effects from per-solve cost when WP4 compares same-sitting reruns.            |
+    var sample_zone = Trace.staticZone(@src(), "spectrum.radiance_at_wavelength");
+    defer sample_zone.end();
+    Trace.plotU("forward_samples", 1);
+    // end instrumentation: trace zone: one exact-wavelength forward sample ----------------------------------  |
+
+    {
+
+        // instrumentation: trace zone: configured optical rows ----------------------------------------------  |
+        // captures: support optical-depth fill, layer reduction, and aerosol Jacobian row fill                 |
+        // why: profiles spectroscopy-independent optical setup within each exact-wavelength solve.             |
+        var optics_zone = Trace.staticZone(@src(), "spectrum.radiance_at_wavelength.optics");
+        defer optics_zone.end();
+        // end instrumentation: trace zone: configured optical rows ------------------------------------------  |
+
+        try layer_depths.fillSupportOpticsAtWavelength(
+            wavelength_nm,
+            layer_grid,
+            line_sigma_cm2_per_molecule,
+            cia,
+            aerosol,
+            out_support,
+        );
+        try layer_depths.reduceLayerOpticsFromSupportRows(layer_grid, out_support, out_layers);
+        layer_depths.fillLayerAerosolJacobians(aerosol, solve_config.derivative_state_mask, out_layers);
+    }
+
+    const prepared_config = try controls.prepareSolveConfig(solve_config);
+    const source_rows = source_rows: {
+        if (prepared_config.controls.integrate_source_function) {
+            try source_levels.fillSourceLevelsAtWavelength(
+                wavelength_nm,
+                layer_grid,
+                out_support,
+                aerosol,
+                out_source_levels,
+            );
+            break :source_rows out_source_levels;
+        }
+
+        break :source_rows out_source_levels[0..0];
+    };
+
+    const curved_rows = curved_rows: {
+        if (prepared_config.controls.use_spherical_correction) {
+            const curved_count = try curved_sun_path.fillCurvedSunPathSamples(
+                layer_grid,
+                out_support,
+                out_curved_samples,
+                out_curved_level_starts,
+                out_curved_level_altitudes_km,
+            );
+            break :curved_rows out_curved_samples[0..curved_count];
+        }
+
+        break :curved_rows out_curved_samples[0..0];
+    };
+
+    const reflectance = reflectance: {
+        if (prepared_config.controls.scattering == .none) {
+            break :reflectance solve.directSurfaceOnly(
+                angles,
+                surface_albedo,
+                totalOpticalDepth(out_layers),
+                prepared_config.derivative_mode,
+                prepared_config.derivative_state_mask,
+            );
+        }
+
+        var work = try worker_memory.solveWorkArrays(layer_count, prepared_config.controls.n_streams);
+        break :reflectance try solve.solveReflectance(
+            angles,
+            surface_albedo,
+            out_layers,
+            source_rows,
+            curved_rows,
+            phase,
+            rayleigh.phaseCoefficient2(wavelength_nm),
+            prepared_config,
+            &work,
+        );
+    };
+
+    return radiance_results.scaleReflectanceToRadiance(
+        prepared_config,
+        reflectance,
+        angles.solar_mu,
+        solar_irradiance,
+    );
+}
+
+fn totalOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {
+    // totalOpticalDepth ------------------------------------------------------------------------------------   |
+    // Reduce explicit layer rows into the scalar optical depth used by the old direct-surface route.           |
+    // -------------------------------------------------------------------------------------------------------- |
+    var total: f64 = 0.0;
+    for (layers) |layer| total += layer.total_optical_depth;
+    return total;
+}
 
 // Range -----------------------------------------------------------------------------------------------------  |
 // Half-open item range owned by one spectrum worker or one queue claim.                                        |
