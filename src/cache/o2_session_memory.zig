@@ -25,19 +25,19 @@ const Allocator = std.mem.Allocator;
 // Top-level allocation owner for reusable O2 A setup, spectrum, solar, and transport work.                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// Debug build: size 3448 B (3.367 KiB), align 8                                                               |
-// optimized  : size 3440 B (3.359 KiB), align 8                                                               |
+// Debug build: size 3472 B (3.391 KiB), align 8                                                               |
+// optimized  : size 3464 B (3.383 KiB), align 8                                                               |
 //                                                                                                             |
 // memory                                                                                                      |
 // [   0..  47] spectrum          : SpectrumMemory                                                             |
 // [  48.. 143] radiance          : RadianceMemory                                                             |
-// [ 144.. 183] profile_lines     : ProfileLineValues                                                          |
-// [ 184.. 223] solar_irradiance  : SolarIrradianceMemory in Debug                                             |
-// [ 184.. 215] solar_irradiance  : SolarIrradianceMemory in optimized builds                                  |
-// [ 224..3415] transport_workers : TransportWorkerMemory in Debug                                             |
-// [ 216..3407] transport_workers : TransportWorkerMemory in optimized builds                                  |
-// [3416..3447] weak_line_cutoff  : WeakLineCutoffMemory in Debug                                              |
-// [3408..3439] weak_line_cutoff  : WeakLineCutoffMemory in optimized builds                                   |
+// [ 144.. 207] profile_lines     : ProfileLineValues                                                          |
+// [ 208.. 247] solar_irradiance  : SolarIrradianceMemory in Debug                                             |
+// [ 208.. 239] solar_irradiance  : SolarIrradianceMemory in optimized builds                                  |
+// [ 248..3439] transport_workers : TransportWorkerMemory in Debug                                             |
+// [ 240..3431] transport_workers : TransportWorkerMemory in optimized builds                                  |
+// [3440..3471] weak_line_cutoff  : WeakLineCutoffMemory in Debug                                              |
+// [3432..3463] weak_line_cutoff  : WeakLineCutoffMemory in optimized builds                                   |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Child memory owners release their own heap storage through deinit.                                        |
@@ -74,6 +74,6 @@ pub const O2SessionMemory = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 comptime {
-    const expected_size: usize = if (@import("builtin").mode == .Debug) 3448 else 3440;
+    const expected_size: usize = if (@import("builtin").mode == .Debug) 3472 else 3464;
     std.debug.assert(@sizeOf(O2SessionMemory) == expected_size);
 }

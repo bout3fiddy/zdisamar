@@ -215,6 +215,18 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
     defer allocator.free(curved_level_altitudes);
 
     const wavelength_nm = 760.0;
+    var case = internal.input.defaults.referenceCase();
+    case.spectral_grid = .{
+        .start_nm = wavelength_nm,
+        .end_nm = wavelength_nm,
+        .sample_count = 1,
+    };
+    var profile_lines = try internal.cache.profile_line_memory.buildReferenceProfileLineValues(
+        allocator,
+        case,
+    );
+    defer profile_lines.deinit(allocator);
+
     const surface_albedo = 0.4;
     const solar_irradiance = 141.5;
     const angles = solve.ViewAngles{
@@ -231,6 +243,7 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
         },
     };
 
+    try profile_lines.fillSupportLineSigmaAtWavelengthIndex(tables.layers, 0, line_sigma);
     try layer_depths.fillSupportOpticsAtWavelength(
         wavelength_nm,
         tables.layers,
@@ -259,15 +272,17 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
     var memory = internal.cache.transport_worker_memory.TransportWorkerMemory{};
     const actual = try spectrum_run.radianceAtWavelength(
         wavelength_nm,
+        0,
         angles,
         surface_albedo,
         tables.layers,
-        line_sigma,
+        profile_lines,
         tables.cia,
         tables.aerosol,
         tables.phase,
         solar_irradiance,
         solve_config,
+        line_sigma,
         actual_support,
         actual_layers,
         source_levels,
@@ -311,6 +326,17 @@ test "radianceAtWavelength checks caller-owned row shapes" {
     const line_sigma = try allocator.alloc(f64, support_count);
     defer allocator.free(line_sigma);
     @memset(line_sigma, 0.0);
+    var case = internal.input.defaults.referenceCase();
+    case.spectral_grid = .{
+        .start_nm = 760.0,
+        .end_nm = 760.0,
+        .sample_count = 1,
+    };
+    var profile_lines = try internal.cache.profile_line_memory.buildReferenceProfileLineValues(
+        allocator,
+        case,
+    );
+    defer profile_lines.deinit(allocator);
     const support = try allocator.alloc(layer_depths.SupportOptics, support_count);
     defer allocator.free(support);
     const layers = try allocator.alloc(layer_depths.LayerOptics, layer_count);
@@ -329,15 +355,17 @@ test "radianceAtWavelength checks caller-owned row shapes" {
         error.ShapeMismatch,
         spectrum_run.radianceAtWavelength(
             760.0,
+            0,
             .{ .solar_mu = 0.62, .view_mu = 0.48 },
             0.4,
             tables.layers,
-            line_sigma,
+            profile_lines,
             tables.cia,
             tables.aerosol,
             tables.phase,
             141.5,
             .{ .controls = .{ .scattering = .none, .integrate_source_function = false } },
+            line_sigma,
             support,
             layers,
             source_levels,

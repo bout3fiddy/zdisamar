@@ -16,16 +16,34 @@ test "ProfileLineValues keep wavelength-major line values for each layer node" {
 
     try std.testing.expectEqual(@as(usize, profile_line_test_sample_count), values.wavelength_count);
     try std.testing.expectEqual(@as(usize, 45), values.profile_node_count);
+    try std.testing.expectEqual(@as(usize, 47), values.support_profile_node_count);
     try std.testing.expectEqual(values.wavelength_count * values.profile_node_count, values.values.len);
+    try std.testing.expectEqual(
+        values.wavelength_count * values.support_profile_node_count,
+        values.support_profile_values.len,
+    );
     try std.testing.expect(values.reuse_stamp.value != 0);
 
     const first = values.row(0, 0) orelse return error.MissingProfileLineValue;
     const last = values.row(values.wavelength_count - 1, values.profile_node_count - 1) orelse
         return error.MissingProfileLineValue;
+    const support_first = values.supportProfileRow(0, 0) orelse return error.MissingProfileLineValue;
     try std.testing.expectApproxEqAbs(755.0, first.wavelength_nm, 0.0);
     try std.testing.expectApproxEqAbs(776.0, last.wavelength_nm, 0.0);
+    try std.testing.expectApproxEqAbs(755.0, support_first.wavelength_nm, 0.0);
     try std.testing.expectEqual(@as(u32, 0), first.layer_index);
     try std.testing.expectEqual(@as(u32, 44), last.layer_index);
+    try std.testing.expectEqual(@as(u32, 0), support_first.profile_node_index);
+}
+
+test "ProfileLineValues support-profile layouts stay compiler backed" {
+    try std.testing.expectEqual(@as(usize, 80), @sizeOf(internal.cache.profile_line_memory.ProfileLineValue));
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(internal.cache.profile_line_memory.ProfileSupportLineValue));
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(internal.cache.profile_line_memory.ProfileLineValues));
+    try std.testing.expectEqual(
+        @as(usize, 16),
+        @offsetOf(internal.cache.profile_line_memory.ProfileLineValues, "support_profile_values"),
+    );
 }
 
 test "ProfileLineValues contain computed finite weak-line sigma rows" {
@@ -63,7 +81,12 @@ test "ProfileLineValues build the full reference wavelength route in optimized m
 
     try std.testing.expectEqual(@as(usize, 701), values.wavelength_count);
     try std.testing.expectEqual(@as(usize, 45), values.profile_node_count);
+    try std.testing.expectEqual(@as(usize, 47), values.support_profile_node_count);
     try std.testing.expectEqual(values.wavelength_count * values.profile_node_count, values.values.len);
+    try std.testing.expectEqual(
+        values.wavelength_count * values.support_profile_node_count,
+        values.support_profile_values.len,
+    );
 }
 
 test "ProfileLineValues match old profile-node line math evidence" {
@@ -153,6 +176,41 @@ test "ProfileLineValues match old profile-node total line sidecar evidence" {
     }
 }
 
+test "ProfileLineValues fill support-row sigma from old atmospheric-budget evidence" {
+    if (builtin.mode == .Debug) return error.SkipZigTest;
+
+    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+        std.testing.allocator,
+        internal.input.defaults.referenceCase(),
+    );
+    defer tables.deinit(std.testing.allocator);
+
+    const support_sigma = try std.testing.allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);
+    defer std.testing.allocator.free(support_sigma);
+
+    for (support_line_sigma_evidence) |expected| {
+        var case = internal.input.defaults.referenceCase();
+        case.spectral_grid = .{
+            .start_nm = expected.wavelength_nm,
+            .end_nm = expected.wavelength_nm,
+            .sample_count = 1,
+        };
+        var values = try internal.cache.profile_line_memory.buildReferenceProfileLineValues(
+            std.testing.allocator,
+            case,
+        );
+        defer values.deinit(std.testing.allocator);
+
+        try values.fillSupportLineSigmaAtWavelengthIndex(tables.layers, 0, support_sigma);
+
+        const support_index: usize = @intCast(expected.support_index);
+        const expected_sigma =
+            expected.gas_absorption_optical_depth /
+            (expected.oxygen_number_density_cm3 * expected.path_length_cm);
+        try std.testing.expectApproxEqRel(expected_sigma, support_sigma[support_index], 1.0e-12);
+    }
+}
+
 // ProfileLineProbeEvidence -----------------------------------------------------------------------------------|
 // One old-route weak-line value anchor for a diagnostic wavelength and layer node.                            |
 //                                                                                                             |
@@ -175,6 +233,68 @@ const ProfileLineProbeEvidence = struct {
     d_sigma_d_temperature_cm2_per_molecule_per_k: f64,
 };
 // ------------------------------------------------------------------------------------------------------------|
+
+// SupportLineSigmaEvidence -----------------------------------------------------------------------------------|
+// One old-route support-row gas-absorption anchor used to derive expected sigma_total.                        |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] wavelength_nm                 : f64                                                                |
+// [ 8..15] path_length_cm                : f64                                                                |
+// [16..23] oxygen_number_density_cm3     : f64                                                                |
+// [24..31] gas_absorption_optical_depth  : f64                                                                |
+// [32..35] support_index                 : u32                                                                |
+// [36..39] trailing padding              : 4 B                                                                |
+const SupportLineSigmaEvidence = struct {
+    wavelength_nm: f64,
+    support_index: u32,
+    path_length_cm: f64,
+    oxygen_number_density_cm3: f64,
+    gas_absorption_optical_depth: f64,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// Source: scratch/refactor/2026-06-11-explicit-dataflow-refactor/evidence/baseline-main-56605387/
+// public-python-baseline.json .diagnostics.atmospheric_budget.rows, support row 1 at the five WP1 probes.
+const support_line_sigma_evidence = [_]SupportLineSigmaEvidence{
+    .{
+        .wavelength_nm = 758.0,
+        .support_index = 1,
+        .path_length_cm = 1889.5354494827166,
+        .oxygen_number_density_cm3 = 5.220552365887917e18,
+        .gas_absorption_optical_depth = 0.000014827869850978738,
+    },
+    .{
+        .wavelength_nm = 760.0,
+        .support_index = 1,
+        .path_length_cm = 1889.5354494827166,
+        .oxygen_number_density_cm3 = 5.220552365887917e18,
+        .gas_absorption_optical_depth = 0.003851103825908674,
+    },
+    .{
+        .wavelength_nm = 765.0,
+        .support_index = 1,
+        .path_length_cm = 1889.5354494827166,
+        .oxygen_number_density_cm3 = 5.220552365887917e18,
+        .gas_absorption_optical_depth = 0.0006483670238492417,
+    },
+    .{
+        .wavelength_nm = 767.0,
+        .support_index = 1,
+        .path_length_cm = 1889.5354494827166,
+        .oxygen_number_density_cm3 = 5.220552365887917e18,
+        .gas_absorption_optical_depth = 0.00007927523435585222,
+    },
+    .{
+        .wavelength_nm = 776.0,
+        .support_index = 1,
+        .path_length_cm = 1889.5354494827166,
+        .oxygen_number_density_cm3 = 5.220552365887917e18,
+        .gas_absorption_optical_depth = 5.35307046857685e-7,
+    },
+};
 
 // ProfileLineTotalProbeEvidence ------------------------------------------------------------------------------|
 // One old-route total line-sidecar value anchor for a diagnostic wavelength and layer node.                   |

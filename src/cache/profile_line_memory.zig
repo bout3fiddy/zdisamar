@@ -2,6 +2,7 @@ const std = @import("std");
 
 const readers = @import("../assets/readers.zig");
 const hashing = @import("../common/hashing.zig");
+const spline = @import("../common/math/spline.zig");
 const hitran_partition_tables = @import("../input/hitran_partition_tables.zig");
 const o2_case = @import("../input/o2_case.zig");
 const atmosphere_layers = @import("../setup/atmosphere_layers.zig");
@@ -17,6 +18,7 @@ const hitran_speed_of_light_m_per_s = 2.99792458e8;
 const hitran_pi = 3.1415926536;
 const min_spectroscopy_pressure_atm = 1.0e-12;
 const max_strong_line_sidecars: usize = 128;
+const max_spectroscopy_profile_nodes: usize = 64;
 
 // min_hitran_temperature_k -----------------------------------------------------------------------------------|
 // Old provenance: main:`src/input/reference/spectroscopy/physics_core.zig` clamps weak-line temperatures to   |
@@ -81,30 +83,64 @@ pub const ProfileLineValue = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// ProfileLineValues ------------------------------------------------------------------------------------------|
-// Owner for the wavelength-major weak-line value grid.                                                        |
+// ProfileSupportLineValue ------------------------------------------------------------------------------------|
+// One total-spectroscopy value at a vendor spectroscopy-profile altitude for support-row interpolation.       |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+// size: 64 B (0.062 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [ 0..15] values            : []ProfileLineValue                                                             |
-// [16..23] wavelength_count  : usize                                                                          |
-// [24..31] profile_node_count: usize                                                                          |
-// [32..39] reuse_stamp       : ReuseStamp                                                                     |
+// [ 0.. 7] wavelength_nm                    : f64                                                             |
+// [ 8..15] altitude_km                      : f64                                                             |
+// [16..23] pressure_hpa                     : f64                                                             |
+// [24..31] temperature_k                    : f64                                                             |
+// [32..39] line_sigma_cm2_per_molecule      : f64                                                             |
+// [40..47] line_mixing_sigma_cm2_per_molecule: f64                                                            |
+// [48..55] total_sigma_cm2_per_molecule     : f64                                                             |
+// [56..59] profile_node_index               : u32                                                             |
+// [60..63] trailing padding                 : 4 B                                                             |
+pub const ProfileSupportLineValue = struct {
+    wavelength_nm: f64,
+    profile_node_index: u32,
+    altitude_km: f64,
+    pressure_hpa: f64,
+    temperature_k: f64,
+    line_sigma_cm2_per_molecule: f64,
+    line_mixing_sigma_cm2_per_molecule: f64,
+    total_sigma_cm2_per_molecule: f64,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// ProfileLineValues ------------------------------------------------------------------------------------------|
+// Owner for wavelength-major layer-node and spectroscopy-profile line-value grids.                            |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 64 B (0.062 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] values                    : []ProfileLineValue                                                     |
+// [16..31] support_profile_values    : []ProfileSupportLineValue                                              |
+// [32..39] wavelength_count          : usize                                                                  |
+// [40..47] profile_node_count        : usize                                                                  |
+// [48..55] support_profile_node_count: usize                                                                  |
+// [56..63] reuse_stamp               : ReuseStamp                                                             |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   values owns wavelength_count * profile_node_count rows and is released by deinit.                         |
+//   values owns wavelength_count * profile_node_count rows. support_profile_values owns                       |
+//   wavelength_count * support_profile_node_count rows used to interpolate support-row sigma.                 |
 pub const ProfileLineValues = struct {
     values: []ProfileLineValue = &.{},
+    support_profile_values: []ProfileSupportLineValue = &.{},
     wavelength_count: usize = 0,
     profile_node_count: usize = 0,
+    support_profile_node_count: usize = 0,
     reuse_stamp: hashing.ReuseStamp = .{},
 
     pub fn deinit(self: *ProfileLineValues, allocator: Allocator) void {
         // ProfileLineValues.deinit ---------------------------------------------------------------------------|
         // Release exact-route profile-line rows owned by this memory object.                                  |
         // ----------------------------------------------------------------------------------------------------|
+        allocator.free(self.support_profile_values);
         allocator.free(self.values);
         self.* = .{};
     }
@@ -117,6 +153,89 @@ pub const ProfileLineValues = struct {
             return null;
         }
         return self.values[wavelength_index * self.profile_node_count + profile_node_index];
+    }
+
+    pub fn supportProfileRow(
+        self: ProfileLineValues,
+        wavelength_index: usize,
+        profile_node_index: usize,
+    ) ?ProfileSupportLineValue {
+        // ProfileLineValues.supportProfileRow ----------------------------------------------------------------|
+        // Return one spectroscopy-profile row used by support-row interpolation.                              |
+        // ----------------------------------------------------------------------------------------------------|
+        if (wavelength_index >= self.wavelength_count or
+            profile_node_index >= self.support_profile_node_count)
+        {
+            return null;
+        }
+        return self.support_profile_values[
+            wavelength_index * self.support_profile_node_count + profile_node_index
+        ];
+    }
+
+    pub fn fillSupportLineSigmaAtWavelengthIndex(
+        self: ProfileLineValues,
+        layer_grid: atmosphere_layers.LayerGrid,
+        wavelength_index: usize,
+        out_sigma_cm2_per_molecule: []f64,
+    ) !void {
+        // ProfileLineValues.fillSupportLineSigmaAtWavelengthIndex --------------------------------------------|
+        // Sample retained old-route sigma_total profile rows onto the setup support grid.                     |
+        //                                                                                                     |
+        // provenance                                                                                          |
+        //   Ports main:`state_build/layer_spectroscopy.zig` profile-cache sampling for the O2 A route.        |
+        //   The line list has already been evaluated into support_profile_values; this helper only prepares   |
+        //   endpoint-secant spline curvature and samples total_sigma_cm2_per_molecule by support altitude.    |
+        //                                                                                                     |
+        // memory                                                                                              |
+        //   Uses fixed stack rows capped at max_spectroscopy_profile_nodes and writes caller-owned support    |
+        //   sigma storage. It allocates nothing inside the per-wavelength solve.                              |
+        // ----------------------------------------------------------------------------------------------------|
+        if (wavelength_index >= self.wavelength_count) return error.InvalidShape;
+        if (out_sigma_cm2_per_molecule.len != layer_grid.support_mid_altitudes_km.len) return error.InvalidShape;
+
+        const node_count = self.support_profile_node_count;
+        if (node_count < 3 or node_count > max_spectroscopy_profile_nodes) return error.InvalidShape;
+        if (layer_grid.spectroscopy_profile.rows.len != node_count) return error.InvalidShape;
+
+        const rows = self.support_profile_values[wavelength_index * node_count .. (wavelength_index + 1) * node_count];
+        var altitudes_km: [max_spectroscopy_profile_nodes]f64 = undefined;
+        var line_values: [max_spectroscopy_profile_nodes]f64 = undefined;
+        var line_mixing_values: [max_spectroscopy_profile_nodes]f64 = undefined;
+        var total_values: [max_spectroscopy_profile_nodes]f64 = undefined;
+        var line_second: [max_spectroscopy_profile_nodes]f64 = undefined;
+        var line_mixing_second: [max_spectroscopy_profile_nodes]f64 = undefined;
+        var total_second: [max_spectroscopy_profile_nodes]f64 = undefined;
+
+        for (rows, 0..) |row_value, profile_node_index| {
+            altitudes_km[profile_node_index] = row_value.altitude_km;
+            line_values[profile_node_index] = row_value.line_sigma_cm2_per_molecule;
+            line_mixing_values[profile_node_index] = row_value.line_mixing_sigma_cm2_per_molecule;
+            total_values[profile_node_index] = row_value.total_sigma_cm2_per_molecule;
+        }
+
+        const altitudes = altitudes_km[0..node_count];
+        spline.endpointSecantSecondDerivatives3(
+            altitudes,
+            line_values[0..node_count],
+            line_mixing_values[0..node_count],
+            total_values[0..node_count],
+            line_second[0..node_count],
+            line_mixing_second[0..node_count],
+            total_second[0..node_count],
+        ) catch return error.InvalidShape;
+
+        for (out_sigma_cm2_per_molecule, layer_grid.support_mid_altitudes_km) |*sigma, altitude_km| {
+            sigma.* = @max(
+                spline.sampleWithSecondDerivatives(
+                    altitudes,
+                    total_values[0..node_count],
+                    total_second[0..node_count],
+                    altitude_km,
+                ) catch return error.InvalidShape,
+                0.0,
+            );
+        }
     }
 };
 // ------------------------------------------------------------------------------------------------------------|
@@ -135,8 +254,14 @@ pub fn buildReferenceProfileLineValues(
 
     const wavelength_count = case.spectral_grid.sample_count;
     const profile_node_count = layers.layer_pressures_hpa.len;
+    const support_profile_node_count = layers.spectroscopy_profile.rows.len;
     const values = try allocator.alloc(ProfileLineValue, wavelength_count * profile_node_count);
     errdefer allocator.free(values);
+    const support_profile_values = try allocator.alloc(
+        ProfileSupportLineValue,
+        wavelength_count * support_profile_node_count,
+    );
+    errdefer allocator.free(support_profile_values);
 
     const runtime = RuntimeControls{
         .cutoff_cm1 = lines.cutoff_sim_cm1,
@@ -160,6 +285,16 @@ pub fn buildReferenceProfileLineValues(
             lines.relaxation_matrix,
             layers.layer_temperatures_k[profile_node_index],
             @max(layers.layer_pressures_hpa[profile_node_index] / 1013.25, min_spectroscopy_pressure_atm),
+        );
+    }
+    const support_strong_states = try allocator.alloc(StrongLinePreparedState, support_profile_node_count);
+    defer allocator.free(support_strong_states);
+    for (layers.spectroscopy_profile.rows, 0..) |profile_row, profile_node_index| {
+        support_strong_states[profile_node_index] = prepareStrongLineState(
+            lines.strong_lines,
+            lines.relaxation_matrix,
+            profile_row.temperature_k,
+            @max(profile_row.pressure_hpa / 1013.25, min_spectroscopy_pressure_atm),
         );
     }
 
@@ -220,12 +355,39 @@ pub fn buildReferenceProfileLineValues(
                 .d_sigma_d_temperature_cm2_per_molecule_per_k = (upper_sigma - lower_sigma) / 1.0,
             };
         }
+
+        for (layers.spectroscopy_profile.rows, 0..) |profile_row, profile_node_index| {
+            const support_row_index = wavelength_index * support_profile_node_count + profile_node_index;
+            const total = totalSpectroscopyAt(
+                total_lines,
+                lines.strong_lines,
+                lines.relaxation_matrix,
+                wavelength_nm,
+                profile_row.temperature_k,
+                profile_row.pressure_hpa,
+                runtime,
+                &support_strong_states[profile_node_index],
+            );
+
+            support_profile_values[support_row_index] = .{
+                .wavelength_nm = wavelength_nm,
+                .profile_node_index = @intCast(profile_node_index),
+                .altitude_km = profile_row.altitude_km,
+                .pressure_hpa = profile_row.pressure_hpa,
+                .temperature_k = profile_row.temperature_k,
+                .line_sigma_cm2_per_molecule = total.line_sigma_cm2_per_molecule,
+                .line_mixing_sigma_cm2_per_molecule = total.line_mixing_sigma_cm2_per_molecule,
+                .total_sigma_cm2_per_molecule = total.total_sigma_cm2_per_molecule,
+            };
+        }
     }
 
     return .{
         .values = values,
+        .support_profile_values = support_profile_values,
         .wavelength_count = wavelength_count,
         .profile_node_count = profile_node_count,
+        .support_profile_node_count = support_profile_node_count,
         .reuse_stamp = hashing.ReuseStamp.fromBytes(case.id),
     };
 }

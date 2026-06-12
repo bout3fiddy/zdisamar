@@ -9,6 +9,7 @@ const cia_table = @import("../setup/cia_table.zig");
 const curved_sun_path = @import("../optics/curved_sun_path.zig");
 const layer_depths = @import("../optics/layer_depths.zig");
 const phase_table = @import("../setup/phase_table.zig");
+const profile_line_memory = @import("../cache/profile_line_memory.zig");
 const rayleigh = @import("../optics/rayleigh.zig");
 const radiance_results = @import("radiance_results.zig");
 const radiance_wavelengths = @import("radiance_wavelengths.zig");
@@ -56,15 +57,17 @@ pub const radiance_prefetch_pooled_chunk_size: usize = 8;
 
 pub fn radianceAtWavelength(
     wavelength_nm: f64,
+    wavelength_index: usize,
     angles: solve.ViewAngles,
     surface_albedo: f64,
     layer_grid: atmosphere_layers.LayerGrid,
-    line_sigma_cm2_per_molecule: []const f64,
+    profile_lines: profile_line_memory.ProfileLineValues,
     cia: cia_table.O2CiaTable,
     aerosol: aerosol_tables.AerosolLayerTable,
     phase: phase_table.PhaseTable,
     solar_irradiance: f64,
     solve_config: controls.SolveConfig,
+    out_line_sigma_cm2_per_molecule: []f64,
     out_support: []layer_depths.SupportOptics,
     out_layers: []layer_depths.LayerOptics,
     out_source_levels: []source_levels.SourceLevel,
@@ -82,6 +85,7 @@ pub fn radianceAtWavelength(
     //   `src/forward_model/instrument_grid/grid_calculation/spectral_forward.zig`                              |
     //   `computeForwardSampleAtWavelengthWithScratch`, where one exact wavelength fills configured optical     |
     //   rows, runs LABOS transport, and scales reflectance into the prefetched radiance row.                   |
+    //   Support line-sigma sampling follows main:`state_build/layer_spectroscopy.zig`.                         |
     //                                                                                                          |
     // memory                                                                                                   |
     //   All row and transport storage is caller-owned. Scattering callers must reserve worker memory before    |
@@ -95,6 +99,7 @@ pub fn radianceAtWavelength(
     const support_count = layer_grid.support_mid_altitudes_km.len;
     const layer_count = layer_grid.layer_pressures_hpa.len;
     if (out_support.len != support_count or
+        out_line_sigma_cm2_per_molecule.len != support_count or
         out_layers.len != layer_count or
         out_source_levels.len != layer_count + 1 or
         out_curved_level_starts.len != layer_count + 1 or
@@ -120,10 +125,15 @@ pub fn radianceAtWavelength(
         defer optics_zone.end();
         // end instrumentation: trace zone: configured optical rows ------------------------------------------  |
 
+        try profile_lines.fillSupportLineSigmaAtWavelengthIndex(
+            layer_grid,
+            wavelength_index,
+            out_line_sigma_cm2_per_molecule,
+        );
         try layer_depths.fillSupportOpticsAtWavelength(
             wavelength_nm,
             layer_grid,
-            line_sigma_cm2_per_molecule,
+            out_line_sigma_cm2_per_molecule,
             cia,
             aerosol,
             out_support,
