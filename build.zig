@@ -188,12 +188,16 @@ pub fn build(b: *std.Build) void {
         .paths = &.{ "build.zig", "src", "tests" },
     });
 
-    const sync_python_package_cmd = b.addSystemCommand(&.{"true"});
+    const sync_python_package_files = b.addUpdateSourceFiles();
+    sync_python_package_files.addCopyFileToSource(
+        c_api_lib.getEmittedBin(),
+        b.fmt("python/zdisamar/bindings/{s}", .{c_api_lib.out_filename}),
+    );
     const sync_python_package_step = b.step(
         "sync-python-package",
-        "WP2 no-op: Python package sync resumes when the API boundary is ported",
+        "Build and sync the native C API library into the Python package",
     );
-    sync_python_package_step.dependOn(&sync_python_package_cmd.step);
+    sync_python_package_step.dependOn(&sync_python_package_files.step);
 
     const check_step = b.step("check", "Run fast local verification");
     check_step.dependOn(&fmt_check_cmd.step);
