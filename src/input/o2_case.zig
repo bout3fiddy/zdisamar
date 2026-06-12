@@ -263,7 +263,7 @@ pub const RtmControls = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // O2Case -----------------------------------------------------------------------------------------------------|
-// Borrowed reference-case setup row.                                                                          |
+// Borrowed O2 A setup row.                                                                                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 624 B (0.609 KiB), align: 8 B                                                                         |
@@ -298,7 +298,7 @@ pub const O2Case = struct {
 
 pub fn asset(id: []const u8, path: []const u8, format: []const u8) Asset {
     // asset --------------------------------------------------------------------------------------------------|
-    // Build a borrowed asset descriptor for static reference-case defaults.                                   |
+    // Build a borrowed asset descriptor for static default-case assets.                                       |
     // --------------------------------------------------------------------------------------------------------|
     return .{ .id = id, .path = path, .format = format };
 }
