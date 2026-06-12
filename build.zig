@@ -13,6 +13,9 @@ fn addBuildOptions(
     enable_calculation_telemetry: bool,
     enable_perturbation_sensitivity: bool,
 ) *std.Build.Module {
+    // addBuildOptions -------------------------------------------------------------------------------------- |
+    // Build the compile-time instrumentation option module shared by product and test roots.                 |
+    // -------------------------------------------------------------------------------------------------------|
     const options = b.addOptions();
     options.addOption(bool, "enable_test_support", false);
     options.addOption(bool, "enable_ztracy", false);
@@ -29,6 +32,9 @@ fn addSourceModule(
     instrumentation: InstrumentationModules,
     root_source_file: []const u8,
 ) *std.Build.Module {
+    // addSourceModule -------------------------------------------------------------------------------------- |
+    // Create a source module with the instrumentation facades wired to the requested root.                   |
+    // -------------------------------------------------------------------------------------------------------|
     return b.createModule(.{
         .root_source_file = b.path(root_source_file),
         .target = target,
@@ -52,6 +58,9 @@ fn addTestStep(
     step_description: []const u8,
     root_source_file: []const u8,
 ) *std.Build.Step.Run {
+    // addTestStep ------------------------------------------------------------------------------------------ |
+    // Register one Zig test root as a named build step using the shared internal module.                     |
+    // -------------------------------------------------------------------------------------------------------|
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path(root_source_file),
@@ -72,6 +81,9 @@ fn addTestStep(
 }
 
 pub fn build(b: *std.Build) void {
+    // build ------------------------------------------------------------------------------------------------ |
+    // Define the explicit-dataflow library, unit-test roots, focused WP3 gates, and fast local checks.       |
+    // -------------------------------------------------------------------------------------------------------|
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -124,8 +136,18 @@ pub fn build(b: *std.Build) void {
         internal_module,
         disabled_instrumentation,
         "test-unit",
-        "Run WP2 unit and parity tests",
+        "Run explicit-dataflow unit and parity tests",
         "tests/unit/root.zig",
+    );
+    const run_transport_tests = addTestStep(
+        b,
+        target,
+        optimize,
+        internal_module,
+        disabled_instrumentation,
+        "test-transport",
+        "Run focused WP3 transport tests",
+        "tests/unit/transport_root.zig",
     );
     const run_enabled_instrumentation_tests = addTestStep(
         b,
@@ -151,14 +173,15 @@ pub fn build(b: *std.Build) void {
     );
     sync_python_package_step.dependOn(&sync_python_package_cmd.step);
 
-    const check_step = b.step("check", "Run WP2 fast local verification");
+    const check_step = b.step("check", "Run fast local verification");
     check_step.dependOn(&fmt_check_cmd.step);
     check_step.dependOn(&no_inline_src_tests_cmd.step);
     check_step.dependOn(&lib.step);
     check_step.dependOn(&run_unit_tests.step);
     check_step.dependOn(&run_enabled_instrumentation_tests.step);
 
-    const test_fast_step = b.step("test-fast", "Run WP2 fast test suite");
+    const test_fast_step = b.step("test-fast", "Run fast explicit-dataflow test suite");
     test_fast_step.dependOn(&run_unit_tests.step);
+    test_fast_step.dependOn(&run_transport_tests.step);
     test_fast_step.dependOn(&run_enabled_instrumentation_tests.step);
 }
