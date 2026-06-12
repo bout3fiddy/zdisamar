@@ -10,6 +10,7 @@ const radiance_wavelengths = internal.spectrum.radiance_wavelengths;
 const readers = internal.assets.readers;
 const sampling_table = internal.spectrum.sampling_table;
 const solve = internal.transport.solve;
+const solar_lookup = internal.spectrum.solar_lookup;
 const solar_table = internal.setup.solar_table;
 const spectrum_run = internal.spectrum.spectrum_run;
 
@@ -375,6 +376,139 @@ test "radianceAtWavelength checks caller-owned row shapes" {
             &memory,
         ),
     );
+}
+
+test "prefetchReferenceRadianceRowsSingleWorker fills dense direct-route rows" {
+    const allocator = std.testing.allocator;
+    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+        allocator,
+        internal.input.defaults.referenceCase(),
+    );
+    defer tables.deinit(allocator);
+
+    var sampling_rows = [_]sampling_table.SpectrumSamplingRow{
+        .{
+            .nominal_wavelength_nm = 758.0,
+            .radiance_wavelength_nm = 758.0,
+            .irradiance_wavelength_nm = 758.0,
+            .radiance_integration = sampling_table.IntegrationKernelRef.disabled(),
+            .irradiance_integration = sampling_table.IntegrationKernelRef.disabled(),
+        },
+        .{
+            .nominal_wavelength_nm = 760.0,
+            .radiance_wavelength_nm = 760.0,
+            .irradiance_wavelength_nm = 760.0,
+            .radiance_integration = sampling_table.IntegrationKernelRef.disabled(),
+            .irradiance_integration = sampling_table.IntegrationKernelRef.disabled(),
+        },
+    };
+    const table = sampling_table.SpectrumSamplingTable{ .rows = sampling_rows[0..] };
+    var wavelengths = try radiance_wavelengths.buildRadianceWavelengthList(allocator, table);
+    defer wavelengths.deinit(allocator);
+
+    const exact_wavelengths_nm = [_]f64{ 758.0, 760.0 };
+    const case = internal.input.defaults.referenceCase();
+    var profile_lines = try internal.cache.profile_line_memory.buildReferenceProfileLineValuesForWavelengths(
+        allocator,
+        case,
+        exact_wavelengths_nm[0..],
+    );
+    defer profile_lines.deinit(allocator);
+
+    const support_count = tables.layers.support_mid_altitudes_km.len;
+    const layer_count = tables.layers.layer_pressures_hpa.len;
+    const line_sigma = try allocator.alloc(f64, support_count);
+    defer allocator.free(line_sigma);
+    const expected_line_sigma = try allocator.alloc(f64, support_count);
+    defer allocator.free(expected_line_sigma);
+    const support = try allocator.alloc(layer_depths.SupportOptics, support_count);
+    defer allocator.free(support);
+    const expected_support = try allocator.alloc(layer_depths.SupportOptics, support_count);
+    defer allocator.free(expected_support);
+    const layers = try allocator.alloc(layer_depths.LayerOptics, layer_count);
+    defer allocator.free(layers);
+    const expected_layers = try allocator.alloc(layer_depths.LayerOptics, layer_count);
+    defer allocator.free(expected_layers);
+    const source_levels = try allocator.alloc(internal.optics.source_levels.SourceLevel, layer_count + 1);
+    defer allocator.free(source_levels);
+    const curved_samples = try allocator.alloc(internal.optics.curved_sun_path.CurvedSunPathSample, support_count);
+    defer allocator.free(curved_samples);
+    const curved_level_starts = try allocator.alloc(usize, layer_count + 1);
+    defer allocator.free(curved_level_starts);
+    const curved_level_altitudes = try allocator.alloc(f64, layer_count + 1);
+    defer allocator.free(curved_level_altitudes);
+
+    var dense: [2]radiance_results.RadianceResult = undefined;
+    var memory = internal.cache.transport_worker_memory.TransportWorkerMemory{};
+    defer memory.deinit(allocator);
+
+    const angles = solve.ViewAngles{ .solar_mu = 0.62, .view_mu = 0.48 };
+    const surface_albedo = 0.35;
+    const solve_config = controls.SolveConfig{
+        .derivative_mode = .semi_analytical,
+        .derivative_state_mask = jacobian_states.stateMask(.surface_albedo),
+        .controls = .{ .scattering = .none, .integrate_source_function = false },
+    };
+
+    try spectrum_run.prefetchReferenceRadianceRowsSingleWorker(
+        wavelengths.view(),
+        angles,
+        surface_albedo,
+        tables.layers,
+        profile_lines,
+        tables.cia,
+        tables.aerosol,
+        tables.phase,
+        tables.solar,
+        solve_config,
+        dense[0..],
+        line_sigma,
+        support,
+        layers,
+        source_levels,
+        curved_samples,
+        curved_level_starts,
+        curved_level_altitudes,
+        &memory,
+    );
+
+    for (exact_wavelengths_nm, 0..) |wavelength_nm, wavelength_index| {
+        try profile_lines.fillSupportLineSigmaAtWavelengthIndex(
+            tables.layers,
+            wavelength_index,
+            expected_line_sigma,
+        );
+        try layer_depths.fillSupportOpticsAtWavelength(
+            wavelength_nm,
+            tables.layers,
+            expected_line_sigma,
+            tables.cia,
+            tables.aerosol,
+            expected_support,
+        );
+        try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, expected_support, expected_layers);
+        layer_depths.fillLayerAerosolJacobians(tables.aerosol, solve_config.derivative_state_mask, expected_layers);
+
+        const reflectance = solve.directSurfaceOnly(
+            angles,
+            surface_albedo,
+            testTotalOpticalDepth(expected_layers),
+            solve_config.derivative_mode,
+            solve_config.derivative_state_mask,
+        );
+        const solar_irradiance = try solar_lookup.irradianceAtWavelength(tables.solar, wavelength_nm);
+        const expected = radiance_results.scaleReflectanceToRadiance(
+            solve_config,
+            reflectance,
+            angles.solar_mu,
+            solar_irradiance,
+        );
+
+        try std.testing.expectApproxEqAbs(expected.radiance, dense[wavelength_index].radiance, 1.0e-14);
+        try std.testing.expectApproxEqAbs(expected.jacobian[0], dense[wavelength_index].jacobian[0], 1.0e-14);
+        try std.testing.expectApproxEqAbs(0.0, dense[wavelength_index].jacobian[1], 0.0);
+        try std.testing.expectApproxEqAbs(0.0, dense[wavelength_index].jacobian[2], 0.0);
+    }
 }
 
 test "gatherProductRows gathers radiance irradiance and active Jacobian lanes" {

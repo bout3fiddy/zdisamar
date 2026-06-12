@@ -206,6 +206,103 @@ pub fn radianceAtWavelength(
     );
 }
 
+pub fn prefetchReferenceRadianceRowsSingleWorker(
+    wavelengths: radiance_wavelengths.RadianceWavelengthList,
+    angles: solve.ViewAngles,
+    surface_albedo: f64,
+    layer_grid: atmosphere_layers.LayerGrid,
+    profile_lines: profile_line_memory.ProfileLineValues,
+    cia: cia_table.O2CiaTable,
+    aerosol: aerosol_tables.AerosolLayerTable,
+    phase: phase_table.PhaseTable,
+    solar: solar_table.SolarTable,
+    solve_config: controls.SolveConfig,
+    out_dense_radiance: []radiance_results.RadianceResult,
+    out_line_sigma_cm2_per_molecule: []f64,
+    out_support: []layer_depths.SupportOptics,
+    out_layers: []layer_depths.LayerOptics,
+    out_source_levels: []source_levels.SourceLevel,
+    out_curved_samples: []curved_sun_path.CurvedSunPathSample,
+    out_curved_level_starts: []usize,
+    out_curved_level_altitudes_km: []f64,
+    worker_memory: *transport_worker_memory.TransportWorkerMemory,
+) !void {
+    // prefetchReferenceRadianceRowsSingleWorker ----------------------------------------------------------     |
+    // Fill dense high-resolution radiance rows from the explicit reference optics and transport route.         |
+    //                                                                                                          |
+    // provenance                                                                                               |
+    //   Ports the old single-worker dense prefetch order from main:                                            |
+    //   `grid_calculation/spectral_forward.zig` `prefetchForwardSamples` and                                   |
+    //   `computeForwardSampleAtWavelengthWithScratch`. The per-wavelength physics remains in                   |
+    //   `radianceAtWavelength`; this wrapper owns only exact-list iteration, solar lookup, and row writes.     |
+    //                                                                                                          |
+    // row contract                                                                                             |
+    //   out_dense_radiance[index] corresponds to wavelengths.wavelengths[index]. ProfileLineValues must be     |
+    //   built over the same exact list so the dense index is also the spectroscopy wavelength index.           |
+    //                                                                                                          |
+    // memory                                                                                                   |
+    //   Every support/layer/source/curved row is caller-owned scratch reused for each wavelength. Scattering   |
+    //   callers reserve TransportWorkerMemory before entry; direct-route callers do not need worker buffers.   |
+    // ---------------------------------------------------------------------------------------------------------|
+    const support_count = layer_grid.support_mid_altitudes_km.len;
+    const layer_count = layer_grid.layer_pressures_hpa.len;
+    const shape_matches = out_dense_radiance.len == wavelengths.wavelengths.len and
+        out_support.len == support_count and
+        out_line_sigma_cm2_per_molecule.len == support_count and
+        out_layers.len == layer_count and
+        out_source_levels.len == layer_count + 1 and
+        out_curved_samples.len >= support_count and
+        out_curved_level_starts.len == layer_count + 1 and
+        out_curved_level_altitudes_km.len == layer_count + 1;
+    if (!shape_matches) return error.ShapeMismatch;
+
+    if (wavelengths.wavelengths.len == 0) return;
+
+    // instrumentation: trace counter: high-resolution radiance rows ------------------------------------------ |
+    // captures: unique exact radiance wavelengths evaluated by this reference prefetch pass                    |
+    // why: distinguishes fewer transport solves from cheaper work per solve.                                   |
+    Trace.plotU("high_resolution_misses", @intCast(wavelengths.wavelengths.len));
+    // end instrumentation: trace counter: high-resolution radiance rows -------------------------------------- |
+
+    var start_index: usize = 0;
+    while (nextStaticChunk(&start_index, wavelengths.wavelengths.len)) |chunk| {
+
+        // instrumentation: trace zone: reference radiance prefetch chunk ------------------------------------- |
+        // captures: one single-worker reference prefetch chunk size and wall time                              |
+        // why: preserves the old chunk boundary while keeping per-wavelength optics visible separately.        |
+        const chunk_zone = Trace.deepStaticZone(@src(), "radiance_prefetch.reference_chunk");
+        chunk_zone.value(@intCast(chunk.len()));
+        defer chunk_zone.end();
+        // end instrumentation: trace zone: reference radiance prefetch chunk --------------------------------- |
+
+        for (chunk.start..chunk.end) |index| {
+            const wavelength = wavelengths.wavelengths[index];
+            const solar_irradiance = try solar_lookup.irradianceAtWavelength(solar, wavelength.wavelength_nm);
+            out_dense_radiance[index] = try radianceAtWavelength(
+                wavelength.wavelength_nm,
+                index,
+                angles,
+                surface_albedo,
+                layer_grid,
+                profile_lines,
+                cia,
+                aerosol,
+                phase,
+                solar_irradiance,
+                solve_config,
+                out_line_sigma_cm2_per_molecule,
+                out_support,
+                out_layers,
+                out_source_levels,
+                out_curved_samples,
+                out_curved_level_starts,
+                out_curved_level_altitudes_km,
+                worker_memory,
+            );
+        }
+    }
+}
+
 fn totalOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {
     // totalOpticalDepth ------------------------------------------------------------------------------------   |
     // Reduce explicit layer rows into the scalar optical depth used by the old direct-surface route.           |
