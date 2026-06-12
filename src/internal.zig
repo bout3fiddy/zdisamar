@@ -159,6 +159,22 @@ pub const transport = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
+// spectrum ---------------------------------------------------------------------------------------------------|
+// Namespace-only test import wrapper for WP3 spectrum sampling and exact wavelength modules.                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 0 B (0.000 KiB), align: 1 B                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+//   no stored fields                                                                                          |
+//                                                                                                             |
+// footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
+pub const spectrum = struct {
+    pub const radiance_wavelengths = @import("spectrum/radiance_wavelengths.zig");
+    pub const sampling_table = @import("spectrum/sampling_table.zig");
+};
+// ------------------------------------------------------------------------------------------------------------|
+
 // instrumentation --------------------------------------------------------------------------------------------|
 // Namespace-only test import wrapper for instrumentation facades.                                             |
 //                                                                                                             |
