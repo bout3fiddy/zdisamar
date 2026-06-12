@@ -7,6 +7,52 @@ const jacobian_states = internal.transport.jacobian_states;
 const radiance_results = internal.spectrum.radiance_results;
 const radiance_wavelengths = internal.spectrum.radiance_wavelengths;
 const sampling_table = internal.spectrum.sampling_table;
+const solve = internal.transport.solve;
+
+test "scaleReflectanceToRadiance ports old solar radiance scale and active Jacobian lanes" {
+    const mask = jacobian_states.stateMask(.surface_albedo) |
+        jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa);
+    const reflectance = solve.ReflectanceResult{
+        .reflectance = 0.42,
+        .jacobian = .{ 0.1, 0.2, 0.3 },
+    };
+    const solar_cosine = 0.5;
+    const solar_irradiance = 12.0;
+
+    const actual = radiance_results.scaleReflectanceToRadiance(
+        .{
+            .derivative_mode = .semi_analytical,
+            .derivative_state_mask = mask,
+        },
+        reflectance,
+        solar_cosine,
+        solar_irradiance,
+    );
+
+    const scale = solar_cosine * solar_irradiance / std.math.pi;
+    try std.testing.expectApproxEqAbs(0.42 * scale, actual.radiance, 1.0e-15);
+    try std.testing.expectApproxEqAbs(0.1 * scale, actual.jacobian[0], 1.0e-15);
+    try std.testing.expectApproxEqAbs(0.0, actual.jacobian[1], 0.0);
+    try std.testing.expectApproxEqAbs(0.3 * scale, actual.jacobian[2], 1.0e-15);
+}
+
+test "scaleReflectanceToRadiance zeros Jacobian when derivative mode is off" {
+    const actual = radiance_results.scaleReflectanceToRadiance(
+        .{
+            .derivative_mode = .none,
+            .derivative_state_mask = jacobian_states.all_states_mask,
+        },
+        .{
+            .reflectance = 0.25,
+            .jacobian = .{ 1.0, 2.0, 3.0 },
+        },
+        0.5,
+        8.0,
+    );
+
+    try std.testing.expectApproxEqAbs(0.25 * 0.5 * 8.0 / std.math.pi, actual.radiance, 1.0e-15);
+    try std.testing.expectEqual(jacobian_states.zero(), actual.jacobian);
+}
 
 test "integratePrefetchedRadianceAtNominal returns direct prefetched row" {
     const results = [_]radiance_results.RadianceResult{

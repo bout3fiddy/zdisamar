@@ -4,6 +4,7 @@ const radiance_wavelengths = @import("radiance_wavelengths.zig");
 const sampling_table = @import("sampling_table.zig");
 const controls = @import("../transport/controls.zig");
 const jacobian_states = @import("../transport/jacobian_states.zig");
+const solve = @import("../transport/solve.zig");
 
 pub const Error = error{
     ShapeMismatch,
@@ -21,6 +22,7 @@ pub const Error = error{
 //   RadianceWavelengthList rows give each nominal wavelength a slice of dense result indexes.                  |
 //   SpectrumSamplingRow carries the matching integration weights. This module applies those weights exactly    |
 //   once to radiance and active Jacobian lanes.                                                                |
+//   The dense prefetch route scales top-of-atmosphere reflectance into radiance units.                         |
 //                                                                                                              |
 // allocation                                                                                                   |
 //   This file allocates nothing. The caller owns dense result arrays, sample-index arrays, and kernel storage. |
@@ -40,6 +42,44 @@ pub const RadianceResult = struct {
     jacobian: jacobian_states.Vector = jacobian_states.zero(),
 };
 // ------------------------------------------------------------------------------------------------------------ |
+
+pub fn scaleReflectanceToRadiance(
+    solve_config: controls.SolveConfig,
+    reflectance: solve.ReflectanceResult,
+    solar_cosine: f64,
+    solar_irradiance: f64,
+) RadianceResult {
+    // scaleReflectanceToRadiance ---------------------------------------------------------------------------   |
+    // Pack one transport reflectance solve into the dense high-resolution radiance row used by spectrum        |
+    // gathering.                                                                                               |
+    //                                                                                                          |
+    // provenance                                                                                               |
+    //   Ports main:`src/forward_model/instrument_grid/grid_calculation/spectral_forward.zig`                   |
+    //   `radianceScaleFromForward` and `integratedSampleFromForward`.                                          |
+    //                                                                                                          |
+    // math                                                                                                     |
+    //   reflectance_factor = pi * L / (mu0 * E0)                                                               |
+    //   L                  = reflectance_factor * mu0 * E0 / pi                                                |
+    //   dL/dx              = d(reflectance_factor)/dx * mu0 * E0 / pi for active RTM states x                  |
+    //                                                                                                          |
+    // why no derivative of scale                                                                               |
+    //   The fixed Jacobian states perturb RTM reflectance, not solar irradiance or geometry, so the            |
+    //   product rule reduces to scale * d(reflectance_factor)/dx.                                              |
+    // ---------------------------------------------------------------------------------------------------------|
+    const scale = solar_cosine * solar_irradiance / std.math.pi;
+
+    const active_state_count = jacobian_states.activeStateCount(solve_config.derivative_state_mask);
+    const wants_jacobian = solve_config.derivative_mode != .none and active_state_count != 0;
+    const radiance_jacobian = if (wants_jacobian)
+        jacobian_states.scaleMasked(reflectance.jacobian, scale, solve_config.derivative_state_mask)
+    else
+        jacobian_states.zero();
+
+    return .{
+        .radiance = reflectance.reflectance * scale,
+        .jacobian = radiance_jacobian,
+    };
+}
 
 pub fn integratePrefetchedRadianceAtNominal(
     solve_config: controls.SolveConfig,
