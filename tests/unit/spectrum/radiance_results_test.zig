@@ -1,0 +1,123 @@
+const std = @import("std");
+
+const internal = @import("internal");
+
+const controls = internal.transport.controls;
+const jacobian_states = internal.transport.jacobian_states;
+const radiance_results = internal.spectrum.radiance_results;
+const radiance_wavelengths = internal.spectrum.radiance_wavelengths;
+const sampling_table = internal.spectrum.sampling_table;
+
+test "integratePrefetchedRadianceAtNominal returns direct prefetched row" {
+    const results = [_]radiance_results.RadianceResult{
+        .{ .radiance = 1.25, .jacobian = .{ 0.1, 0.2, 0.3 } },
+        .{ .radiance = 2.5, .jacobian = .{ 0.4, 0.5, 0.6 } },
+    };
+    const sample_indices = [_]u32{1};
+    const actual = try radiance_results.integratePrefetchedRadianceAtNominal(
+        .{},
+        results[0..],
+        .{ .start = 0 },
+        sample_indices[0..],
+        &sampling_table.IntegrationKernelRef.disabled(),
+        .{},
+    );
+
+    try std.testing.expectApproxEqAbs(2.5, actual.radiance, 0.0);
+    try std.testing.expectApproxEqAbs(0.4, actual.jacobian[0], 0.0);
+    try std.testing.expectApproxEqAbs(0.5, actual.jacobian[1], 0.0);
+    try std.testing.expectApproxEqAbs(0.6, actual.jacobian[2], 0.0);
+}
+
+test "integratePrefetchedRadianceAtNominal weights radiance and active Jacobian lanes" {
+    const results = [_]radiance_results.RadianceResult{
+        .{ .radiance = 10.0, .jacobian = .{ 1.0, 10.0, 100.0 } },
+        .{ .radiance = 20.0, .jacobian = .{ 2.0, 20.0, 200.0 } },
+        .{ .radiance = 40.0, .jacobian = .{ 4.0, 40.0, 400.0 } },
+    };
+    const sample_indices = [_]u32{ 2, 0, 1 };
+    const weights = [_]f64{ 0.25, 0.5, 0.25 };
+    const offsets = [_]f64{ -0.01, 0.0, 0.01 };
+    const integration = sampling_table.IntegrationKernelRef{
+        .side_start = 0,
+        .sample_count = 3,
+        .encoding = .side_samples,
+    };
+    const mask = jacobian_states.stateMask(.surface_albedo) |
+        jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa);
+
+    const actual = try radiance_results.integratePrefetchedRadianceAtNominal(
+        .{
+            .derivative_mode = .semi_analytical,
+            .derivative_state_mask = mask,
+        },
+        results[0..],
+        .{ .start = 0 },
+        sample_indices[0..],
+        &integration,
+        .{
+            .offsets_nm = offsets[0..],
+            .weights = weights[0..],
+        },
+    );
+
+    try std.testing.expectApproxEqAbs(20.0, actual.radiance, 0.0);
+    try std.testing.expectApproxEqAbs(2.0, actual.jacobian[0], 0.0);
+    try std.testing.expectApproxEqAbs(0.0, actual.jacobian[1], 0.0);
+    try std.testing.expectApproxEqAbs(200.0, actual.jacobian[2], 0.0);
+}
+
+test "integratePrefetchedRadianceAtNominal omits Jacobian when derivative mode is off" {
+    const results = [_]radiance_results.RadianceResult{
+        .{ .radiance = 1.0, .jacobian = .{ 1.0, 2.0, 3.0 } },
+        .{ .radiance = 3.0, .jacobian = .{ 4.0, 5.0, 6.0 } },
+    };
+    const sample_indices = [_]u32{ 0, 1 };
+    const weights = [_]f64{ 0.25, 0.75 };
+    const offsets = [_]f64{ 0.0, 0.01 };
+    const integration = sampling_table.IntegrationKernelRef{
+        .side_start = 0,
+        .sample_count = 2,
+        .encoding = .side_samples,
+    };
+    const actual = try radiance_results.integratePrefetchedRadianceAtNominal(
+        controls.SolveConfig{
+            .derivative_mode = .none,
+            .derivative_state_mask = jacobian_states.all_states_mask,
+        },
+        results[0..],
+        .{ .start = 0 },
+        sample_indices[0..],
+        &integration,
+        .{
+            .offsets_nm = offsets[0..],
+            .weights = weights[0..],
+        },
+    );
+
+    try std.testing.expectApproxEqAbs(2.5, actual.radiance, 0.0);
+    try std.testing.expectEqual(jacobian_states.zero(), actual.jacobian);
+}
+
+test "integratePrefetchedRadianceAtNominal rejects mismatched sample indexes" {
+    const results = [_]radiance_results.RadianceResult{
+        .{ .radiance = 1.0 },
+    };
+    const sample_indices = [_]u32{0};
+    const integration = sampling_table.IntegrationKernelRef{
+        .sample_count = 2,
+        .encoding = .inline_samples,
+    };
+
+    try std.testing.expectError(
+        error.ShapeMismatch,
+        radiance_results.integratePrefetchedRadianceAtNominal(
+            .{},
+            results[0..],
+            radiance_wavelengths.RadianceSampleIndexRef{ .start = 0 },
+            sample_indices[0..],
+            &integration,
+            .{},
+        ),
+    );
+}
