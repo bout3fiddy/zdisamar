@@ -356,6 +356,9 @@ fn solveLayerResolvedScattering(
     const wants_aerosol_optical_depth =
         config.derivative_mode != .none and
         jacobian_states.includes(config.derivative_state_mask, .aerosol_optical_depth);
+    const wants_any_jacobian =
+        config.derivative_mode != .none and
+        jacobian_states.activeStateCount(config.derivative_state_mask) != 0;
     const layer_phase_row_cache = work.phase_row_cache[0..level_count];
     const layer_phase_row_valid = work.phase_row_valid[0..level_count];
 
@@ -393,6 +396,19 @@ fn solveLayerResolvedScattering(
 
         const orders_view = choose_orders_view: {
             if (use_integrated_source) {
+                if (wants_any_jacobian) {
+                    break :choose_orders_view scattering_orders.solveOrdersWithActiveLocalSum(
+                        &work.orders,
+                        0,
+                        layer_count,
+                        geometry,
+                        runtime_attenuation.?,
+                        rt_layers,
+                        config.controls,
+                        order_count,
+                    );
+                }
+
                 break :choose_orders_view scattering_orders.solveOrdersWithActive(
                     &work.orders,
                     0,

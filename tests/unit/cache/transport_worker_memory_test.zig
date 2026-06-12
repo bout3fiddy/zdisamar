@@ -47,7 +47,7 @@ test "TransportWorkerMemory reserves active transport prefixes without physics i
     try std.testing.expectEqual(@as(usize, 4), orders.ud_tangent_local.len);
     try std.testing.expectEqual(@as(usize, 4), orders.rt_active.len);
 
-    const solve_work = try memory.solveWorkArrays(3, 6);
+    const solve_work = try memory.solveWorkArrays(3, 6, true);
     try std.testing.expectEqual(@as(usize, 96), solve_work.dynamic_attenuation_data.len);
     try std.testing.expectEqual(@as(usize, 96), solve_work.dynamic_attenuation_tangent_data.len);
     try std.testing.expectEqual(@as(usize, 18), solve_work.layer_transmittance.len);
@@ -55,6 +55,7 @@ test "TransportWorkerMemory reserves active transport prefixes without physics i
     try std.testing.expectEqual(@as(usize, 4), solve_work.rt_layers_tangent.len);
     try std.testing.expectEqual(@as(usize, 3), solve_work.layer_phase_max_indices.len);
     try std.testing.expectEqual(@as(usize, 4), solve_work.orders.ud.len);
+    try std.testing.expectEqual(@as(usize, 4), solve_work.orders.ud_sum_local.len);
     try std.testing.expectEqual(@as(usize, 3), solve_work.plm_basis_cache.len);
 }
 
@@ -119,6 +120,7 @@ test "TransportWorkerMemory rejects oversized borrowed prefixes" {
 
     try std.testing.expectError(error.ShapeMismatch, memory.layerRt(3));
     try std.testing.expectError(error.ShapeMismatch, memory.ordersWorkArrays(2, true));
+    try std.testing.expectError(error.ShapeMismatch, memory.solveWorkArrays(1, 4, true));
     try std.testing.expectError(
         error.ShapeMismatch,
         memory.layerEffectiveScatteringSuffixes(1, phase_table.coefficient_count + 1),

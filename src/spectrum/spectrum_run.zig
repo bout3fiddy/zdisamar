@@ -184,7 +184,14 @@ pub fn radianceAtWavelength(
             );
         }
 
-        var work = try worker_memory.solveWorkArrays(layer_count, prepared_config.controls.n_streams);
+        const needs_order_local_sum =
+            prepared_config.controls.integrate_source_function and
+            prepared_config.derivative_mode != .none;
+        var work = try worker_memory.solveWorkArrays(
+            layer_count,
+            prepared_config.controls.n_streams,
+            needs_order_local_sum,
+        );
         work.curved_level_starts = out_curved_level_starts;
         work.curved_level_altitudes_km = out_curved_level_altitudes_km;
         break :reflectance try solve.solveReflectance(

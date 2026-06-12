@@ -153,6 +153,7 @@ test "integrated scattering route accepts source rows and pseudo-spherical metad
         .{},
         .{},
     };
+    work.orders.ud_sum_local[0].U.col[0].set(0, 999.0);
     const result = try solve.solveReflectance(
         .{ .solar_mu = 0.58, .view_mu = 0.64 },
         0.3,
@@ -176,6 +177,8 @@ test "integrated scattering route accepts source rows and pseudo-spherical metad
 
     try std.testing.expectApproxEqAbs(0.3, result.reflectance, 1.0e-14);
     try std.testing.expect(result.jacobian[jacobian_states.stateIndex(.surface_albedo)] > 0.0);
+    try std.testing.expect(work.orders.ud_sum_local.len >= layers.len + 1);
+    try std.testing.expectEqual(@as(f64, 0.0), work.orders.ud_sum_local[0].U.col[0].get(0));
 }
 
 test "scattering route propagates AOD tangent and rejects pressure lane" {

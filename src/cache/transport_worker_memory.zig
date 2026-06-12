@@ -404,6 +404,7 @@ pub const TransportWorkerMemory = struct {
         self: *TransportWorkerMemory,
         layer_count: usize,
         stream_count: usize,
+        needs_local_sum: bool,
     ) Error!solve.TransportWorkArrays {
         // solveWorkArrays ---------------------------------------------------------------------------------   |
         // Borrow the active per-worker arrays consumed by `transport/solve.zig`.                              |
@@ -428,7 +429,7 @@ pub const TransportWorkerMemory = struct {
             .phase_row_valid = try self.phaseRowValid(level_count),
             .curved_level_starts = &.{},
             .curved_level_altitudes_km = &.{},
-            .orders = try self.ordersWorkArrays(level_count, false),
+            .orders = try self.ordersWorkArrays(level_count, needs_local_sum),
             .plm_basis_cache = self.plm_basis_cache,
             .plm_basis_cache_valid = self.plm_basis_cache_valid,
         };
