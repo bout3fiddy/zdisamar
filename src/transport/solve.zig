@@ -35,9 +35,29 @@ pub const Error = controls.PrepareError || attenuation.Error || gauss_angles.Err
 //   Inputs are explicit rows and scalars: angles, surface albedo, layer optics, source levels, curved-path    |
 //   samples, and prepared transport controls. This file stores no scene, request, product storage, or cache.  |
 //                                                                                                             |
+// main paths                                                                                                  |
+//   solveReflectance                                                                                          |
+//     -> directSurfaceOnly                       when scattering is disabled                                  |
+//     -> solveLayerResolvedScattering            when LABOS layer transport is active                         |
+//        -> attenuation fill                                                                                  |
+//        -> phase limits and layer RT rows                                                                    |
+//        -> scattering-order recurrence                                                                       |
+//        -> top or integrated-source reflectance coefficient                                                  |
+//        -> Fourier weighting and supported Jacobian columns                                                  |
+//                                                                                                             |
 // direct route                                                                                                |
 //   The old scalar direct path used one total optical depth. The new explicit boundary has layer rows, so the |
 //   direct route sums layer total optical depths before applying the same scalar formula.                     |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Spectrum workers call solveReflectance for each high-resolution forward miss. The scattering route loops  |
+//   retained Fourier terms, rebuilds RT rows for the current wavelength, transports scattering orders, and    |
+//   accumulates requested Jacobian columns. TransportWorkArrays keeps large buffers borrowed from worker      |
+//   memory so this file adds no per-wavelength allocation.                                                    |
+//                                                                                                             |
+// instrumentation                                                                                             |
+//   Perturbation hooks wrap aerosol tangent contributions only. Trace and telemetry for layer doubling,       |
+//   scattering-order convergence, and Fourier tail stops live in their owner files next to the measured work. |
 //                                                                                                             |
 // allocation                                                                                                  |
 //   This file allocates nothing. Callers pass borrowed work arrays sized before the per-wavelength solve.     |
@@ -144,6 +164,13 @@ pub fn solveReflectance(
     // solveReflectance -------------------------------------------------------------------------------------  |
     // Dispatch one explicit transport solve. The direct route follows old LABOS scalar behavior; the          |
     // scattering route wires the non-integrated Fourier path through caller-owned work arrays.                |
+    //                                                                                                         |
+    // steps                                                                                                   |
+    //   1. validate prepared controls and reject unsupported route combinations                               |
+    //   2. choose direct surface or layer-resolved LABOS transport                                            |
+    //   3. require integrated-source rows before accepting pressure Jacobians                                 |
+    //   4. build the borrowed curved-grid view for pseudo-spherical top paths                                 |
+    //   5. return reflectance plus fixed-order Jacobian vector                                                |
     //                                                                                                         |
     // direct math                                                                                             |
     //   direct path = exp(-tau / max(mu0, 0.05)) * exp(-tau / max(muv, 0.05))                                 |
@@ -269,6 +296,16 @@ fn solveLayerResolvedScattering(
     // aerosol Jacobians                                                                                       |
     //   Non-integrated AOD uses the old tangent-order solve. Integrated-source AOD and pressure use the old   |
     //   RTM-quadrature weighting route over source levels and local order sums.                               |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : one call per dense wavelength miss                                                         |
+    //   inner    : one loop over retained Fourier terms                                                       |
+    //   costly   : PLM basis fill, layer RT rows, scattering-order recurrence, integrated-source weighting    |
+    //   memory   : every large row comes from TransportWorkArrays                                             |
+    //                                                                                                         |
+    // instrumentation                                                                                         |
+    //   Perturbation hooks below wrap only the tangent scalar added into each Jacobian column. Disabled       |
+    //   product/test builds return the baseline value before calling any sweep sink.                          |
     // --------------------------------------------------------------------------------------------------------|
     if (layers.len == 0) return .{ .reflectance = 0.0 };
 
@@ -516,6 +553,11 @@ fn solveLayerResolvedScattering(
             };
 
             if (wants_aerosol_optical_depth) {
+
+                // instrumentation: perturbation: integrated aerosol-depth tangent --------------------------- |
+                // captures: Fourier-weighted RTM-quadrature aerosol optical-depth contribution                |
+                // why: test sensitivity of the integrated-source AOD Jacobian without changing base physics.  |
+
                 aerosol_optical_depth_tangent += Perturbation.scalar(
                     .aerosol_aod_tangent,
                     .{
@@ -524,9 +566,17 @@ fn solveLayerResolvedScattering(
                     },
                     contribution.weight * tangent.aerosol_optical_depth,
                 );
+
+                // end instrumentation: perturbation: integrated aerosol-depth tangent ----------------------- |
+
             }
 
             if (wants_aerosol_layer_pressure) {
+
+                // instrumentation: perturbation: integrated aerosol-pressure tangent ------------------------ |
+                // captures: Fourier-weighted RTM-quadrature aerosol pressure-shift contribution               |
+                // why: test sensitivity of the pressure Jacobian inherited by retrieval work.                 |
+
                 aerosol_layer_pressure_tangent += Perturbation.scalar(
                     .aerosol_pressure_tangent,
                     .{
@@ -535,6 +585,9 @@ fn solveLayerResolvedScattering(
                     },
                     contribution.weight * tangent.aerosol_layer_mid_pressure_hpa,
                 );
+
+                // end instrumentation: perturbation: integrated aerosol-pressure tangent -------------------- |
+
             }
         } else if (!use_integrated_source and wants_aerosol_optical_depth and evaluate_aerosol_tangent) {
             const tangent_attenuation = try attenuation.fillDynamicTangent(
@@ -572,6 +625,10 @@ fn solveLayerResolvedScattering(
             const tangent_rho_m =
                 reflectance_helpers.topReflectanceCoefficient(tangent_orders.ud, layer_count, geometry);
 
+            // instrumentation: perturbation: non-integrated aerosol-depth tangent --------------------------- |
+            // captures: Fourier-weighted tangent-order aerosol optical-depth contribution                     |
+            // why: compare old non-integrated tangent-order sensitivity against retained AOD gates.           |
+
             aerosol_optical_depth_tangent += Perturbation.scalar(
                 .aerosol_aod_tangent,
                 .{
@@ -580,6 +637,9 @@ fn solveLayerResolvedScattering(
                 },
                 contribution.weight * tangent_rho_m,
             );
+
+            // end instrumentation: perturbation: non-integrated aerosol-depth tangent ----------------------- |
+
         }
         if (contribution.tail_break) break;
     }

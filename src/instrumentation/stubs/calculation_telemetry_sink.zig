@@ -15,8 +15,9 @@
 //   still live here because public call sites name them through telemetry.zig regardless of build mode.       |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   Wavelength sampling, product simulation, LABOS, and OE keep their Telemetry.* hooks in place, but normal  |
-//   builds carry no thread-local writes, row assembly, allocator traffic, Parquet dependency, or sink branch. |
+//   Spectrum sampling, reflectance assembly, LABOS layer/order/Fourier decisions, and Jacobian columns keep   |
+//   their Telemetry.* hooks in place. Normal builds carry no thread-local writes, row assembly, allocator     |
+//   traffic, Parquet dependency, or sink branch.                                                              |
 //                                                                                                             |
 // memory                                                                                                      |
 //   Context is empty in the disabled variant. There is no retained state, no thread-local context, no row     |
@@ -54,8 +55,8 @@ pub const max_state_value_count = 3;
 //   no stored fields                                                                                          |
 //                                                                                                             |
 // disabled path                                                                                               |
-//   telemetry.zig returns this from currentContext and accepts it in setContext so product/OE code can keep   |
-//   one typed call surface without carrying thread-local telemetry state.                                     |
+//   telemetry.zig returns this from currentContext and accepts it in setContext so product and transport code |
+//   can keep one typed call surface without carrying thread-local telemetry state.                            |
 //                                                                                                             |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // footprint: per instance = 0 B; no row buffers, thread-local storage, or out-of-line payload                 |

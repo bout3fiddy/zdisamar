@@ -5,9 +5,10 @@ const sink = @import("perturbation_sensitivity_sink");
 // Perturbation-sensitivity facade for ablation sweeps around selected LABOS decisions.                          |
 //                                                                                                               |
 // called from                                                                                                   |
-//   LABOS execute wraps Fourier contribution, Fourier tail-stop, and aerosol tangent contributions.             |
-//   LABOS layers wraps q-series skip plus downstream R-D, T-U, and T-D product gates.                           |
-//   LABOS orders wraps initial and multiple-scattering convergence decisions.                                   |
+//   transport/reflectance.zig wraps Fourier contribution and Fourier tail-stop decisions.                       |
+//   transport/solve.zig wraps integrated and non-integrated aerosol tangent contributions.                      |
+//   transport/layer_reflect_transmit.zig wraps q-series skip plus downstream R-D, T-U, and T-D product gates.   |
+//   transport/scattering_orders.zig wraps initial and multiple-scattering convergence decisions.                |
 //   The active sweep implementation lives in scaffolding/instrumentation/perturbation; normal builds import     |
 //   the disabled sink stub.                                                                                     |
 //                                                                                                               |
@@ -25,9 +26,9 @@ const sink = @import("perturbation_sensitivity_sink");
 //   production-facing facade.                                                                                   |
 //                                                                                                               |
 // hot path                                                                                                      |
-//   LABOS calls scalar/decision inside Fourier, layer-doubling, and scattering-order loops. The channel is      |
-//   comptime, so disabled builds return the baseline before any sink call. Enabled runs pass one compact Coord  |
-//   by value plus the baseline scalar or branch decision to the external sweep sink.                            |
+//   Transport calls scalar/decision inside Fourier, layer-doubling, aerosol-Jacobian, and scattering-order      |
+//   loops. The channel is comptime, so disabled builds return the baseline before any sink call. Enabled runs   |
+//   pass one compact Coord by value plus the baseline scalar or branch decision to the external sweep sink.     |
 //                                                                                                               |
 // memory                                                                                                        |
 //   Channel is the stable u8 hook id written to the sink. Coord is a five-field i32 row so each hook can name   |

@@ -8,14 +8,13 @@ const SourceLocation = std.builtin.SourceLocation;
 // ztracy timeline facade used by product code without importing trace writers or CLI scaffolding.               |
 //                                                                                                               |
 // called from                                                                                                   |
-//   input/o2a_reference/run.zig marks case loading, scene build, optical setup, weak-cutoff, solar rewindow,    |
-//   and RTM config preparation.                                                                                 |
-//   instrument-grid calculation marks wavelength sampling, forward misses, prefetch workers, convolution,       |
-//   reflectance assembly, and Jacobian processing.                                                              |
-//   optical_properties/state_build marks absorber/profile setup, vertical support work, and parallel chunks.    |
-//   LABOS marks Fourier terms, PLM basis, layer build/doubling, orders, reflectance, and Jacobian weighting.    |
-//   optimal_estimation/retrieval marks iteration, RTM/Jacobian calls, normal-system solve, updates, and         |
-//   correction paths.                                                                                           |
+//   spectrum/spectrum_run.zig marks exact-wavelength work, dense radiance prefetch chunks, nominal row gather,  |
+//   postprocess bands, and reflectance assembly.                                                                |
+//   transport/solve.zig and transport/layer_reflect_transmit.zig mark LABOS Fourier terms, layer visits, phase  |
+//   matrix builds, doubling decisions, q-series work, and fixed-kernel product gates.                           |
+//   transport/scattering_orders.zig marks initial source setup, order transport, local source passes, retained  |
+//   order accumulation, convergence exits, and paired Gaussian dot products.                                    |
+//   cache/profile_line_memory.zig and setup refresh code may add retained setup zones as WP4/WP5 land.          |
 //                                                                                                               |
 // main paths                                                                                                    |
 //   enabled is true only when build_options.enable_ztracy is present and true. build.zig supplies either the    |
@@ -27,13 +26,13 @@ const SourceLocation = std.builtin.SourceLocation;
 //                                                                                                               |
 // runtime shape                                                                                                 |
 //   This facade owns no files, buffers, or capture lifecycle. Trace CLIs and retained trace outputs live under  |
-//   scaffolding/instrumentation; product code only sees these inline wrappers.                                  |
+//   scaffolding/instrumentation; product code only sees these inline wrappers and stable counter names.         |
 //                                                                                                               |
 // hot path                                                                                                      |
-//   Trace calls sit inside optical preparation chunks, wavelength-plan workers, LABOS Fourier/order loops,      |
-//   product simulation phases, and OE iterations. In normal builds, comptime enabled=false selects DisabledZone |
-//   and every inline wrapper returns before touching Tracy state. Trace harness builds keep the same call sites |
-//   but store the ztracy zone context in EnabledZone until end() is called.                                     |
+//   Trace calls sit inside exact-wavelength optics, spectrum prefetch, LABOS Fourier/order loops, fixed         |
+//   doubling kernels, and final spectrum assembly. In normal builds, comptime enabled=false selects             |
+//   DisabledZone and every inline wrapper returns before touching Tracy state. Trace harness builds keep the    |
+//   same call sites but store the ztracy zone context in EnabledZone until end() is called.                     |
 //                                                                                                               |
 // memory                                                                                                        |
 //   The product/test Zone is zero-size because DisabledZone stores no fields. Enabled trace harnesses carry     |

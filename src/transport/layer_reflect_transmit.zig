@@ -49,6 +49,16 @@ const phase_odd_reciprocal = build_phase_odd_reciprocal: {
 // memory                                                                                                      |
 //   The functions write caller-owned Mat rows and allocate no storage. Fixed stream_count=12 keeps the old    |
 //   constant-bound loop shape used by the O2 A LABOS route.                                                   |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   solve.zig enters fillLayerReflectTransmitRowsWithBasis for every retained Fourier term. Each active       |
+//   layer builds a Z+/Z- phase kernel, fills single-scatter R/T, and may run layer doubling. The 12x10 route  |
+//   keeps the old O2 A loop order and phase-timing buckets so trace output remains comparable to LABOS.       |
+//                                                                                                             |
+// instrumentation                                                                                             |
+//   Trace counters count layer visits, skip reasons, phase-row work, doubled layers, q-series decisions, and  |
+//   fixed matrix products. Telemetry records the numerical gates behind layer doubling. Perturbation hooks    |
+//   can override q-series and downstream product decisions only in explicit sensitivity builds.               |
 // ------------------------------------------------------------------------------------------------------------|
 
 fn locateLowerIndex(values: []const f64, target: f64) usize {
@@ -170,6 +180,15 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
     //                                                                                                         |
     // math                                                                                                    |
     //   layer RT maps tau, omega, and beta_l into reflection R and transmission T                             |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : every retained Fourier term in solveLayerResolvedScattering                                |
+    //   reads    : layer optical rows, phase table, PLM basis, optional suffix cache                          |
+    //   writes   : RT layer rows, optional active-layer mask, optional phase-row cache                        |
+    //                                                                                                         |
+    // instrumentation                                                                                         |
+    //   Trace counters are grouped by layer skip/build/doubling stage. Telemetry captures the threshold       |
+    //   inputs that decide whether a layer uses single scatter only or the doubling recurrence.               |
     // --------------------------------------------------------------------------------------------------------|
     const layer_count = layers.len;
     std.debug.assert(rt.len >= layer_count + 1);
@@ -177,11 +196,26 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
     if (phase_row_valid) |valid| valid[0] = false;
 
     for (layers, 0..) |layer, layer_index| {
+
+        // instrumentation: trace counter: layer visit ------------------------------------------------------- |
+        // captures: candidate physical layers inspected for this Fourier term                                 |
+        // why: separate phase-limit and empty-layer skips from retained layer work.                           |
+
         Trace.plotU("layer_visits", 1);
+
+        // end instrumentation: trace counter: layer visit --------------------------------------------------- |
 
         const rt_index = layer_index + 1;
         if (fourier_index >= phase_table.coefficient_count) {
+
+            // instrumentation: trace counter: Fourier outside phase table ----------------------------------- |
+            // captures: impossible Fourier rows rejected before phase work                                    |
+            // why: confirm capped Fourier loops stay within retained phase-table support.                     |
+
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
+
+            // end instrumentation: trace counter: Fourier outside phase table ------------------------------- |
+
             markInactiveLayer(rt, phase_row_valid, rt_active, rt_index, geometry.stream_count);
             continue;
         }
@@ -192,7 +226,15 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
             layerPhaseMaxIndex(layer, phase, rayleigh_phase_coefficient2);
 
         if (fourier_index > max_phase_index) {
+
+            // instrumentation: trace counter: Fourier beyond layer phase ------------------------------------ |
+            // captures: layer/Fourier pairs skipped because this layer has no active beta_l                   |
+            // why: validate phase-limit pruning against old LABOS layer rows.                                 |
+
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
+
+            // end instrumentation: trace counter: Fourier beyond layer phase -------------------------------- |
+
             markInactiveLayer(rt, phase_row_valid, rt_active, rt_index, geometry.stream_count);
             continue;
         }
@@ -201,7 +243,15 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
             layer.total_scattering_optical_depth <= 0.0 or
             layer.single_scatter_albedo <= 0.0)
         {
+
+            // instrumentation: trace counter: empty optical layer ------------------------------------------- |
+            // captures: layers with no usable scattering contribution                                         |
+            // why: distinguish physical empty layers from Fourier phase pruning.                              |
+
             Trace.plotU("layer_skipped_empty_optics", 1);
+
+            // end instrumentation: trace counter: empty optical layer --------------------------------------- |
+
             markInactiveLayer(rt, phase_row_valid, rt_active, rt_index, geometry.stream_count);
             continue;
         }
@@ -216,7 +266,14 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
             plm_basis,
             trace_phase_timing,
         );
+
+        // instrumentation: trace counter: phase matrix build ------------------------------------------------ |
+        // captures: retained layer phase-kernel rows built for this Fourier term                              |
+        // why: phase-row work is one of the fixed costs before layer doubling.                                |
+
         Trace.plotU("phase_matrix_builds", 1);
+
+        // end instrumentation: trace counter: phase matrix build -------------------------------------------- |
 
         if (phase_row_cache) |cache| {
             cachePhaseKernelViewRow(cache, rt_index, &z, geometry.viewIndex());
@@ -247,6 +304,10 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
             effective_scattering_depth,
         );
 
+        // instrumentation: calculation telemetry: layer doubling decision ----------------------------------- |
+        // captures: optical depth, effective scattering depth, threshold, and resolved doubling count         |
+        // why: audit the numerical gate that chooses single-scatter versus doubled layer RT rows.             |
+
         Telemetry.labosLayerDecision(
             fourier_index,
             layer_index,
@@ -261,6 +322,8 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
             doubling_decision.uses_doubling,
         );
 
+        // end instrumentation: calculation telemetry: layer doubling decision ------------------------------- |
+
         const needs_renormalized_phase =
             doubling_decision.uses_doubling and
             fourier_index == 0 and
@@ -271,11 +334,26 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
             const mu = @max(geometry.u[stream_index], layer_direction_cosine_floor);
             attenuation.data[stream_index] = math.exp(-doubling_decision.start_optical_depth / mu);
         }
+
+        // instrumentation: trace counter: initial attenuation exponentials ---------------------------------- |
+        // captures: exp(-tau / mu) evaluations before single-scatter R/T fill                                 |
+        // why: show the per-layer stream work that precedes any doubling recurrence.                          |
+
         Trace.plotU("initial_exp_evals", @intCast(geometry.stream_count));
+
+        // end instrumentation: trace counter: initial attenuation exponentials ------------------------------ |
 
         if (needs_renormalized_phase) {
             renormalizeZeroFourierPhaseKernel(geometry, &z.zplus, &z.zmin);
+
+            // instrumentation: trace counter: phase renormalization ----------------------------------------- |
+            // captures: old zero-Fourier phase-renormalization branch                                         |
+            // why: verify when O2 A uses the legacy normalized phase function path.                           |
+
             Trace.plotU("phase_renormalizations", 1);
+
+            // end instrumentation: trace counter: phase renormalization ------------------------------------- |
+
         }
 
         const layer_rt = &rt[rt_index];
@@ -288,11 +366,26 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
             &z.zplus,
             geometry,
         );
+
+        // instrumentation: trace counter: single-scatter matrices ------------------------------------------- |
+        // captures: single-scatter R and T fills before optional doubling                                     |
+        // why: separate base layer RT cost from repeated doubling updates.                                    |
+
         Trace.plotU("single_scatter_r", 1);
         Trace.plotU("single_scatter_t", 1);
 
+        // end instrumentation: trace counter: single-scatter matrices --------------------------------------- |
+
         if (doubling_decision.uses_doubling) {
+
+            // instrumentation: trace counter: doubled layer ------------------------------------------------- |
+            // captures: layers entering old doubling recurrence                                               |
+            // why: correlate threshold decisions with expensive q-series work.                                |
+
             Trace.plotU("doubled_layers", 1);
+
+            // end instrumentation: trace counter: doubled layer --------------------------------------------- |
+
             doubleLayer(
                 doubling_decision.doubling_count,
                 geometry.stream_count,
@@ -988,6 +1081,11 @@ pub fn doubleLayer(
     // memory                                                                                                  |
     //   Uses two caller-stack scratch matrices for next R/T plus one temporary D per step. No heap storage    |
     //   enters the per-layer transport loop.                                                                  |
+    //                                                                                                         |
+    // instrumentation                                                                                         |
+    //   Trace counts each doubling step and attenuation square before the step result is swapped forward.     |
+    //   Perturbation gates the q-series skip decision using the Gaussian-block trace of R, and telemetry      |
+    //   records the same trace pair so threshold studies can compare dynamic and fixed 12x10 routes.          |
     // --------------------------------------------------------------------------------------------------------|
 
     if (n == rows.max_stream_count and n_gauss == rows.max_gauss) {
@@ -1092,6 +1190,11 @@ fn doubleLayer12x10(
     // memory                                                                                                  |
     //   Uses two stack scratch matrices and pointer swaps. The fixed kernels write caller-owned storage and   |
     //   keep constant loop bounds visible to the optimizer.                                                   |
+    //                                                                                                         |
+    // instrumentation                                                                                         |
+    //   Trace and phase_timing counters keep the old `doDouble12x10` step and attenuation-square buckets.     |
+    //   The per-step q-series and downstream-product gates live in doubleLayer12x10Step so the counters stay  |
+    //   next to the fixed matrix kernels they measure.                                                        |
     // --------------------------------------------------------------------------------------------------------|
 
     var r_storage: rows.Mat = undefined;
@@ -1164,6 +1267,10 @@ fn doubleLayerStep(
     // math                                                                                                    |
     //   The q-series gate decides D. The downstream R-D, T-U, and T-D gates then choose between retained      |
     //   Gaussian products and diagonal-scale updates for U, R, and T.                                         |
+    //                                                                                                         |
+    // instrumentation                                                                                         |
+    //   Trace counts which matrix product branch is taken. Perturbation may flip only the q-series, R-D,      |
+    //   T-U, and T-D threshold decisions. Telemetry records the trace values and final downstream gates.      |
     // --------------------------------------------------------------------------------------------------------|
 
     var d_storage: rows.Mat = undefined;
@@ -1301,6 +1408,11 @@ inline fn doubleLayer12x10Step(
     // math                                                                                                    |
     //   Uses the same Q/D/U/R/T equations as doubleLayerStep, with fixed matrix helper kernels for each       |
     //   retained or skipped product branch.                                                                   |
+    //                                                                                                         |
+    // instrumentation                                                                                         |
+    //   Trace counters keep old matrix-kernel names. phase_timing buckets split q-series, R-D, T-U, and T-D   |
+    //   work without changing the fixed update order. Perturbation and telemetry share the same Coord fields  |
+    //   as the dynamic route so sensitivity sweeps can compare both kernels.                                  |
     // --------------------------------------------------------------------------------------------------------|
 
     const threshold_mul = thresholds.threshold_mul;

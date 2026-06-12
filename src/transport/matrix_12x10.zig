@@ -27,6 +27,21 @@ const lu_diagonal_floor: f64 = 1.0e-30;
 //   threshold, the product is treated as negligible and a zero matrix is returned.                            |
 //   threshold_q skips the q-series inverse when AB_gg is negligible. lu_diagonal_floor returns the bounded AB |
 //   product when a pivot would make the inverse unstable.                                                     |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   layer_reflect_transmit.zig calls these kernels inside every retained layer-doubling step. The fixed       |
+//   n=12, n_gauss=10 path is the O2 A LABOS route; generic n exists for unsupported or test geometries that   |
+//   still use the same algebra. Caller-owned `Into` variants keep temporary Mat values under the layer code   |
+//   owner so the hot path does not allocate or copy through heap storage.                                     |
+//                                                                                                             |
+// storage                                                                                                     |
+//   Mat is row-major with a fixed backing array. The active matrix dimension n controls the live prefix; the  |
+//   Gaussian block is the n_gauss x n_gauss upper-left block. Fixed kernels spell out constant loop bounds    |
+//   and diagonal indexes so the compiler sees the same small kernel shape as old LABOS.                       |
+//                                                                                                             |
+// instrumentation                                                                                             |
+//   This file contains no Trace/Telemetry/Perturbation calls. Instrumentation lives at the branch owner in    |
+//   layer_reflect_transmit.zig, where the code still knows the Fourier, layer, and doubling-step coordinates. |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {

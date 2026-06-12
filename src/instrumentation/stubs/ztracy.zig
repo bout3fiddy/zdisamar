@@ -20,8 +20,9 @@ const Src = std.builtin.SourceLocation;
 //   markers and plots discard their inputs, and TracyAllocator hands back the child allocator unchanged.      |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   RTM preparation, wavelength sampling, LABOS, OE, and trace scaffolding can keep Trace.* calls around      |
-//   expensive phases. Disabled builds do not allocate zones, emit messages, touch counters, or link Tracy.    |
+//   Input/setup preparation, spectrum sampling, LABOS transport, and trace scaffolding can keep Trace.* calls |
+//   around expensive phases. Disabled builds do not allocate zones, emit messages, touch counters, or link    |
+//   Tracy.                                                                                                    |
 //                                                                                                             |
 // memory                                                                                                      |
 //   ZoneCtx is zero-size. TracyAllocator stores only the borrowed child allocator handle; it does not wrap    |
