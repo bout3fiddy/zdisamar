@@ -152,8 +152,7 @@ pub fn solveReflectance(
     //   reflectance = surface_albedo * direct path                                                            |
     //                                                                                                         |
     // unsupported routes                                                                                      |
-    //   Integrated-source aerosol and pressure Jacobian lanes are rejected until their old weighting routes   |
-    //   are fully ported.                                                                                     |
+    //   Pressure derivatives require the integrated-source RTM quadrature weighting route.                    |
     // --------------------------------------------------------------------------------------------------------|
     const config = try controls.prepareSolveConfig(prepared_config);
     if (config.controls.scattering == .none) {
@@ -167,15 +166,9 @@ pub fn solveReflectance(
         );
     }
 
-    if (config.derivative_mode != .none and
-        jacobian_states.includes(config.derivative_state_mask, .aerosol_layer_mid_pressure_hpa))
-    {
-        return error.UnsupportedDerivativeMode;
-    }
-
-    const wants_aerosol_optical_depth =
+    const wants_aerosol_layer_pressure =
         config.derivative_mode != .none and
-        jacobian_states.includes(config.derivative_state_mask, .aerosol_optical_depth);
+        jacobian_states.includes(config.derivative_state_mask, .aerosol_layer_mid_pressure_hpa);
     const use_integrated_source =
         config.controls.integrate_source_function and
         layers.len > 1 and
@@ -183,7 +176,7 @@ pub fn solveReflectance(
     if (config.controls.integrate_source_function and !use_integrated_source) {
         return error.UnsupportedRadiativeTransferControls;
     }
-    if (use_integrated_source and wants_aerosol_optical_depth) {
+    if (!use_integrated_source and wants_aerosol_layer_pressure) {
         return error.UnsupportedDerivativeMode;
     }
 
@@ -275,9 +268,9 @@ fn solveLayerResolvedScattering(
     //   4. add Fourier-weighted rho_m and requested supported tangents                                        |
     //   5. stop at the old Fourier tail gate and clamp the public reflectance                                 |
     //                                                                                                         |
-    // unsupported here                                                                                        |
-    //   Integrated-source aerosol/pressure derivatives are separate old weighting routes and stay rejected    |
-    //   by the caller.                                                                                        |
+    // aerosol Jacobians                                                                                       |
+    //   Non-integrated AOD uses the old tangent-order solve. Integrated-source AOD and pressure use the old   |
+    //   RTM-quadrature weighting route over source levels and local order sums.                               |
     // --------------------------------------------------------------------------------------------------------|
     if (layers.len == 0) return .{ .reflectance = 0.0 };
 
@@ -356,6 +349,9 @@ fn solveLayerResolvedScattering(
     const wants_aerosol_optical_depth =
         config.derivative_mode != .none and
         jacobian_states.includes(config.derivative_state_mask, .aerosol_optical_depth);
+    const wants_aerosol_layer_pressure =
+        config.derivative_mode != .none and
+        jacobian_states.includes(config.derivative_state_mask, .aerosol_layer_mid_pressure_hpa);
     const wants_any_jacobian =
         config.derivative_mode != .none and
         jacobian_states.activeStateCount(config.derivative_state_mask) != 0;
@@ -365,6 +361,7 @@ fn solveLayerResolvedScattering(
     var result_reflectance: f64 = 0.0;
     var surface_albedo_tangent: f64 = 0.0;
     var aerosol_optical_depth_tangent: f64 = 0.0;
+    var aerosol_layer_pressure_tangent: f64 = 0.0;
     for (0..fourier_max + 1) |fourier_index| {
         const plm_basis = try cachedPlmBasis(
             fourier_index,
@@ -463,7 +460,82 @@ fn solveLayerResolvedScattering(
         if (wants_surface_albedo and fourier_index == 0) {
             surface_albedo_tangent += reflectance_helpers.surfaceAlbedoWeighting(orders_view.ud, geometry);
         }
-        if (wants_aerosol_optical_depth) {
+        const evaluate_aerosol_tangent =
+            config.controls.performance_thresholds.shouldEvaluateAerosolTangent(fourier_index);
+        if (use_integrated_source and evaluate_aerosol_tangent and
+            (wants_aerosol_optical_depth or wants_aerosol_layer_pressure))
+        {
+            const tangent = choose_integrated_aerosol_tangent: {
+                if (wants_aerosol_optical_depth and wants_aerosol_layer_pressure) {
+                    break :choose_integrated_aerosol_tangent reflectance_helpers.integratedAerosolDerivativeWeighting(
+                        layers,
+                        level_sources,
+                        orders_view.ud,
+                        orders_view.ud_sum_local,
+                        layer_count,
+                        fourier_index,
+                        config.controls.use_spherical_correction,
+                        geometry,
+                        plm_basis,
+                        phase,
+                    );
+                }
+
+                if (wants_aerosol_optical_depth) {
+                    break :choose_integrated_aerosol_tangent reflectance_helpers.AerosolDerivativeWeighting{
+                        .aerosol_optical_depth = reflectance_helpers.integratedAerosolOpticalDepthWeighting(
+                            layers,
+                            level_sources,
+                            orders_view.ud,
+                            orders_view.ud_sum_local,
+                            layer_count,
+                            fourier_index,
+                            config.controls.use_spherical_correction,
+                            geometry,
+                            plm_basis,
+                            phase,
+                        ),
+                    };
+                }
+
+                break :choose_integrated_aerosol_tangent reflectance_helpers.AerosolDerivativeWeighting{
+                    .aerosol_layer_mid_pressure_hpa = reflectance_helpers.integratedAerosolLayerPressureShiftWeighting(
+                        layers,
+                        level_sources,
+                        orders_view.ud,
+                        orders_view.ud_sum_local,
+                        layer_count,
+                        fourier_index,
+                        config.controls.use_spherical_correction,
+                        geometry,
+                        plm_basis,
+                        phase,
+                    ),
+                };
+            };
+
+            if (wants_aerosol_optical_depth) {
+                aerosol_optical_depth_tangent += Perturbation.scalar(
+                    .aerosol_aod_tangent,
+                    .{
+                        .fourier_index = @intCast(fourier_index),
+                        .state_index = @intCast(jacobian_states.stateIndex(.aerosol_optical_depth)),
+                    },
+                    contribution.weight * tangent.aerosol_optical_depth,
+                );
+            }
+
+            if (wants_aerosol_layer_pressure) {
+                aerosol_layer_pressure_tangent += Perturbation.scalar(
+                    .aerosol_pressure_tangent,
+                    .{
+                        .fourier_index = @intCast(fourier_index),
+                        .state_index = @intCast(jacobian_states.stateIndex(.aerosol_layer_mid_pressure_hpa)),
+                    },
+                    contribution.weight * tangent.aerosol_layer_mid_pressure_hpa,
+                );
+            }
+        } else if (!use_integrated_source and wants_aerosol_optical_depth and evaluate_aerosol_tangent) {
             const tangent_attenuation = try attenuation.fillDynamicTangent(
                 work.dynamic_attenuation_tangent_data,
                 layers,
@@ -482,6 +554,7 @@ fn solveLayerResolvedScattering(
                 rayleigh_phase_coefficient2,
                 plm_basis,
             );
+
             const tangent_orders = scattering_orders.solveOrdersTangent(
                 &work.orders,
                 0,
@@ -494,8 +567,10 @@ fn solveLayerResolvedScattering(
                 config.controls,
                 order_count,
             );
+
             const tangent_rho_m =
                 reflectance_helpers.topReflectanceCoefficient(tangent_orders.ud, layer_count, geometry);
+
             aerosol_optical_depth_tangent += Perturbation.scalar(
                 .aerosol_aod_tangent,
                 .{
@@ -514,6 +589,9 @@ fn solveLayerResolvedScattering(
     }
     if (wants_aerosol_optical_depth) {
         jacobian_states.set(&jacobian, .aerosol_optical_depth, aerosol_optical_depth_tangent);
+    }
+    if (wants_aerosol_layer_pressure) {
+        jacobian_states.set(&jacobian, .aerosol_layer_mid_pressure_hpa, aerosol_layer_pressure_tangent);
     }
     return .{
         .reflectance = reflectance_helpers.clampPublicReflectance(result_reflectance),

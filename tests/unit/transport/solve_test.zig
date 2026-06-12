@@ -9,6 +9,7 @@ const phase_basis = internal.transport.phase_basis;
 const phase_table = internal.setup.phase_table;
 const rows = internal.transport.rows;
 const solve = internal.transport.solve;
+const source_levels = internal.optics.source_levels;
 
 const tangent_step: f64 = 1.0e-5;
 
@@ -72,7 +73,7 @@ test "direct surface solve respects active Jacobian mask and public clamp" {
     try std.testing.expectEqual(@as(f64, 0.0), jacobian_states.get(clamped.jacobian, .surface_albedo));
 }
 
-test "solveReflectance rejects unported integrated and spherical LABOS controls" {
+test "solveReflectance rejects malformed integrated and spherical direct controls" {
     var storage = TestSolveWorkStorage{};
     var work = storage.work();
 
@@ -179,6 +180,44 @@ test "integrated scattering route accepts source rows and pseudo-spherical metad
     try std.testing.expect(result.jacobian[jacobian_states.stateIndex(.surface_albedo)] > 0.0);
     try std.testing.expect(work.orders.ud_sum_local.len >= layers.len + 1);
     try std.testing.expectEqual(@as(f64, 0.0), work.orders.ud_sum_local[0].U.col[0].get(0));
+}
+
+test "integrated scattering route propagates aerosol AOD and pressure tangents" {
+    var storage = TestSolveWorkStorage{};
+    var work = storage.work();
+    const layers = integratedAerosolLayers();
+    const levels = integratedAerosolSourceLevels();
+    const mask =
+        jacobian_states.stateMask(.aerosol_optical_depth) |
+        jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa);
+
+    const result = try solve.solveReflectance(
+        .{ .solar_mu = 0.58, .view_mu = 0.64 },
+        0.3,
+        &layers,
+        &levels,
+        &.{},
+        testPhase(),
+        0.5,
+        .{
+            .derivative_mode = .semi_analytical,
+            .derivative_state_mask = mask,
+            .controls = .{
+                .scattering = .single,
+                .n_streams = 8,
+                .integrate_source_function = true,
+            },
+        },
+        &work,
+    );
+    const aod = jacobian_states.get(result.jacobian, .aerosol_optical_depth);
+    const pressure = jacobian_states.get(result.jacobian, .aerosol_layer_mid_pressure_hpa);
+
+    try std.testing.expect(std.math.isFinite(result.reflectance));
+    try std.testing.expect(std.math.isFinite(aod));
+    try std.testing.expect(std.math.isFinite(pressure));
+    try std.testing.expect(@abs(aod) > 1.0e-12);
+    try std.testing.expect(@abs(pressure) > 1.0e-12);
 }
 
 test "scattering route propagates AOD tangent and rejects pressure lane" {
@@ -391,4 +430,55 @@ fn perturbAodLayer(layer: *layer_depths.LayerOptics, signed_step: f64) void {
         0.0,
         1.0,
     );
+}
+
+fn integratedAerosolLayers() [2]layer_depths.LayerOptics {
+    // integratedAerosolLayers ------------------------------------------------------------------------------  |
+    // Synthetic positive-scattering layers for solve-level integrated aerosol derivative tests.               |
+    // --------------------------------------------------------------------------------------------------------|
+    return .{
+        .{
+            .gas_absorption_optical_depth = 0.04,
+            .gas_scattering_optical_depth = 0.01,
+            .aerosol_optical_depth = 0.08,
+            .aerosol_scattering_optical_depth = 0.04,
+            .total_optical_depth = 0.13,
+            .total_scattering_optical_depth = 0.05,
+            .single_scatter_albedo = 0.38,
+        },
+        .{
+            .gas_absorption_optical_depth = 0.03,
+            .gas_scattering_optical_depth = 0.01,
+            .aerosol_optical_depth = 0.06,
+            .aerosol_scattering_optical_depth = 0.03,
+            .total_optical_depth = 0.10,
+            .total_scattering_optical_depth = 0.04,
+            .single_scatter_albedo = 0.40,
+        },
+    };
+}
+
+fn integratedAerosolSourceLevels() [3]source_levels.SourceLevel {
+    // integratedAerosolSourceLevels ------------------------------------------------------------------------  |
+    // Three RTM source levels with one active aerosol derivative node bounded by bottom/top interfaces.       |
+    // --------------------------------------------------------------------------------------------------------|
+    return .{
+        .{
+            .altitude_km = 0.0,
+            .aerosol_ksca_above_per_km = 0.07,
+        },
+        .{
+            .altitude_km = 1.0,
+            .weight_km = 1.0,
+            .scattering_per_km = 0.09,
+            .aerosol_ksca_above_per_km = 0.07,
+            .aerosol_ksca_below_per_km = 0.07,
+            .aerosol_ksca_jacobian = 0.18,
+            .phase_aerosol_weight = 1.0,
+        },
+        .{
+            .altitude_km = 2.0,
+            .aerosol_ksca_below_per_km = 0.07,
+        },
+    };
 }
