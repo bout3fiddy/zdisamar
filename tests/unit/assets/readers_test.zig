@@ -16,6 +16,29 @@ test "asset readers load reference profile, line list, CIA, and solar rows" {
     try std.testing.expectEqual(@as(u16, 7), lines[0].gas_index);
     try std.testing.expectEqual(@as(u8, 1), lines[0].isotope_number);
 
+    const strong_lines = try internal.assets.readers.readO2StrongLines(allocator, case.line_gas.strong_lines.path);
+    defer allocator.free(strong_lines);
+    try std.testing.expectEqual(@as(usize, 70), strong_lines.len);
+
+    // Source: data/reference_data/cross_sections/o2a_lisa_sdf.dat first row, parsed with
+    // main:src/input/reference_data/ingest/reference_assets_formats.zig parseLisaSdf.
+    try std.testing.expectApproxEqAbs(12965.107900, strong_lines[0].center_wavenumber_cm1, 0.0);
+    try std.testing.expectApproxEqAbs(771.3009469053474, strong_lines[0].center_wavelength_nm, 1.0e-12);
+    try std.testing.expectApproxEqAbs(0.0000510, strong_lines[0].population_t0, 1.0e-12);
+    try std.testing.expectApproxEqAbs(0.02828068983548333, strong_lines[0].air_half_width_cm1, 1.0e-15);
+    try std.testing.expectEqual(@as(i32, -35), strong_lines[0].rotational_index_m1);
+
+    var relaxation_matrix = try internal.assets.readers.readO2RelaxationMatrix(
+        allocator,
+        case.line_gas.line_mixing.path,
+    );
+    defer relaxation_matrix.deinit(allocator);
+    try std.testing.expectEqual(@as(usize, 70), relaxation_matrix.line_count);
+
+    // Source: data/reference_data/cross_sections/o2a_lisa_rmf.dat first row.
+    try std.testing.expectApproxEqAbs(0.02764486, relaxation_matrix.weightAt(0, 0), 0.0);
+    try std.testing.expectApproxEqAbs(0.629999646133, relaxation_matrix.temperatureExponentAt(0, 0), 0.0);
+
     var cia = try internal.assets.readers.readCiaTable(allocator, case.cia.table.path);
     defer cia.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 18938), cia.rows.len);

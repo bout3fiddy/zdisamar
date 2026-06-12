@@ -8,7 +8,7 @@ test "O2RunTables match WP1 baseline table evidence" {
     );
     defer tables.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(usize, 1848), @sizeOf(internal.setup.o2_run_tables.O2RunTables));
+    try std.testing.expectEqual(@as(usize, 1904), @sizeOf(internal.setup.o2_run_tables.O2RunTables));
 
     try std.testing.expectEqual(@as(usize, 45), tables.layers.layer_pressures_hpa.len);
     try std.testing.expectEqual(@as(usize, 226), tables.layers.support_pressures_hpa.len);
@@ -47,12 +47,19 @@ test "O2RunTables match WP1 baseline table evidence" {
     }
 
     try std.testing.expectEqual(@as(usize, 1314), tables.lines.rows.len);
+    try std.testing.expectEqual(@as(usize, 70), tables.lines.strong_lines.len);
+    try std.testing.expectEqual(@as(usize, 70), tables.lines.relaxation_matrix.line_count);
 
     // Source: evidence/baseline-main-56605387/internal-dump-baseline.json
     // first diagnostic line anchor from the old internal dump.
 
     const diagnostic_line = findLineByWavenumber(tables.lines.rows, 13165.249392) orelse return error.MissingLine;
     try std.testing.expectApproxEqAbs(759.5754324317322, diagnostic_line.center_wavelength_nm, 1.0e-12);
+
+    // Source: data/reference_data/cross_sections/o2a_lisa_sdf.dat and o2a_lisa_rmf.dat first rows,
+    // parsed with main:src/input/reference_data/ingest/reference_assets_formats.zig parseLisaSdf/parseLisaRmf.
+    try std.testing.expectApproxEqAbs(12965.107900, tables.lines.strong_lines[0].center_wavenumber_cm1, 0.0);
+    try std.testing.expectApproxEqAbs(0.02764486, tables.lines.relaxation_matrix.weightAt(0, 0), 0.0);
 
     try std.testing.expectEqual(@as(usize, 18938), tables.cia.rows.len);
     try std.testing.expectApproxEqAbs(260.0, tables.cia.rows[0].wavelength_nm, 0.0);

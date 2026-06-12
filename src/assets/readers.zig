@@ -15,6 +15,8 @@ const Allocator = std.mem.Allocator;
 // supported formats                                                                                           |
 //   profile_csv         : altitude, pressure, temperature, air-number-density CSV rows                        |
 //   hitran_par_o2a      : fixed-width HITRAN line rows for the O2 A line list                                 |
+//   lisa_sdf            : LISA/DISAMAR O2 strong-line sidecar rows                                            |
+//   lisa_rmf            : LISA/DISAMAR O2 relaxation-matrix sidecar rows                                      |
 //   bira_cia            : BIRA O2-O2 polynomial table with scale/header rows                                  |
 //   solar_reference_csv : wavelength, irradiance CSV rows                                                     |
 // ------------------------------------------------------------------------------------------------------------|
@@ -65,6 +67,85 @@ pub const O2LineAssetRow = struct {
     lower_state_energy_cm1: f64,
     temperature_exponent: f64,
     pressure_shift_cm1: f64,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// O2StrongLineAssetRow ---------------------------------------------------------------------------------------|
+// Parsed LISA SDF strong-line sidecar row used by the old O2 line-mixing route.                               |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 96 B (0.094 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] center_wavenumber_cm1 : f64                                                                        |
+// [ 8..15] center_wavelength_nm  : f64                                                                        |
+// [16..23] population_t0         : f64                                                                        |
+// [24..31] dipole_ratio          : f64                                                                        |
+// [32..39] dipole_t0             : f64                                                                        |
+// [40..47] lower_state_energy_cm1: f64                                                                        |
+// [48..55] air_half_width_cm1    : f64                                                                        |
+// [56..63] air_half_width_nm     : f64                                                                        |
+// [64..71] temperature_exponent  : f64                                                                        |
+// [72..79] pressure_shift_cm1    : f64                                                                        |
+// [80..87] pressure_shift_nm     : f64                                                                        |
+// [88..91] rotational_index_m1   : i32                                                                        |
+// [92..95] trailing padding      : 4 B                                                                        |
+pub const O2StrongLineAssetRow = struct {
+    center_wavenumber_cm1: f64,
+    center_wavelength_nm: f64,
+    population_t0: f64,
+    dipole_ratio: f64,
+    dipole_t0: f64,
+    lower_state_energy_cm1: f64,
+    air_half_width_cm1: f64,
+    air_half_width_nm: f64,
+    temperature_exponent: f64,
+    pressure_shift_cm1: f64,
+    pressure_shift_nm: f64,
+    rotational_index_m1: i32,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// O2RelaxationMatrixAsset ------------------------------------------------------------------------------------|
+// Parsed LISA RMF relaxation matrix used by the old O2 line-mixing route.                                     |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] line_count : usize                                                                                 |
+// [ 8..23] wt0        : []f64                                                                                 |
+// [24..39] bw         : []f64                                                                                 |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   wt0 and bw own line_count * line_count f64 values and are released by deinit.                             |
+pub const O2RelaxationMatrixAsset = struct {
+    line_count: usize,
+    wt0: []f64,
+    bw: []f64,
+
+    pub fn deinit(self: *O2RelaxationMatrixAsset, allocator: Allocator) void {
+        // O2RelaxationMatrixAsset.deinit ---------------------------------------------------------------------|
+        // Release parsed RMF matrices owned by this reader result.                                            |
+        // ----------------------------------------------------------------------------------------------------|
+        allocator.free(self.wt0);
+        allocator.free(self.bw);
+        self.* = undefined;
+    }
+
+    pub fn weightAt(self: O2RelaxationMatrixAsset, row: usize, column: usize) f64 {
+        // O2RelaxationMatrixAsset.weightAt -------------------------------------------------------------------|
+        // Return the row-major W(T0) relaxation weight.                                                       |
+        // ----------------------------------------------------------------------------------------------------|
+        return self.wt0[row * self.line_count + column];
+    }
+
+    pub fn temperatureExponentAt(self: O2RelaxationMatrixAsset, row: usize, column: usize) f64 {
+        // O2RelaxationMatrixAsset.temperatureExponentAt ------------------------------------------------------|
+        // Return the row-major BW temperature exponent.                                                       |
+        // ----------------------------------------------------------------------------------------------------|
+        return self.bw[row * self.line_count + column];
+    }
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -194,6 +275,100 @@ pub fn readO2LineList(allocator: Allocator, path: []const u8) ![]O2LineAssetRow 
 
     if (rows.items.len == 0) return errors.Error.EmptyAsset;
     return rows.toOwnedSlice(allocator);
+}
+
+pub fn readO2StrongLines(allocator: Allocator, path: []const u8) ![]O2StrongLineAssetRow {
+    // readO2StrongLines --------------------------------------------------------------------------------------|
+    // Parse LISA SDF rows into old O2 strong-line sidecar fields.                                             |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Mirrors main:`src/input/reference_data/ingest/reference_assets_formats.zig` parseLisaSdf.             |
+    //   The vendor HWT0 column is syntax-checked. The reference half-width is reconstructed from the LISA     |
+    //   branch token and Nf value, matching old HITRANModule::readSDF behavior.                               |
+    // --------------------------------------------------------------------------------------------------------|
+    const bytes = try readSmallFile(allocator, path, 1 << 20);
+    defer allocator.free(bytes);
+
+    var rows = std.ArrayList(O2StrongLineAssetRow).empty;
+    errdefer rows.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trimRight(u8, raw_line, "\r");
+        const stripped = trimLine(line);
+        if (stripped.len == 0 or stripped[0] == '#' or stripped[0] == '!') continue;
+        if (line.len < 87) return errors.Error.InvalidAssetFormat;
+
+        const center_wavenumber_cm1 = try parseFixedFloat(line[0..12]);
+        const branch_token = trimLine(line[83..84]);
+        const nf_token = trimLine(line[84..87]);
+        const air_half_width_cm1 = try vendorLisaReferenceHalfWidthCm1(branch_token, nf_token);
+        const pressure_shift_cm1 = try parseFixedFloat(line[71..79]);
+
+        _ = try parseFixedFloat(line[58..63]);
+
+        try rows.append(allocator, .{
+            .center_wavenumber_cm1 = center_wavenumber_cm1,
+            .center_wavelength_nm = units.wavenumberToWavelengthNm(center_wavenumber_cm1),
+            .population_t0 = try parseFixedFloat(line[14..23]),
+            .dipole_ratio = try parseFixedFloat(line[25..34]),
+            .dipole_t0 = try parseFixedFloat(line[35..44]),
+            .lower_state_energy_cm1 = try parseFixedFloat(line[46..56]),
+            .air_half_width_cm1 = air_half_width_cm1,
+            .air_half_width_nm = units.spectralWidthCm1ToNm(air_half_width_cm1, center_wavenumber_cm1),
+            .temperature_exponent = try parseFixedFloat(line[65..69]),
+            .pressure_shift_cm1 = pressure_shift_cm1,
+            .pressure_shift_nm = -units.spectralWidthCm1ToNm(pressure_shift_cm1, center_wavenumber_cm1),
+            .rotational_index_m1 = try rotationalIndexFromLisaBranch(branch_token, nf_token),
+        });
+    }
+
+    if (rows.items.len == 0) return errors.Error.EmptyAsset;
+    return rows.toOwnedSlice(allocator);
+}
+
+pub fn readO2RelaxationMatrix(allocator: Allocator, path: []const u8) !O2RelaxationMatrixAsset {
+    // readO2RelaxationMatrix ---------------------------------------------------------------------------------|
+    // Parse the LISA RMF sidecar into row-major W(T0) and BW matrices.                                        |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Mirrors main:`src/input/reference_data/ingest/reference_assets_formats.zig` parseLisaRmf and          |
+    //   LoadedAsset.toSpectroscopyRelaxationMatrix. The row count must form a square dense matrix.            |
+    // --------------------------------------------------------------------------------------------------------|
+    const bytes = try readSmallFile(allocator, path, 1 << 20);
+    defer allocator.free(bytes);
+
+    var wt0 = std.ArrayList(f64).empty;
+    errdefer wt0.deinit(allocator);
+    var bw = std.ArrayList(f64).empty;
+    errdefer bw.deinit(allocator);
+
+    var lines = std.mem.splitScalar(u8, bytes, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trimRight(u8, raw_line, "\r");
+        const stripped = trimLine(line);
+        if (stripped.len == 0 or stripped[0] == '#' or stripped[0] == '!') continue;
+        if (line.len < 31) return errors.Error.InvalidAssetFormat;
+
+        try wt0.append(allocator, try parseFixedFloat(line[0..15]));
+        try bw.append(allocator, try parseFixedFloat(line[15..31]));
+    }
+
+    if (wt0.items.len == 0 or wt0.items.len != bw.items.len) return errors.Error.EmptyAsset;
+
+    const line_count_f = @sqrt(@as(f64, @floatFromInt(wt0.items.len)));
+    const line_count: usize = @intFromFloat(@round(line_count_f));
+    if (line_count * line_count != wt0.items.len) return errors.Error.InvalidAssetFormat;
+
+    const owned_wt0 = try wt0.toOwnedSlice(allocator);
+    errdefer allocator.free(owned_wt0);
+    const owned_bw = try bw.toOwnedSlice(allocator);
+
+    return .{
+        .line_count = line_count,
+        .wt0 = owned_wt0,
+        .bw = owned_bw,
+    };
 }
 
 pub fn readCiaTable(allocator: Allocator, path: []const u8) !CiaAsset {
@@ -330,6 +505,42 @@ fn parseFixedInt(comptime T: type, value: []const u8) !T {
     return std.fmt.parseInt(T, std.mem.trim(u8, value, " \t\r"), 10) catch {
         return errors.Error.InvalidNumber;
     };
+}
+
+fn rotationalIndexFromLisaBranch(branch_token: []const u8, nf_token: []const u8) !i32 {
+    // rotationalIndexFromLisaBranch --------------------------------------------------------------------------|
+    // Reconstruct the signed LISA branch index: P(Nf) stores -Nf, R(Nf) stores Nf + 1.                        |
+    // --------------------------------------------------------------------------------------------------------|
+    if (branch_token.len != 1) return errors.Error.InvalidAssetFormat;
+
+    const nf = std.fmt.parseInt(i32, nf_token, 10) catch return errors.Error.InvalidNumber;
+    return switch (branch_token[0]) {
+        'P' => -nf,
+        'R' => nf + 1,
+        else => return errors.Error.InvalidAssetFormat,
+    };
+}
+
+fn vendorLisaReferenceHalfWidthCm1(branch_token: []const u8, nf_token: []const u8) !f64 {
+    // vendorLisaReferenceHalfWidthCm1 ------------------------------------------------------------------------|
+    // Port the old LISA SDF half-width reconstruction before strong-line temperature scaling.                 |
+    // --------------------------------------------------------------------------------------------------------|
+    if (branch_token.len != 1) return errors.Error.InvalidAssetFormat;
+
+    const raw_nf = std.fmt.parseInt(i32, nf_token, 10) catch return errors.Error.InvalidNumber;
+    const vendor_nf = switch (branch_token[0]) {
+        'P' => raw_nf - 1,
+        'R' => raw_nf + 1,
+        else => return errors.Error.InvalidAssetFormat,
+    };
+
+    const vendor_nf_f64 = @as(f64, @floatFromInt(vendor_nf));
+    const sbhw = 0.02204 + 0.03749 /
+        (1.0 + 0.05428 * vendor_nf_f64 - 1.19e-3 * vendor_nf_f64 * vendor_nf_f64 +
+            2.073e-6 * std.math.pow(f64, vendor_nf_f64, 4.0));
+
+    return 1.023 * 1.012 * sbhw /
+        @sqrt(1.0 + std.math.pow(f64, (vendor_nf_f64 - 5.0) / 55.0, 2.0));
 }
 
 fn parseFirstFloat(line: []const u8) !f64 {
