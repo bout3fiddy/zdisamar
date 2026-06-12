@@ -3,6 +3,7 @@ const std = @import("std");
 const controls = @import("transport/controls.zig");
 const hashing = @import("common/hashing.zig");
 const defaults = @import("input/defaults.zig");
+const input_json = @import("input/json.zig");
 const jacobian_states = @import("transport/jacobian_states.zig");
 const layer_depths = @import("optics/layer_depths.zig");
 const o2_case = @import("input/o2_case.zig");
@@ -42,9 +43,12 @@ pub const O2SpectrumRunSummary = o2_spectrum.O2SpectrumRunSummary;
 pub const SolveConfig = controls.SolveConfig;
 pub const TransportControls = controls.TransportControls;
 pub const JacobianVector = jacobian_states.Vector;
+pub const ParsedReferenceCaseJson = input_json.ParsedReferenceCaseJson;
 pub const jacobian_state_count = jacobian_states.state_count;
 
 pub const defaultO2Case = defaults.referenceCase;
+pub const parseReferenceCaseJson = input_json.parseReferenceCaseJson;
+pub const renderDefaultReferenceCaseJson = input_json.renderDefaultReferenceCaseJson;
 pub const buildReferenceO2RunTables = setup_tables.buildReferenceO2RunTables;
 pub const buildReferenceProfileLineValues = profile_lines.buildReferenceProfileLineValues;
 
@@ -171,7 +175,7 @@ pub fn runO2AWithSessionMemory(
         table,
         wavelengths,
         viewAngles(prepared.case),
-        0.2,
+        prepared.case.surface_albedo,
         prepared.tables.layers,
         session.profile_lines,
         prepared.tables.cia,

@@ -34,6 +34,7 @@ pub fn referenceCase() o2_case.O2Case {
             .end_nm = 776.0,
             .sample_count = 701,
         },
+        .surface_albedo = 0.2,
         .atmosphere = .{
             .profile = o2_case.asset(
                 "atmosphere_profile",

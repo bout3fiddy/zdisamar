@@ -7,6 +7,7 @@ pub fn referenceCase(case: o2_case.O2Case) !void {
     // --------------------------------------------------------------------------------------------------------|
     if (case.spectral_grid.sample_count < 2) return errors.Error.InvalidControl;
     if (case.spectral_grid.end_nm <= case.spectral_grid.start_nm) return errors.Error.InvalidControl;
+    if (case.surface_albedo < 0.0 or case.surface_albedo > 1.0) return errors.Error.InvalidControl;
 
     if (case.atmosphere.layer_count == 0) return errors.Error.InvalidControl;
     if (case.atmosphere.sublayer_divisions == 0) return errors.Error.InvalidControl;

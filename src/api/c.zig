@@ -103,14 +103,20 @@ const CResult = struct {
 // Native owner behind the opaque C handle.                                                                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 2824 B (2.758 KiB), align: 8 B                                                                        |
+// size: 7952 B (7.766 KiB), align: 8 B                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
-// [   0..2519] prepared : ?PreparedO2A                                                                        |
-// [2520..2559] session  : O2SessionMemory prefix in optimized builds                                          |
-// [   varies] results   : ArrayList(*CResult)                                                                 |
-// [   varies] last_error: [256:0]u8                                                                           |
+// [   0..1655] parsed    : ?ParsedReferenceCaseJson                                                           |
+// [1656..4191] prepared  : ?PreparedO2A                                                                       |
+// [4192..7663] session   : O2SessionMemory                                                                    |
+// [7664..7687] results   : ArrayList(*CResult)                                                                |
+// [7688..7943] last_error: [256:0]u8                                                                          |
+// [7944..7951] trailing padding: 8 B                                                                          |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   parsed owns JSON arena storage borrowed by prepared.case for zds_prepare_o2a_json.                        |
 const Context = struct {
+    parsed: ?zdisamar.ParsedReferenceCaseJson = null,
     prepared: ?zdisamar.PreparedO2A = null,
     session: zdisamar.O2SessionMemory,
     results: std.ArrayList(*CResult) = .empty,
@@ -132,9 +138,19 @@ const Context = struct {
             allocator.destroy(result);
         }
         self.results.deinit(allocator);
-        if (self.prepared) |*prepared| prepared.deinit(allocator);
+        self.clearPrepared();
         self.session.deinit(allocator);
         self.* = undefined;
+    }
+
+    fn clearPrepared(self: *Context) void {
+        // Context.clearPrepared ------------------------------------------------------------------------------|
+        // Release prepared tables before parsed JSON storage that may back prepared.case slices.              |
+        // ----------------------------------------------------------------------------------------------------|
+        if (self.prepared) |*prepared| prepared.deinit(allocator);
+        self.prepared = null;
+        if (self.parsed) |*parsed| parsed.deinit();
+        self.parsed = null;
     }
 
     fn setError(self: *Context, message: []const u8) void {
@@ -182,7 +198,7 @@ export fn zds_prepare_default_o2a(ctx: ?*Context) c_int {
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
 
-    if (resolved.prepared) |*prepared| prepared.deinit(allocator);
+    resolved.clearPrepared();
 
     resolved.prepared = zdisamar.prepareO2A(allocator, zdisamar.defaultO2Case()) catch |err| {
         resolved.setError(@errorName(err));
@@ -194,7 +210,7 @@ export fn zds_prepare_default_o2a(ctx: ?*Context) c_int {
 
 export fn zds_prepare_o2a_json(ctx: ?*Context, json_ptr: ?[*]const u8, json_len: usize) c_int {
     // zds_prepare_o2a_json -----------------------------------------------------------------------------------|
-    // Reject JSON input until the typed parser is ported; do not silently substitute defaults.                |
+    // Parse Python's native O2 A JSON shape and prepare the resulting typed case.                             |
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
 
@@ -208,8 +224,24 @@ export fn zds_prepare_o2a_json(ctx: ?*Context, json_ptr: ?[*]const u8, json_len:
         return @intFromEnum(ZdsStatus.failure);
     }
 
-    resolved.setError("UnsupportedJsonInput");
-    return @intFromEnum(ZdsStatus.failure);
+    const payload = json_ptr.?[0..json_len];
+    var parsed = zdisamar.parseReferenceCaseJson(allocator, payload) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    errdefer parsed.deinit();
+
+    var prepared = zdisamar.prepareO2A(allocator, parsed.case) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    errdefer prepared.deinit(allocator);
+
+    resolved.clearPrepared();
+    resolved.parsed = parsed;
+    resolved.prepared = prepared;
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
 }
 
 export fn zds_warm_o2a_session(ctx: ?*Context) c_int {
@@ -243,14 +275,37 @@ export fn zds_warm_o2a_optimal_estimation(ctx: ?*Context, _: ?[*]const u8, _: us
     return unsupported(ctx, "UnsupportedOptimalEstimation");
 }
 
-export fn zds_default_o2a_input_json(ctx: ?*Context, _: ?[*]u8, _: usize, out_len: ?*usize) c_int {
+export fn zds_default_o2a_input_json(ctx: ?*Context, out: ?[*]u8, buffer_len: usize, out_len: ?*usize) c_int {
     // zds_default_o2a_input_json -----------------------------------------------------------------------------|
-    // Return a typed failure until JSON rendering is ported.                                                  |
+    // Render the built-in O2 A case as Python-native JSON, using the two-call ctypes buffer pattern.          |
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
-    if (out_len) |slot| slot.* = 0;
-    resolved.setError("UnsupportedJsonInput");
-    return @intFromEnum(ZdsStatus.failure);
+    const slot = out_len orelse {
+        resolved.setError("null output length");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+
+    const rendered = zdisamar.renderDefaultReferenceCaseJson(allocator) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    defer allocator.free(rendered);
+
+    slot.* = rendered.len;
+    const buffer = out orelse {
+        resolved.setError("");
+        return @intFromEnum(ZdsStatus.ok);
+    };
+
+    if (buffer_len <= rendered.len) {
+        resolved.setError("output buffer too small");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+
+    @memcpy(buffer[0..rendered.len], rendered);
+    buffer[rendered.len] = 0;
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
 }
 
 export fn zds_run_spectrum(ctx: ?*Context, out: ?*ZdsSpectrum) c_int {

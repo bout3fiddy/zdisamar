@@ -236,24 +236,26 @@ pub const RtmControls = struct {
 // Borrowed reference-case setup row.                                                                          |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 600 B (0.586 KiB), align: 8 B                                                                         |
+// size: 608 B (0.594 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0.. 15] id           : []const u8                                                                        |
 // [ 16.. 39] spectral_grid: SpectralGrid                                                                      |
-// [ 40..135] atmosphere   : AtmosphereControls                                                                |
-// [136..167] geometry     : GeometryControls                                                                  |
-// [168..231] aerosol      : AerosolControls                                                                   |
-// [232..343] observation  : ObservationControls                                                               |
-// [344..527] line_gas     : LineGasControls                                                                   |
-// [528..583] cia          : CiaControls                                                                       |
-// [584..599] rtm          : RtmControls                                                                       |
+// [ 40.. 47] surface_albedo: f64                                                                              |
+// [ 48..143] atmosphere   : AtmosphereControls                                                                |
+// [144..175] geometry     : GeometryControls                                                                  |
+// [176..239] aerosol      : AerosolControls                                                                   |
+// [240..351] observation  : ObservationControls                                                               |
+// [352..535] line_gas     : LineGasControls                                                                   |
+// [536..591] cia          : CiaControls                                                                       |
+// [592..607] rtm          : RtmControls                                                                       |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   id, asset strings, isotope slices, and interval slices are borrowed; table builders own loaded rows.      |
 pub const O2Case = struct {
     id: []const u8,
     spectral_grid: SpectralGrid,
+    surface_albedo: f64,
     atmosphere: AtmosphereControls,
     geometry: GeometryControls,
     aerosol: AerosolControls,
