@@ -8,7 +8,7 @@ test "ProfileLineValues keep wavelength-major line values for each layer node" {
     var case = internal.input.defaults.referenceCase();
     case.spectral_grid.sample_count = profile_line_test_sample_count;
 
-    var values = try internal.cache.profile_line_memory.buildReferenceProfileLineValues(
+    var values = try internal.cache.profile_line_memory.buildO2ProfileLineValues(
         std.testing.allocator,
         case,
     );
@@ -50,7 +50,7 @@ test "ProfileLineValues contain computed finite weak-line sigma rows" {
     var case = internal.input.defaults.referenceCase();
     case.spectral_grid.sample_count = profile_line_test_sample_count;
 
-    var values = try internal.cache.profile_line_memory.buildReferenceProfileLineValues(
+    var values = try internal.cache.profile_line_memory.buildO2ProfileLineValues(
         std.testing.allocator,
         case,
     );
@@ -73,7 +73,7 @@ test "ProfileLineValues contain computed finite weak-line sigma rows" {
 test "ProfileLineValues build the full reference wavelength route in optimized mode" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
 
-    var values = try internal.cache.profile_line_memory.buildReferenceProfileLineValues(
+    var values = try internal.cache.profile_line_memory.buildO2ProfileLineValues(
         std.testing.allocator,
         internal.input.defaults.referenceCase(),
     );
@@ -102,7 +102,7 @@ test "ProfileLineValues match old profile-node line math evidence" {
             .sample_count = 1,
         };
 
-        var values = try internal.cache.profile_line_memory.buildReferenceProfileLineValues(
+        var values = try internal.cache.profile_line_memory.buildO2ProfileLineValues(
             std.testing.allocator,
             case,
         );
@@ -145,7 +145,7 @@ test "ProfileLineValues match old profile-node total line sidecar evidence" {
             .sample_count = 1,
         };
 
-        var values = try internal.cache.profile_line_memory.buildReferenceProfileLineValues(
+        var values = try internal.cache.profile_line_memory.buildO2ProfileLineValues(
             std.testing.allocator,
             case,
         );
@@ -180,7 +180,7 @@ test "ProfileLineValues preserve caller-provided exact wavelength order" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
 
     const wavelengths_nm = [_]f64{ 760.0, 758.0, 776.0 };
-    var values = try internal.cache.profile_line_memory.buildReferenceProfileLineValuesForWavelengths(
+    var values = try internal.cache.profile_line_memory.buildO2ProfileLineValuesForWavelengths(
         std.testing.allocator,
         internal.input.defaults.referenceCase(),
         wavelengths_nm[0..],
@@ -206,7 +206,7 @@ test "ProfileLineValues preserve caller-provided exact wavelength order" {
         1.0e-12,
     );
 
-    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         std.testing.allocator,
         internal.input.defaults.referenceCase(),
     );
@@ -226,7 +226,7 @@ test "ProfileLineValues preserve caller-provided exact wavelength order" {
 test "ProfileLineValues fill support-row sigma from old atmospheric-budget evidence" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
 
-    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         std.testing.allocator,
         internal.input.defaults.referenceCase(),
     );
@@ -242,7 +242,7 @@ test "ProfileLineValues fill support-row sigma from old atmospheric-budget evide
             .end_nm = expected.wavelength_nm,
             .sample_count = 1,
         };
-        var values = try internal.cache.profile_line_memory.buildReferenceProfileLineValues(
+        var values = try internal.cache.profile_line_memory.buildO2ProfileLineValues(
             std.testing.allocator,
             case,
         );

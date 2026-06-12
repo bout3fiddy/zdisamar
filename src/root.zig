@@ -43,14 +43,14 @@ pub const O2SpectrumRunSummary = o2_spectrum.O2SpectrumRunSummary;
 pub const SolveConfig = controls.SolveConfig;
 pub const TransportControls = controls.TransportControls;
 pub const JacobianVector = jacobian_states.Vector;
-pub const ParsedReferenceCaseJson = input_json.ParsedReferenceCaseJson;
+pub const ParsedO2CaseJson = input_json.ParsedO2CaseJson;
 pub const jacobian_state_count = jacobian_states.state_count;
 
 pub const defaultO2Case = defaults.referenceCase;
-pub const parseReferenceCaseJson = input_json.parseReferenceCaseJson;
-pub const renderDefaultReferenceCaseJson = input_json.renderDefaultReferenceCaseJson;
-pub const buildReferenceO2RunTables = setup_tables.buildReferenceO2RunTables;
-pub const buildReferenceProfileLineValues = profile_lines.buildReferenceProfileLineValues;
+pub const parseO2CaseJson = input_json.parseO2CaseJson;
+pub const renderDefaultO2CaseJson = input_json.renderDefaultO2CaseJson;
+pub const buildO2RunTables = setup_tables.buildO2RunTables;
+pub const buildO2ProfileLineValues = profile_lines.buildO2ProfileLineValues;
 
 // PreparedO2A ------------------------------------------------------------------------------------------------|
 // Public owner for parsed/default O2 A controls and setup tables.                                             |
@@ -78,9 +78,9 @@ pub const PreparedO2A = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn deinitReferenceO2RunTables(allocator: Allocator, tables: *O2RunTables) void {
-    // deinitReferenceO2RunTables -----------------------------------------------------------------------------|
-    // Public teardown wrapper for callers that own reference setup tables.                                    |
+pub fn deinitO2RunTables(allocator: Allocator, tables: *O2RunTables) void {
+    // deinitO2RunTables --------------------------------------------------------------------------------------|
+    // Public teardown wrapper for callers that own O2 A setup tables.                                         |
     // --------------------------------------------------------------------------------------------------------|
     tables.deinit(allocator);
 }
@@ -94,11 +94,11 @@ pub fn initO2SessionMemory(allocator: Allocator) O2SessionMemory {
 
 pub fn prepareO2A(allocator: Allocator, case: O2Case) !PreparedO2A {
     // prepareO2A ---------------------------------------------------------------------------------------------|
-    // Build the reference setup tables retained across O2 A forward runs.                                     |
+    // Build the O2 A setup tables retained across forward runs.                                               |
     // --------------------------------------------------------------------------------------------------------|
     return .{
         .case = case,
-        .tables = try buildReferenceO2RunTables(allocator, case),
+        .tables = try buildO2RunTables(allocator, case),
     };
 }
 
@@ -171,7 +171,7 @@ pub fn runO2AWithSessionMemory(
     const curved_level_altitudes = try allocator.alloc(f64, layer_count + 1);
     defer allocator.free(curved_level_altitudes);
 
-    const summary = try spectrum_run.runReferenceSpectrumSingleWorker(
+    const summary = try spectrum_run.runO2ASpectrumSingleWorker(
         table,
         wavelengths,
         viewAngles(prepared.case),
@@ -224,8 +224,8 @@ pub fn runO2A(allocator: Allocator, prepared: *const PreparedO2A, solve_config: 
     return runO2AWithSessionMemory(allocator, &session, prepared, solve_config);
 }
 
-pub fn referenceO2ASolveConfig(case: O2Case) SolveConfig {
-    // referenceO2ASolveConfig --------------------------------------------------------------------------------|
+pub fn o2aSolveConfig(case: O2Case) SolveConfig {
+    // o2aSolveConfig -----------------------------------------------------------------------------------------|
     // Build the exercised O2 A transport controls used by Stage 2/3 parity evidence.                          |
     // --------------------------------------------------------------------------------------------------------|
     return .{
@@ -256,7 +256,7 @@ fn prepareSessionRows(
     // prepareSessionRows -------------------------------------------------------------------------------------|
     // Rebuild shape rows and retain expensive profile-line values when the exact wavelength stamp matches.    |
     // --------------------------------------------------------------------------------------------------------|
-    var owned_sampling = try sampling_table.buildReferenceSpectrumSamplingTable(
+    var owned_sampling = try sampling_table.buildO2SpectrumSamplingTable(
         allocator,
         prepared.case,
         prepared.tables.instrument,
@@ -286,7 +286,7 @@ fn prepareSessionRows(
     if (!cache_matches) {
         session.profile_lines.deinit(allocator);
         session.profile_lines =
-            try profile_lines.buildReferenceProfileLineValuesForWavelengthsWithCutoffGrid(
+            try profile_lines.buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
                 allocator,
                 prepared.case,
                 exact_wavelengths,

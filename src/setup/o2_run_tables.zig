@@ -56,11 +56,11 @@ pub const O2RunTables = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn buildReferenceO2RunTables(allocator: Allocator, case: o2_case.O2Case) !O2RunTables {
-    // buildReferenceO2RunTables ------------------------------------------------------------------------------|
-    // Validate the reference case and build every WP2 physical setup table.                                   |
+pub fn buildO2RunTables(allocator: Allocator, case: o2_case.O2Case) !O2RunTables {
+    // buildO2RunTables ---------------------------------------------------------------------------------------|
+    // Validate the O2 A case and build every physical setup table.                                            |
     // --------------------------------------------------------------------------------------------------------|
-    try validate.referenceCase(case);
+    try validate.o2Case(case);
 
     var layers = try atmosphere_layers.build(allocator, case);
     errdefer layers.deinit(allocator);

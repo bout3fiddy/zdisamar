@@ -287,7 +287,7 @@ const source_probe_levels = [_]SourceLevelEvidence{
 };
 
 test "source levels reproduce shared RTM quadrature evidence rows" {
-    var tables = try setup.buildReferenceO2RunTables(allocator, defaults.referenceCase());
+    var tables = try setup.buildO2RunTables(allocator, defaults.referenceCase());
     defer tables.deinit(allocator);
 
     const line_sigma = try allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);

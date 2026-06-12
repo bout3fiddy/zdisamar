@@ -7,6 +7,6 @@ pub const Error = error{
     InvalidAssetFormat,
     InvalidControl,
     InvalidNumber,
-    InvalidReferenceCase,
+    InvalidO2Case,
     UnsupportedJsonInput,
 };

@@ -2,7 +2,7 @@ const std = @import("std");
 const internal = @import("internal");
 
 test "O2RunTables match WP1 baseline table evidence" {
-    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         std.testing.allocator,
         internal.input.defaults.referenceCase(),
     );

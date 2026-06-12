@@ -131,7 +131,7 @@ const curved_samples = [_]CurvedSampleEvidence{
 };
 
 test "curved sun-path samples reuse active support rows in evidence order" {
-    var tables = try setup.buildReferenceO2RunTables(allocator, defaults.referenceCase());
+    var tables = try setup.buildO2RunTables(allocator, defaults.referenceCase());
     defer tables.deinit(allocator);
 
     const line_sigma = try allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);

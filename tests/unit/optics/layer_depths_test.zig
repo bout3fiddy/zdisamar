@@ -277,7 +277,7 @@ const aerosol_jacobian_layers_758 = [_]LayerJacobianEvidence{
 };
 
 test "support-row optics reproduce atmospheric-budget components at probe wavelengths" {
-    var tables = try setup.buildReferenceO2RunTables(allocator, defaults.referenceCase());
+    var tables = try setup.buildO2RunTables(allocator, defaults.referenceCase());
     defer tables.deinit(allocator);
 
     var line_sigma = try allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);
@@ -314,7 +314,7 @@ test "support-row optics reproduce atmospheric-budget components at probe wavele
 }
 
 test "layer optics reduce active support rows and skip boundary rows" {
-    var tables = try setup.buildReferenceO2RunTables(allocator, defaults.referenceCase());
+    var tables = try setup.buildO2RunTables(allocator, defaults.referenceCase());
     defer tables.deinit(allocator);
 
     var line_sigma = try allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);
@@ -355,7 +355,7 @@ test "layer optics reduce active support rows and skip boundary rows" {
 }
 
 test "layer optics place aerosol optical depth on the configured explicit interval" {
-    var tables = try setup.buildReferenceO2RunTables(allocator, defaults.referenceCase());
+    var tables = try setup.buildO2RunTables(allocator, defaults.referenceCase());
     defer tables.deinit(allocator);
 
     const line_sigma = try allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);
@@ -389,7 +389,7 @@ test "layer optics place aerosol optical depth on the configured explicit interv
 }
 
 test "layer optics fill aerosol optical-depth jacobian lanes from old route formula" {
-    var tables = try setup.buildReferenceO2RunTables(allocator, defaults.referenceCase());
+    var tables = try setup.buildO2RunTables(allocator, defaults.referenceCase());
     defer tables.deinit(allocator);
 
     const line_sigma = try allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);

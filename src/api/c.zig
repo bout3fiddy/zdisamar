@@ -106,7 +106,7 @@ const CResult = struct {
 // size: 7952 B (7.766 KiB), align: 8 B                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
-// [   0..1655] parsed    : ?ParsedReferenceCaseJson                                                           |
+// [   0..1655] parsed    : ?ParsedO2CaseJson                                                                  |
 // [1656..4191] prepared  : ?PreparedO2A                                                                       |
 // [4192..7663] session   : O2SessionMemory                                                                    |
 // [7664..7687] results   : ArrayList(*CResult)                                                                |
@@ -116,7 +116,7 @@ const CResult = struct {
 // referenced storage                                                                                          |
 //   parsed owns JSON arena storage borrowed by prepared.case for zds_prepare_o2a_json.                        |
 const Context = struct {
-    parsed: ?zdisamar.ParsedReferenceCaseJson = null,
+    parsed: ?zdisamar.ParsedO2CaseJson = null,
     prepared: ?zdisamar.PreparedO2A = null,
     session: zdisamar.O2SessionMemory,
     results: std.ArrayList(*CResult) = .empty,
@@ -194,7 +194,7 @@ export fn zds_context_destroy(ctx: ?*Context) void {
 
 export fn zds_prepare_default_o2a(ctx: ?*Context) c_int {
     // zds_prepare_default_o2a --------------------------------------------------------------------------------|
-    // Prepare the built-in O2 A reference case.                                                               |
+    // Prepare the built-in default O2 A product case.                                                         |
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
 
@@ -225,7 +225,7 @@ export fn zds_prepare_o2a_json(ctx: ?*Context, json_ptr: ?[*]const u8, json_len:
     }
 
     const payload = json_ptr.?[0..json_len];
-    var parsed = zdisamar.parseReferenceCaseJson(allocator, payload) catch |err| {
+    var parsed = zdisamar.parseO2CaseJson(allocator, payload) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
@@ -246,7 +246,7 @@ export fn zds_prepare_o2a_json(ctx: ?*Context, json_ptr: ?[*]const u8, json_len:
 
 export fn zds_warm_o2a_session(ctx: ?*Context) c_int {
     // zds_warm_o2a_session -----------------------------------------------------------------------------------|
-    // Build retained session rows for the prepared default/reference case.                                    |
+    // Build retained session rows for the prepared default O2 A case.                                         |
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
 
@@ -259,7 +259,7 @@ export fn zds_warm_o2a_session(ctx: ?*Context) c_int {
         allocator,
         &resolved.session,
         prepared,
-        zdisamar.referenceO2ASolveConfig(prepared.case),
+        zdisamar.o2aSolveConfig(prepared.case),
     ) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
@@ -285,7 +285,7 @@ export fn zds_default_o2a_input_json(ctx: ?*Context, out: ?[*]u8, buffer_len: us
         return @intFromEnum(ZdsStatus.failure);
     };
 
-    const rendered = zdisamar.renderDefaultReferenceCaseJson(allocator) catch |err| {
+    const rendered = zdisamar.renderDefaultO2CaseJson(allocator) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
@@ -520,7 +520,7 @@ fn runSpectrum(
         return @intFromEnum(ZdsStatus.failure);
     };
 
-    var solve_config = zdisamar.referenceO2ASolveConfig(prepared.case);
+    var solve_config = zdisamar.o2aSolveConfig(prepared.case);
     solve_config.derivative_state_mask = selection.mask;
     solve_config.derivative_mode = if (wants_jacobian) .semi_analytical else .none;
 

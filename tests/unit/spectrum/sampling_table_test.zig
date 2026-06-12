@@ -98,13 +98,13 @@ test "SpectrumSamplingTable summary matches WP1 aggregate sampling evidence shap
 }
 
 test "reference SpectrumSamplingTable builder matches WP1 aggregate and exact-key evidence" {
-    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         std.testing.allocator,
         internal.input.defaults.referenceCase(),
     );
     defer tables.deinit(std.testing.allocator);
 
-    var owned = try sampling_table.buildReferenceSpectrumSamplingTable(
+    var owned = try sampling_table.buildO2SpectrumSamplingTable(
         std.testing.allocator,
         internal.input.defaults.referenceCase(),
         tables.instrument,

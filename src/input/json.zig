@@ -22,24 +22,24 @@ const default_output_isotopes = [_]usize{ 1, 2, 3 };
 //   controls on this route; pressure bounds are the consumed vertical coordinates.                            |
 // ------------------------------------------------------------------------------------------------------------|
 
-// ParsedReferenceCaseJson ------------------------------------------------------------------------------------|
+// ParsedO2CaseJson -------------------------------------------------------------------------------------------|
 // Owns parser arena storage backing one borrowed O2Case.                                                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 1648 B (1.609 KiB), align: 8 B                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
-// [   0..1039] parsed: std.json.Parsed(NativeReferenceCaseJson)                                               |
+// [   0..1039] parsed: std.json.Parsed(NativeO2CaseJson)                                                      |
 // [1040..1647] case  : O2Case                                                                                 |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   case slices and strings point into parsed.arena and stay valid until deinit.                              |
-pub const ParsedReferenceCaseJson = struct {
-    parsed: std.json.Parsed(NativeReferenceCaseJson),
+pub const ParsedO2CaseJson = struct {
+    parsed: std.json.Parsed(NativeO2CaseJson),
     case: o2_case.O2Case,
 
-    pub fn deinit(self: *ParsedReferenceCaseJson) void {
-        // ParsedReferenceCaseJson.deinit ---------------------------------------------------------------------|
+    pub fn deinit(self: *ParsedO2CaseJson) void {
+        // ParsedO2CaseJson.deinit ----------------------------------------------------------------------------|
         // Release the JSON parser arena that backs all borrowed case strings and slices.                      |
         // ----------------------------------------------------------------------------------------------------|
         self.parsed.deinit();
@@ -48,15 +48,15 @@ pub const ParsedReferenceCaseJson = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn parseReferenceCaseJson(allocator: Allocator, raw_json: []const u8) !ParsedReferenceCaseJson {
-    // parseReferenceCaseJson ---------------------------------------------------------------------------------|
+pub fn parseO2CaseJson(allocator: Allocator, raw_json: []const u8) !ParsedO2CaseJson {
+    // parseO2CaseJson ----------------------------------------------------------------------------------------|
     // Parse Python's native O2 A JSON shape and return a typed case borrowing parser-owned rows.              |
     // --------------------------------------------------------------------------------------------------------|
     const normalized = try normalizePythonJson(allocator, raw_json);
     defer normalized.deinit(allocator);
 
     var parsed = try std.json.parseFromSlice(
-        NativeReferenceCaseJson,
+        NativeO2CaseJson,
         allocator,
         normalized.bytes,
         .{ .ignore_unknown_fields = true, .allocate = .alloc_always },
@@ -64,30 +64,30 @@ pub fn parseReferenceCaseJson(allocator: Allocator, raw_json: []const u8) !Parse
     errdefer parsed.deinit();
 
     const case = try buildCase(parsed.value);
-    try validate.referenceCase(case);
+    try validate.o2Case(case);
 
     return .{ .parsed = parsed, .case = case };
 }
 
-pub fn renderDefaultReferenceCaseJson(allocator: Allocator) ![]u8 {
-    // renderDefaultReferenceCaseJson -------------------------------------------------------------------------|
+pub fn renderDefaultO2CaseJson(allocator: Allocator) ![]u8 {
+    // renderDefaultO2CaseJson --------------------------------------------------------------------------------|
     // Render the built-in O2 A case in the Python native JSON shape consumed by O2AInput.from_json.           |
     // --------------------------------------------------------------------------------------------------------|
     const case = defaults.referenceCase();
     var out: std.Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();
 
-    try std.json.Stringify.value(outputReferenceCase(case), .{}, &out.writer);
+    try std.json.Stringify.value(outputO2Case(case), .{}, &out.writer);
     return out.toOwnedSlice();
 }
 
-fn buildCase(native: NativeReferenceCaseJson) !o2_case.O2Case {
+fn buildCase(native: NativeO2CaseJson) !o2_case.O2Case {
     // buildCase ----------------------------------------------------------------------------------------------|
     // Convert API JSON rows into O2Case while rejecting unsupported controls at the parser boundary.          |
     // --------------------------------------------------------------------------------------------------------|
     try validateMetadata(native.metadata);
     try validatePlan(native.plan);
-    try validateReferenceAssets(native.inputs);
+    try validateO2Assets(native.inputs);
     try validateObservation(native.observation, native.inputs.raw_solar_reference.id);
     try validateRtm(native.rtm_controls, native.geometry.model);
     try validateAerosol(native.aerosol);
@@ -178,8 +178,8 @@ fn validatePlan(plan: PlanJson) !void {
     if (!std.mem.eql(u8, plan.derivative_mode, "none")) return errors.Error.UnsupportedJsonInput;
 }
 
-fn validateReferenceAssets(inputs: ReferenceInputsJson) !void {
-    // validateReferenceAssets --------------------------------------------------------------------------------|
+fn validateO2Assets(inputs: O2InputsJson) !void {
+    // validateO2Assets ---------------------------------------------------------------------------------------|
     // Consume Python's reference asset map by validating ids/formats used for RTM and Python roundtrips.      |
     // --------------------------------------------------------------------------------------------------------|
     try expectAsset(inputs.atmosphere_profile, "atmosphere_profile", "profile_csv");
@@ -262,9 +262,9 @@ fn expectAsset(asset: o2_case.Asset, id: []const u8, format: []const u8) !void {
     if (asset.path.len == 0) return errors.Error.InvalidControl;
 }
 
-fn outputReferenceCase(case: o2_case.O2Case) OutputReferenceCaseJson {
-    // outputReferenceCase ------------------------------------------------------------------------------------|
-    // Build the Python-native JSON view for the built-in reference case.                                      |
+fn outputO2Case(case: o2_case.O2Case) OutputO2CaseJson {
+    // outputO2Case -------------------------------------------------------------------------------------------|
+    // Build the Python-native JSON view for the built-in default product case.                                |
     // --------------------------------------------------------------------------------------------------------|
     const geometry_model = if (case.geometry.pseudo_spherical) "pseudo_spherical" else "plane_parallel";
 
@@ -460,7 +460,7 @@ const PlanJson = struct {
     derivative_mode: []const u8,
 };
 
-const ReferenceInputsJson = struct {
+const O2InputsJson = struct {
     atmosphere_profile: o2_case.Asset,
     vendor_reference_csv: o2_case.Asset,
     raw_solar_reference: o2_case.Asset,
@@ -501,7 +501,7 @@ const AerosolJson = struct {
     profile: []const AerosolProfileLayerJson = &.{},
 };
 
-const AdaptiveReferenceGridJson = struct {
+const AdaptiveO2GridJson = struct {
     points_per_fwhm: usize,
     strong_line_min_divisions: usize,
     strong_line_max_divisions: usize,
@@ -515,7 +515,7 @@ const ObservationJson = struct {
     builtin_line_shape: []const u8,
     high_resolution_step_nm: f64,
     high_resolution_half_span_nm: f64,
-    adaptive_reference_grid: AdaptiveReferenceGridJson,
+    adaptive_reference_grid: AdaptiveO2GridJson,
     solar_reference_asset_id: []const u8,
     measured_wavelengths_nm: []const f64 = &.{},
 };
@@ -567,10 +567,10 @@ const RtmControlsJson = struct {
     renorm_phase_function: bool,
 };
 
-const NativeReferenceCaseJson = struct {
+const NativeO2CaseJson = struct {
     metadata: MetadataJson,
     plan: PlanJson,
-    inputs: ReferenceInputsJson,
+    inputs: O2InputsJson,
     scene_id: []const u8,
     spectral_grid: o2_case.SpectralGrid,
     layer_count: usize,
@@ -587,10 +587,10 @@ const NativeReferenceCaseJson = struct {
     rtm_controls: RtmControlsJson,
 };
 
-const OutputReferenceCaseJson = struct {
+const OutputO2CaseJson = struct {
     metadata: MetadataJson,
     plan: PlanJson,
-    inputs: ReferenceInputsJson,
+    inputs: O2InputsJson,
     scene_id: []const u8,
     spectral_grid: o2_case.SpectralGrid,
     layer_count: usize,

@@ -59,8 +59,8 @@ test "public root exposes setup session and spectrum surface" {
     try std.testing.expect(@hasDecl(zdisamar, "warmO2ASessionMemory"));
     try std.testing.expect(@hasDecl(zdisamar, "runO2AWithSessionMemory"));
     try std.testing.expect(@hasDecl(zdisamar, "runO2A"));
-    try std.testing.expect(@hasDecl(zdisamar, "buildReferenceO2RunTables"));
-    try std.testing.expect(@hasDecl(zdisamar, "buildReferenceProfileLineValues"));
+    try std.testing.expect(@hasDecl(zdisamar, "buildO2RunTables"));
+    try std.testing.expect(@hasDecl(zdisamar, "buildO2ProfileLineValues"));
 
     try std.testing.expect(!@hasDecl(zdisamar, "Scene"));
     try std.testing.expect(!@hasDecl(zdisamar, "PreparedOpticalState"));

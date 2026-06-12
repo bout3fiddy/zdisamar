@@ -241,11 +241,11 @@ pub const ProfileLineValues = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn buildReferenceProfileLineValues(
+pub fn buildO2ProfileLineValues(
     allocator: Allocator,
     case: o2_case.O2Case,
 ) !ProfileLineValues {
-    // buildReferenceProfileLineValues ------------------------------------------------------------------------|
+    // buildO2ProfileLineValues -------------------------------------------------------------------------------|
     // Build line values over the case's evenly spaced setup wavelengths.                                      |
     // --------------------------------------------------------------------------------------------------------|
     const wavelength_count = case.spectral_grid.sample_count;
@@ -261,27 +261,27 @@ pub fn buildReferenceProfileLineValues(
         wavelength_nm.* = case.spectral_grid.start_nm + step_nm * @as(f64, @floatFromInt(wavelength_index));
     }
 
-    return buildReferenceProfileLineValuesForWavelengths(allocator, case, wavelengths_nm);
+    return buildO2ProfileLineValuesForWavelengths(allocator, case, wavelengths_nm);
 }
 
-pub fn buildReferenceProfileLineValuesForWavelengths(
+pub fn buildO2ProfileLineValuesForWavelengths(
     allocator: Allocator,
     case: o2_case.O2Case,
     wavelengths_nm: []const f64,
 ) !ProfileLineValues {
-    // buildReferenceProfileLineValuesForWavelengths ----------------------------------------------------------|
+    // buildO2ProfileLineValuesForWavelengths -----------------------------------------------------------------|
     // Build retained line values with the scalar weak-line cutoff fallback used by setup/profile parity tests.|
     // --------------------------------------------------------------------------------------------------------|
-    return buildReferenceProfileLineValuesForWavelengthsWithCutoffGrid(allocator, case, wavelengths_nm, &.{});
+    return buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(allocator, case, wavelengths_nm, &.{});
 }
 
-pub fn buildReferenceProfileLineValuesForWavelengthsWithCutoffGrid(
+pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
     allocator: Allocator,
     case: o2_case.O2Case,
     wavelengths_nm: []const f64,
     cutoff_grid_wavelengths_nm: []const f64,
 ) !ProfileLineValues {
-    // buildReferenceProfileLineValuesForWavelengths ----------------------------------------------------------|
+    // buildO2ProfileLineValuesForWavelengthsWithCutoffGrid ---------------------------------------------------|
     // Build retained line values over a caller-provided exact wavelength list.                                |
     //                                                                                                         |
     // provenance                                                                                              |

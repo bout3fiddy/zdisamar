@@ -432,14 +432,14 @@ pub const SamplingTableSummary = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn buildReferenceSpectrumSamplingTable(
+pub fn buildO2SpectrumSamplingTable(
     allocator: Allocator,
     case: o2_case.O2Case,
     instrument: instrument_tables.InstrumentTable,
     lines: line_tables.O2LineTable,
 ) !OwnedSpectrumSamplingTable {
-    // buildReferenceSpectrumSamplingTable ------------------------------------------------------------------- |
-    // Build the DISAMAR-reference spectrum sampling plan from explicit setup tables.                          |
+    // buildO2SpectrumSamplingTable -------------------------------------------------------------------------- |
+    // Build the O2 A spectrum sampling plan from explicit setup tables.                                       |
     //                                                                                                         |
     // provenance                                                                                              |
     //   Ports the exercised old route from main:                                                              |

@@ -1,8 +1,8 @@
 const errors = @import("../common/errors.zig");
 const o2_case = @import("o2_case.zig");
 
-pub fn referenceCase(case: o2_case.O2Case) !void {
-    // referenceCase ------------------------------------------------------------------------------------------|
+pub fn o2Case(case: o2_case.O2Case) !void {
+    // o2Case -------------------------------------------------------------------------------------------------|
     // Validate every control WP2 consumes so unsupported or malformed setup input cannot pass inertly.        |
     // --------------------------------------------------------------------------------------------------------|
     if (case.spectral_grid.sample_count < 2) return errors.Error.InvalidControl;

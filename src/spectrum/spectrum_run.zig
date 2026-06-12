@@ -215,7 +215,7 @@ pub fn radianceAtWavelength(
     );
 }
 
-pub fn prefetchReferenceRadianceRowsSingleWorker(
+pub fn prefetchO2ARadianceRowsSingleWorker(
     wavelengths: radiance_wavelengths.RadianceWavelengthList,
     angles: solve.ViewAngles,
     surface_albedo: f64,
@@ -236,8 +236,8 @@ pub fn prefetchReferenceRadianceRowsSingleWorker(
     out_curved_level_altitudes_km: []f64,
     worker_memory: *transport_worker_memory.TransportWorkerMemory,
 ) !void {
-    // prefetchReferenceRadianceRowsSingleWorker ----------------------------------------------------------     |
-    // Fill dense high-resolution radiance rows from the explicit reference optics and transport route.         |
+    // prefetchO2ARadianceRowsSingleWorker -------------------------------------------------------------------- |
+    // Fill dense high-resolution radiance rows from the explicit O2 A optics and transport route.              |
     //                                                                                                          |
     // provenance                                                                                               |
     //   Ports the old single-worker dense prefetch order from main:                                            |
@@ -268,7 +268,7 @@ pub fn prefetchReferenceRadianceRowsSingleWorker(
     if (wavelengths.wavelengths.len == 0) return;
 
     // instrumentation: trace counter: high-resolution radiance rows ------------------------------------------ |
-    // captures: unique exact radiance wavelengths evaluated by this reference prefetch pass                    |
+    // captures: unique exact radiance wavelengths evaluated by this O2 A prefetch pass                         |
     // why: distinguishes fewer transport solves from cheaper work per solve.                                   |
     Trace.plotU("high_resolution_misses", @intCast(wavelengths.wavelengths.len));
     // end instrumentation: trace counter: high-resolution radiance rows -------------------------------------- |
@@ -276,13 +276,13 @@ pub fn prefetchReferenceRadianceRowsSingleWorker(
     var start_index: usize = 0;
     while (nextStaticChunk(&start_index, wavelengths.wavelengths.len)) |chunk| {
 
-        // instrumentation: trace zone: reference radiance prefetch chunk ------------------------------------- |
-        // captures: one single-worker reference prefetch chunk size and wall time                              |
+        // instrumentation: trace zone: O2 A radiance prefetch chunk ------------------------------------------ |
+        // captures: one single-worker O2 A prefetch chunk size and wall time                                   |
         // why: preserves the old chunk boundary while keeping per-wavelength optics visible separately.        |
-        const chunk_zone = Trace.deepStaticZone(@src(), "radiance_prefetch.reference_chunk");
+        const chunk_zone = Trace.deepStaticZone(@src(), "radiance_prefetch.o2a_chunk");
         chunk_zone.value(@intCast(chunk.len()));
         defer chunk_zone.end();
-        // end instrumentation: trace zone: reference radiance prefetch chunk --------------------------------- |
+        // end instrumentation: trace zone: O2 A radiance prefetch chunk -------------------------------------- |
 
         for (chunk.start..chunk.end) |index| {
             const wavelength = wavelengths.wavelengths[index];
@@ -312,7 +312,7 @@ pub fn prefetchReferenceRadianceRowsSingleWorker(
     }
 }
 
-pub fn runReferenceSpectrumSingleWorker(
+pub fn runO2ASpectrumSingleWorker(
     table: sampling_table.SpectrumSamplingTable,
     wavelengths: radiance_wavelengths.RadianceWavelengthList,
     angles: solve.ViewAngles,
@@ -348,7 +348,7 @@ pub fn runReferenceSpectrumSingleWorker(
     worker_memory: *transport_worker_memory.TransportWorkerMemory,
     solar_memory: *solar_irradiance_memory.SolarIrradianceMemory,
 ) !instrument_average.ReflectanceAssemblySummary {
-    // runReferenceSpectrumSingleWorker ------------------------------------------------------------------      |
+    // runO2ASpectrumSingleWorker ----------------------------------------------------------------------------- |
     // Run the explicit single-worker spectrum path from exact radiance wavelengths to product reflectance.     |
     //                                                                                                          |
     // provenance                                                                                               |
@@ -378,12 +378,12 @@ pub fn runReferenceSpectrumSingleWorker(
     // instrumentation: trace zone: single-worker spectrum run ------------------------------------------------ |
     // captures: dense prefetch, product gather, channel postprocess, and reflectance assembly wall time        |
     // why: gives WP4 a same-boundary phase around the full explicit spectrum path.                             |
-    const run_zone = Trace.staticZone(@src(), "spectrum.reference_single_worker");
+    const run_zone = Trace.staticZone(@src(), "spectrum.o2a_single_worker");
     run_zone.value(@intCast(row_count));
     defer run_zone.end();
     // end instrumentation: trace zone: single-worker spectrum run -------------------------------------------- |
 
-    try prefetchReferenceRadianceRowsSingleWorker(
+    try prefetchO2ARadianceRowsSingleWorker(
         wavelengths,
         angles,
         surface_albedo,

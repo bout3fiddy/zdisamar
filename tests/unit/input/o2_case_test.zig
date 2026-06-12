@@ -3,7 +3,7 @@ const internal = @import("internal");
 
 test "default O2 case consumes every WP2 setup control" {
     const case = internal.input.defaults.referenceCase();
-    try internal.input.validate.referenceCase(case);
+    try internal.input.validate.o2Case(case);
 
     try std.testing.expectEqual(@as(usize, 701), case.spectral_grid.sample_count);
     try std.testing.expectEqual(@as(usize, 3), case.atmosphere.intervals.len);
@@ -16,25 +16,25 @@ test "default O2 case consumes every WP2 setup control" {
 test "invalid controls are rejected instead of carried inertly" {
     var case = internal.input.defaults.referenceCase();
     case.observation.high_resolution_step_nm = 0.0;
-    try std.testing.expectError(error.InvalidControl, internal.input.validate.referenceCase(case));
+    try std.testing.expectError(error.InvalidControl, internal.input.validate.o2Case(case));
 
     case = internal.input.defaults.referenceCase();
     case.cia.enabled = false;
-    try std.testing.expectError(error.InvalidControl, internal.input.validate.referenceCase(case));
+    try std.testing.expectError(error.InvalidControl, internal.input.validate.o2Case(case));
 
     try std.testing.expectError(
         error.MissingField,
-        internal.input.json.parseReferenceCaseJson(std.testing.allocator, "{}"),
+        internal.input.json.parseO2CaseJson(std.testing.allocator, "{}"),
     );
 }
 
 test "Python native O2 case JSON round-trips into typed controls" {
     const allocator = std.testing.allocator;
 
-    const rendered = try internal.input.json.renderDefaultReferenceCaseJson(allocator);
+    const rendered = try internal.input.json.renderDefaultO2CaseJson(allocator);
     defer allocator.free(rendered);
 
-    var parsed = try internal.input.json.parseReferenceCaseJson(allocator, rendered);
+    var parsed = try internal.input.json.parseO2CaseJson(allocator, rendered);
     defer parsed.deinit();
 
     try std.testing.expectEqual(@as(usize, 701), parsed.case.spectral_grid.sample_count);
@@ -49,7 +49,7 @@ test "Python native O2 case JSON round-trips into typed controls" {
 test "Python NaN altitude placeholders are normalized before typed parsing" {
     const allocator = std.testing.allocator;
 
-    const rendered = try internal.input.json.renderDefaultReferenceCaseJson(allocator);
+    const rendered = try internal.input.json.renderDefaultO2CaseJson(allocator);
     defer allocator.free(rendered);
     const with_nan = try std.mem.replaceOwned(
         u8,
@@ -60,7 +60,7 @@ test "Python NaN altitude placeholders are normalized before typed parsing" {
     );
     defer allocator.free(with_nan);
 
-    var parsed = try internal.input.json.parseReferenceCaseJson(allocator, with_nan);
+    var parsed = try internal.input.json.parseO2CaseJson(allocator, with_nan);
     defer parsed.deinit();
 
     try std.testing.expectEqual(@as(usize, 3), parsed.case.atmosphere.intervals.len);
@@ -70,7 +70,7 @@ test "Python NaN altitude placeholders are normalized before typed parsing" {
 test "unsupported JSON route controls fail at the input boundary" {
     const allocator = std.testing.allocator;
 
-    const rendered = try internal.input.json.renderDefaultReferenceCaseJson(allocator);
+    const rendered = try internal.input.json.renderDefaultO2CaseJson(allocator);
     defer allocator.free(rendered);
     const fast_threshold = try std.mem.replaceOwned(
         u8,
@@ -83,6 +83,6 @@ test "unsupported JSON route controls fail at the input boundary" {
 
     try std.testing.expectError(
         error.UnsupportedJsonInput,
-        internal.input.json.parseReferenceCaseJson(allocator, fast_threshold),
+        internal.input.json.parseO2CaseJson(allocator, fast_threshold),
     );
 }

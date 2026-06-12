@@ -25,7 +25,7 @@ const default_isotopes = [_]u8{ 1, 2, 3 };
 
 pub fn referenceCase() o2_case.O2Case {
     // referenceCase ------------------------------------------------------------------------------------------|
-    // Return the typed DISAMAR-reference O2 A setup case used by WP2 parity tests.                            |
+    // Return the default product O2 A case used by Python and public forward runs.                            |
     // --------------------------------------------------------------------------------------------------------|
     return .{
         .id = "o2a_disamar_reference_python",

@@ -191,7 +191,7 @@ test "prefetchRadianceRowsSingleWorker checks result shape and propagates comput
 
 test "radianceAtWavelength wires optics direct transport and radiance scaling" {
     const allocator = std.testing.allocator;
-    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         allocator,
         internal.input.defaults.referenceCase(),
     );
@@ -227,7 +227,7 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
         .end_nm = wavelength_nm,
         .sample_count = 1,
     };
-    var profile_lines = try internal.cache.profile_line_memory.buildReferenceProfileLineValues(
+    var profile_lines = try internal.cache.profile_line_memory.buildO2ProfileLineValues(
         allocator,
         case,
     );
@@ -321,7 +321,7 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
 
 test "radianceAtWavelength checks caller-owned row shapes" {
     const allocator = std.testing.allocator;
-    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         allocator,
         internal.input.defaults.referenceCase(),
     );
@@ -338,7 +338,7 @@ test "radianceAtWavelength checks caller-owned row shapes" {
         .end_nm = 760.0,
         .sample_count = 1,
     };
-    var profile_lines = try internal.cache.profile_line_memory.buildReferenceProfileLineValues(
+    var profile_lines = try internal.cache.profile_line_memory.buildO2ProfileLineValues(
         allocator,
         case,
     );
@@ -385,7 +385,7 @@ test "radianceAtWavelength checks caller-owned row shapes" {
 
 test "radianceAtWavelength matches old-route Stage 2 transport probes" {
     const allocator = std.testing.allocator;
-    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         allocator,
         internal.input.defaults.referenceCase(),
     );
@@ -393,7 +393,7 @@ test "radianceAtWavelength matches old-route Stage 2 transport probes" {
 
     const support_count = tables.layers.support_mid_altitudes_km.len;
     const layer_count = tables.layers.layer_pressures_hpa.len;
-    var profile_lines = try internal.cache.profile_line_memory.buildReferenceProfileLineValuesForWavelengths(
+    var profile_lines = try internal.cache.profile_line_memory.buildO2ProfileLineValuesForWavelengths(
         allocator,
         internal.input.defaults.referenceCase(),
         stage2_transport_wavelengths_nm[0..],
@@ -509,7 +509,7 @@ test "radianceAtWavelength matches old-route Stage 2 transport probes" {
     }
 }
 
-test "runReferenceSpectrumSingleWorker matches old-route Stage 3 full spectrum" {
+test "runO2ASpectrumSingleWorker matches old-route Stage 3 full spectrum" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
     if (!std.process.hasEnvVarConstant("ZDISAMAR_RUN_STAGE3_PARITY")) return error.SkipZigTest;
 
@@ -527,14 +527,14 @@ test "runReferenceSpectrumSingleWorker matches old-route Stage 3 full spectrum" 
     defer baseline.deinit();
     const expected = baseline.value.spectrum.one_shot;
 
-    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         allocator,
         internal.input.defaults.referenceCase(),
     );
     defer tables.deinit(allocator);
 
     const case = internal.input.defaults.referenceCase();
-    var owned_sampling = try sampling_table.buildReferenceSpectrumSamplingTable(
+    var owned_sampling = try sampling_table.buildO2SpectrumSamplingTable(
         allocator,
         case,
         tables.instrument,
@@ -553,7 +553,7 @@ test "runReferenceSpectrumSingleWorker matches old-route Stage 3 full spectrum" 
     }
 
     var profile_lines =
-        try internal.cache.profile_line_memory.buildReferenceProfileLineValuesForWavelengthsWithCutoffGrid(
+        try internal.cache.profile_line_memory.buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
             allocator,
             case,
             exact_wavelengths_nm,
@@ -649,7 +649,7 @@ test "runReferenceSpectrumSingleWorker matches old-route Stage 3 full spectrum" 
         true,
     );
 
-    const summary = try spectrum_run.runReferenceSpectrumSingleWorker(
+    const summary = try spectrum_run.runO2ASpectrumSingleWorker(
         table,
         wavelengths.view(),
         angles,
@@ -747,9 +747,9 @@ test "runReferenceSpectrumSingleWorker matches old-route Stage 3 full spectrum" 
     }
 }
 
-test "prefetchReferenceRadianceRowsSingleWorker fills dense direct-route rows" {
+test "prefetchO2ARadianceRowsSingleWorker fills dense direct-route rows" {
     const allocator = std.testing.allocator;
-    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         allocator,
         internal.input.defaults.referenceCase(),
     );
@@ -777,7 +777,7 @@ test "prefetchReferenceRadianceRowsSingleWorker fills dense direct-route rows" {
 
     const exact_wavelengths_nm = [_]f64{ 758.0, 760.0 };
     const case = internal.input.defaults.referenceCase();
-    var profile_lines = try internal.cache.profile_line_memory.buildReferenceProfileLineValuesForWavelengths(
+    var profile_lines = try internal.cache.profile_line_memory.buildO2ProfileLineValuesForWavelengths(
         allocator,
         case,
         exact_wavelengths_nm[0..],
@@ -819,7 +819,7 @@ test "prefetchReferenceRadianceRowsSingleWorker fills dense direct-route rows" {
         .controls = .{ .scattering = .none, .integrate_source_function = false },
     };
 
-    try spectrum_run.prefetchReferenceRadianceRowsSingleWorker(
+    try spectrum_run.prefetchO2ARadianceRowsSingleWorker(
         wavelengths.view(),
         angles,
         surface_albedo,
@@ -880,9 +880,9 @@ test "prefetchReferenceRadianceRowsSingleWorker fills dense direct-route rows" {
     }
 }
 
-test "runReferenceSpectrumSingleWorker assembles direct-route product reflectance" {
+test "runO2ASpectrumSingleWorker assembles direct-route product reflectance" {
     const allocator = std.testing.allocator;
-    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         allocator,
         internal.input.defaults.referenceCase(),
     );
@@ -910,7 +910,7 @@ test "runReferenceSpectrumSingleWorker assembles direct-route product reflectanc
 
     const exact_wavelengths_nm = [_]f64{ 758.0, 760.0 };
     const case = internal.input.defaults.referenceCase();
-    var profile_lines = try internal.cache.profile_line_memory.buildReferenceProfileLineValuesForWavelengths(
+    var profile_lines = try internal.cache.profile_line_memory.buildO2ProfileLineValuesForWavelengths(
         allocator,
         case,
         exact_wavelengths_nm[0..],
@@ -961,7 +961,7 @@ test "runReferenceSpectrumSingleWorker assembles direct-route product reflectanc
         .controls = .{ .scattering = .none, .integrate_source_function = false },
     };
 
-    const summary = try spectrum_run.runReferenceSpectrumSingleWorker(
+    const summary = try spectrum_run.runO2ASpectrumSingleWorker(
         table,
         wavelengths.view(),
         angles,
