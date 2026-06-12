@@ -303,6 +303,129 @@ pub fn prefetchReferenceRadianceRowsSingleWorker(
     }
 }
 
+pub fn runReferenceSpectrumSingleWorker(
+    table: sampling_table.SpectrumSamplingTable,
+    wavelengths: radiance_wavelengths.RadianceWavelengthList,
+    angles: solve.ViewAngles,
+    surface_albedo: f64,
+    layer_grid: atmosphere_layers.LayerGrid,
+    profile_lines: profile_line_memory.ProfileLineValues,
+    cia: cia_table.O2CiaTable,
+    aerosol: aerosol_tables.AerosolLayerTable,
+    phase: phase_table.PhaseTable,
+    solar: solar_table.SolarTable,
+    solve_config: controls.SolveConfig,
+    uses_integrated_radiance_sampling: bool,
+    uses_integrated_irradiance_sampling: bool,
+    radiance_calibration: instrument_average.Calibration,
+    irradiance_calibration: instrument_average.Calibration,
+    radiance_slit_kernel: []const f64,
+    irradiance_slit_kernel: []const f64,
+    out_dense_radiance: []radiance_results.RadianceResult,
+    out_wavelengths_nm: []f64,
+    out_raw_radiance: []radiance_results.RadianceResult,
+    out_raw_irradiance: []f64,
+    out_radiance: []radiance_results.RadianceResult,
+    out_irradiance: []f64,
+    out_reflectance: []f64,
+    out_jacobian: []jacobian_states.Vector,
+    out_line_sigma_cm2_per_molecule: []f64,
+    out_support: []layer_depths.SupportOptics,
+    out_layers: []layer_depths.LayerOptics,
+    out_source_levels: []source_levels.SourceLevel,
+    out_curved_samples: []curved_sun_path.CurvedSunPathSample,
+    out_curved_level_starts: []usize,
+    out_curved_level_altitudes_km: []f64,
+    worker_memory: *transport_worker_memory.TransportWorkerMemory,
+    solar_memory: *solar_irradiance_memory.SolarIrradianceMemory,
+) !instrument_average.ReflectanceAssemblySummary {
+    // runReferenceSpectrumSingleWorker ------------------------------------------------------------------      |
+    // Run the explicit single-worker spectrum path from exact radiance wavelengths to product reflectance.     |
+    //                                                                                                          |
+    // provenance                                                                                               |
+    //   Ports the old orchestration order from main:                                                           |
+    //   `grid_calculation/spectral_forward.zig` dense prefetch and `grid_calculation/simulate.zig` nominal     |
+    //   gather, channel postprocess, and reflectance assembly. The individual formulas stay in the stage       |
+    //   helpers called below.                                                                                  |
+    //                                                                                                          |
+    // data flow                                                                                                |
+    //   exact radiance wavelengths -> dense radiance rows -> raw product radiance and irradiance rows          |
+    //   -> calibrated product rows -> reflectance and fixed-state Jacobian rows                                |
+    //                                                                                                          |
+    // memory                                                                                                   |
+    //   Every dense/product/optics row is caller-owned. The wrapper allocates nothing and stores no scene,     |
+    //   request, product, output, or cache owner.                                                              |
+    // ---------------------------------------------------------------------------------------------------------|
+    const row_count = table.rows.len;
+    const product_shapes_match = wavelengths.rows.len == row_count and
+        out_wavelengths_nm.len == row_count and
+        out_raw_radiance.len == row_count and
+        out_raw_irradiance.len == row_count and
+        out_radiance.len == row_count and
+        out_irradiance.len == row_count and
+        out_reflectance.len == row_count;
+    if (!product_shapes_match) return error.ShapeMismatch;
+
+    // instrumentation: trace zone: single-worker spectrum run ------------------------------------------------ |
+    // captures: dense prefetch, product gather, channel postprocess, and reflectance assembly wall time        |
+    // why: gives WP4 a same-boundary phase around the full explicit spectrum path.                             |
+    const run_zone = Trace.staticZone(@src(), "spectrum.reference_single_worker");
+    run_zone.value(@intCast(row_count));
+    defer run_zone.end();
+    // end instrumentation: trace zone: single-worker spectrum run -------------------------------------------- |
+
+    try prefetchReferenceRadianceRowsSingleWorker(
+        wavelengths,
+        angles,
+        surface_albedo,
+        layer_grid,
+        profile_lines,
+        cia,
+        aerosol,
+        phase,
+        solar,
+        solve_config,
+        out_dense_radiance,
+        out_line_sigma_cm2_per_molecule,
+        out_support,
+        out_layers,
+        out_source_levels,
+        out_curved_samples,
+        out_curved_level_starts,
+        out_curved_level_altitudes_km,
+        worker_memory,
+    );
+
+    try gatherProductRows(
+        solve_config,
+        table,
+        wavelengths,
+        out_dense_radiance,
+        solar,
+        solar_memory,
+        out_wavelengths_nm,
+        out_raw_radiance,
+        out_raw_irradiance,
+    );
+
+    return postprocessAndAssembleProductRows(
+        solve_config,
+        uses_integrated_radiance_sampling,
+        uses_integrated_irradiance_sampling,
+        radiance_calibration,
+        irradiance_calibration,
+        radiance_slit_kernel,
+        irradiance_slit_kernel,
+        angles.solar_mu,
+        out_raw_radiance,
+        out_raw_irradiance,
+        out_radiance,
+        out_irradiance,
+        out_reflectance,
+        out_jacobian,
+    );
+}
+
 fn totalOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {
     // totalOpticalDepth ------------------------------------------------------------------------------------   |
     // Reduce explicit layer rows into the scalar optical depth used by the old direct-surface route.           |
