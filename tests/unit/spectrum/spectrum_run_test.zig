@@ -14,6 +14,11 @@ const solar_lookup = internal.spectrum.solar_lookup;
 const solar_table = internal.setup.solar_table;
 const spectrum_run = internal.spectrum.spectrum_run;
 
+const public_python_baseline_path =
+    "scratch/refactor/2026-06-11-explicit-dataflow-refactor/evidence/" ++
+    "baseline-main-56605387/public-python-baseline.json";
+const max_public_python_baseline_bytes: usize = 160 << 20;
+
 const ExpectedWorkerPrimitiveLayout = struct {
     chunk_queue_size: usize,
     error_state_size: usize,
@@ -414,10 +419,11 @@ test "radianceAtWavelength matches old-route Stage 2 transport probes" {
     defer memory.deinit(allocator);
 
     const case = internal.input.defaults.referenceCase();
-    const degree = std.math.pi / 180.0;
+    const solar_sin = @sin(std.math.degreesToRadians(case.geometry.solar_zenith_deg));
+    const view_sin = @sin(std.math.degreesToRadians(case.geometry.viewing_zenith_deg));
     const angles = solve.ViewAngles{
-        .solar_mu = @cos(case.geometry.solar_zenith_deg * degree),
-        .view_mu = @cos(case.geometry.viewing_zenith_deg * degree),
+        .solar_mu = @sqrt(@max(1.0 - solar_sin * solar_sin, 0.0)),
+        .view_mu = @sqrt(@max(1.0 - view_sin * view_sin, 0.0)),
 
         // main:`forward_model/optical_properties/state_build/forward_layers.zig` transport_dphi_rad.
         .relative_azimuth_rad = std.math.degreesToRadians(@mod(180.0 - case.geometry.relative_azimuth_deg, 360.0)),
@@ -500,6 +506,244 @@ test "radianceAtWavelength matches old-route Stage 2 transport probes" {
             1.0e-13,
         );
         try std.testing.expectApproxEqAbs(0.0, actual.jacobian[0], 0.0);
+    }
+}
+
+test "runReferenceSpectrumSingleWorker matches old-route Stage 3 full spectrum" {
+    if (builtin.mode == .Debug) return error.SkipZigTest;
+    if (!std.process.hasEnvVarConstant("ZDISAMAR_RUN_STAGE3_PARITY")) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const evidence_bytes = try std.fs.cwd().readFileAlloc(
+        allocator,
+        public_python_baseline_path,
+        max_public_python_baseline_bytes,
+    );
+    defer allocator.free(evidence_bytes);
+
+    var baseline = try std.json.parseFromSlice(PublicPythonBaselineEvidence, allocator, evidence_bytes, .{
+        .ignore_unknown_fields = true,
+    });
+    defer baseline.deinit();
+    const expected = baseline.value.spectrum.one_shot;
+
+    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+        allocator,
+        internal.input.defaults.referenceCase(),
+    );
+    defer tables.deinit(allocator);
+
+    const case = internal.input.defaults.referenceCase();
+    var owned_sampling = try sampling_table.buildReferenceSpectrumSamplingTable(
+        allocator,
+        case,
+        tables.instrument,
+        tables.lines,
+    );
+    defer owned_sampling.deinit(allocator);
+    const table = owned_sampling.view();
+
+    var wavelengths = try radiance_wavelengths.buildRadianceWavelengthList(allocator, table);
+    defer wavelengths.deinit(allocator);
+
+    const exact_wavelengths_nm = try allocator.alloc(f64, wavelengths.wavelengths.len);
+    defer allocator.free(exact_wavelengths_nm);
+    for (wavelengths.wavelengths, exact_wavelengths_nm) |row, *wavelength_nm| {
+        wavelength_nm.* = row.wavelength_nm;
+    }
+
+    var profile_lines =
+        try internal.cache.profile_line_memory.buildReferenceProfileLineValuesForWavelengthsWithCutoffGrid(
+            allocator,
+            case,
+            exact_wavelengths_nm,
+            exact_wavelengths_nm,
+        );
+    defer profile_lines.deinit(allocator);
+
+    const support_count = tables.layers.support_mid_altitudes_km.len;
+    const layer_count = tables.layers.layer_pressures_hpa.len;
+    const product_count = table.rows.len;
+    const dense_count = wavelengths.wavelengths.len;
+
+    try std.testing.expectEqual(@as(usize, 701), expected.sample_count);
+    try std.testing.expectEqual(expected.sample_count, product_count);
+    try std.testing.expectEqual(expected.sample_count, expected.wavelength_nm.len);
+    try std.testing.expectEqual(expected.sample_count, expected.radiance.len);
+    try std.testing.expectEqual(expected.sample_count, expected.irradiance.len);
+    try std.testing.expectEqual(expected.sample_count, expected.reflectance.len);
+    try std.testing.expectEqual(
+        expected.sample_count,
+        expected.reflectance_jacobian.aerosol_optical_depth.len,
+    );
+    try std.testing.expectEqual(
+        expected.sample_count,
+        expected.reflectance_jacobian.aerosol_layer_mid_pressure_hpa.len,
+    );
+    try std.testing.expectEqual(@as(usize, 3874), dense_count);
+
+    const dense = try allocator.alloc(radiance_results.RadianceResult, dense_count);
+    defer allocator.free(dense);
+    const product_wavelengths = try allocator.alloc(f64, product_count);
+    defer allocator.free(product_wavelengths);
+    const raw_radiance = try allocator.alloc(radiance_results.RadianceResult, product_count);
+    defer allocator.free(raw_radiance);
+    const raw_irradiance = try allocator.alloc(f64, product_count);
+    defer allocator.free(raw_irradiance);
+    const product_radiance = try allocator.alloc(radiance_results.RadianceResult, product_count);
+    defer allocator.free(product_radiance);
+    const product_irradiance = try allocator.alloc(f64, product_count);
+    defer allocator.free(product_irradiance);
+    const reflectance = try allocator.alloc(f64, product_count);
+    defer allocator.free(reflectance);
+    const jacobian = try allocator.alloc(jacobian_states.Vector, product_count);
+    defer allocator.free(jacobian);
+    const line_sigma = try allocator.alloc(f64, support_count);
+    defer allocator.free(line_sigma);
+    const support = try allocator.alloc(layer_depths.SupportOptics, support_count);
+    defer allocator.free(support);
+    const layers = try allocator.alloc(layer_depths.LayerOptics, layer_count);
+    defer allocator.free(layers);
+    const source_levels = try allocator.alloc(internal.optics.source_levels.SourceLevel, layer_count + 1);
+    defer allocator.free(source_levels);
+    const curved_samples = try allocator.alloc(internal.optics.curved_sun_path.CurvedSunPathSample, support_count);
+    defer allocator.free(curved_samples);
+    const curved_level_starts = try allocator.alloc(usize, layer_count + 1);
+    defer allocator.free(curved_level_starts);
+    const curved_level_altitudes = try allocator.alloc(f64, layer_count + 1);
+    defer allocator.free(curved_level_altitudes);
+
+    var transport_memory = internal.cache.transport_worker_memory.TransportWorkerMemory{};
+    defer transport_memory.deinit(allocator);
+    var solar_memory = internal.cache.solar_irradiance_memory.SolarIrradianceMemory.init(allocator);
+    defer solar_memory.deinit();
+
+    const solar_sin = @sin(std.math.degreesToRadians(case.geometry.solar_zenith_deg));
+    const view_sin = @sin(std.math.degreesToRadians(case.geometry.viewing_zenith_deg));
+    const angles = solve.ViewAngles{
+        .solar_mu = @sqrt(@max(1.0 - solar_sin * solar_sin, 0.0)),
+        .view_mu = @sqrt(@max(1.0 - view_sin * view_sin, 0.0)),
+
+        // main:`forward_model/optical_properties/state_build/forward_layers.zig` transport_dphi_rad.
+        .relative_azimuth_rad = std.math.degreesToRadians(@mod(180.0 - case.geometry.relative_azimuth_deg, 360.0)),
+    };
+    const solve_config = controls.SolveConfig{
+        .derivative_mode = .semi_analytical,
+        .derivative_state_mask = jacobian_states.stateMask(.aerosol_optical_depth) |
+            jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa),
+        .controls = .{
+            .scattering = .multiple,
+            .n_streams = @intCast(case.rtm.stream_count),
+            .performance_thresholds = controls.PerformanceThresholds.o2a_default,
+            .use_spherical_correction = case.geometry.pseudo_spherical,
+            .integrate_source_function = true,
+            .renorm_phase_function = true,
+        },
+    };
+    try transport_memory.ensureCapacity(
+        allocator,
+        layer_count + 1,
+        case.rtm.stream_count,
+        40,
+        40,
+        true,
+    );
+
+    const summary = try spectrum_run.runReferenceSpectrumSingleWorker(
+        table,
+        wavelengths.view(),
+        angles,
+        0.2,
+        tables.layers,
+        profile_lines,
+        tables.cia,
+        tables.aerosol,
+        tables.phase,
+        tables.solar,
+        solve_config,
+        true,
+        true,
+        .{},
+        .{},
+        &.{},
+        &.{},
+        dense,
+        product_wavelengths,
+        raw_radiance,
+        raw_irradiance,
+        product_radiance,
+        product_irradiance,
+        reflectance,
+        jacobian,
+        line_sigma,
+        support,
+        layers,
+        source_levels,
+        curved_samples,
+        curved_level_starts,
+        curved_level_altitudes,
+        &transport_memory,
+        &solar_memory,
+    );
+
+    try std.testing.expectEqual(expected.sample_count, summary.sample_count);
+    for (0..expected.sample_count) |index| {
+        try expectStage3ApproxAbs(
+            "wavelength_nm",
+            index,
+            expected.wavelength_nm[index],
+            expected.wavelength_nm[index],
+            product_wavelengths[index],
+            0.0,
+        );
+        try expectStage3ApproxAbs(
+            "reflectance",
+            index,
+            expected.wavelength_nm[index],
+            expected.reflectance[index],
+            reflectance[index],
+            1.0e-13,
+        );
+        try expectStage3ApproxAbs(
+            "radiance",
+            index,
+            expected.wavelength_nm[index],
+            expected.radiance[index],
+            product_radiance[index].radiance,
+            1.0e-13,
+        );
+        try expectStage3ApproxAbs(
+            "irradiance",
+            index,
+            expected.wavelength_nm[index],
+            expected.irradiance[index],
+            product_irradiance[index],
+            1.0e-13,
+        );
+        try expectStage3ApproxAbs(
+            "aerosol_optical_depth_reflectance_jacobian",
+            index,
+            expected.wavelength_nm[index],
+            expected.reflectance_jacobian.aerosol_optical_depth[index],
+            jacobian[index][jacobian_states.stateIndex(.aerosol_optical_depth)],
+            1.0e-13,
+        );
+        try expectStage3ApproxAbs(
+            "aerosol_layer_mid_pressure_hpa_reflectance_jacobian",
+            index,
+            expected.wavelength_nm[index],
+            expected.reflectance_jacobian.aerosol_layer_mid_pressure_hpa[index],
+            jacobian[index][jacobian_states.stateIndex(.aerosol_layer_mid_pressure_hpa)],
+            1.0e-13,
+        );
+        try expectStage3ApproxAbs(
+            "surface_albedo_reflectance_jacobian",
+            index,
+            expected.wavelength_nm[index],
+            0.0,
+            jacobian[index][jacobian_states.stateIndex(.surface_albedo)],
+            0.0,
+        );
     }
 }
 
@@ -1221,6 +1465,95 @@ const stage2_transport_wavelengths_nm = [_]f64{ 758.0, 760.0, 765.0, 767.0, 776.
 // reflectance/radiance outputs at 1e-13 and checks Jacobians in reflectance
 // space at 1e-13 absolute.
 const stage2_radiance_jacobian_relative_tolerance: f64 = 1.0e-10;
+
+fn expectStage3ApproxAbs(
+    column_name: []const u8,
+    index: usize,
+    wavelength_nm: f64,
+    expected: f64,
+    actual: f64,
+    tolerance: f64,
+) !void {
+    // expectStage3ApproxAbs ----------------------------------------------------------------------------------|
+    // Report the exact full-spectrum row and column when the opt-in Stage 3 parity gate fails.                |
+    // --------------------------------------------------------------------------------------------------------|
+    if (!std.math.approxEqAbs(f64, expected, actual, tolerance)) {
+        std.debug.print(
+            "Stage 3 mismatch column={s} index={} wavelength_nm={d:.17} expected={d:.17} actual={d:.17} " ++
+                "delta={e:.17} tolerance={e:.17}\n",
+            .{ column_name, index, wavelength_nm, expected, actual, actual - expected, tolerance },
+        );
+        return error.TestExpectedApproxEqAbs;
+    }
+}
+
+// PublicPythonBaselineEvidence -------------------------------------------------------------------------------|
+// Minimal typed view of the WP1 public Python baseline JSON used by the Stage 3 spectrum parity test.         |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 312 B (0.305 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..311] spectrum: PublicPythonSpectrumEvidence                                                           |
+const PublicPythonBaselineEvidence = struct {
+    spectrum: PublicPythonSpectrumEvidence,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// PublicPythonSpectrumEvidence -------------------------------------------------------------------------------|
+// Spectrum run variants recorded by the WP1 public Python baseline.                                           |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 312 B (0.305 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..103] one_shot      : Stage3SpectrumEvidence                                                           |
+// [104..207] session_first : Stage3SpectrumEvidence                                                           |
+// [208..311] session_second: Stage3SpectrumEvidence                                                           |
+const PublicPythonSpectrumEvidence = struct {
+    one_shot: Stage3SpectrumEvidence,
+    session_first: Stage3SpectrumEvidence = .{},
+    session_second: Stage3SpectrumEvidence = .{},
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// Stage3SpectrumEvidence -------------------------------------------------------------------------------------|
+// One 701-row public spectrum and its two requested reflectance-Jacobian columns.                             |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 104 B (0.102 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] wavelength_nm        : []f64                                                                       |
+// [16..31] radiance             : []f64                                                                       |
+// [32..47] irradiance           : []f64                                                                       |
+// [48..63] reflectance          : []f64                                                                       |
+// [64..95] reflectance_jacobian : Stage3ReflectanceJacobianEvidence                                           |
+// [96..103] sample_count        : usize                                                                       |
+const Stage3SpectrumEvidence = struct {
+    wavelength_nm: []f64 = &.{},
+    radiance: []f64 = &.{},
+    irradiance: []f64 = &.{},
+    reflectance: []f64 = &.{},
+    reflectance_jacobian: Stage3ReflectanceJacobianEvidence = .{},
+    sample_count: usize = 0,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// Stage3ReflectanceJacobianEvidence --------------------------------------------------------------------------|
+// Two reflectance-space Jacobian columns requested by the WP1 public baseline capture.                        |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] aerosol_optical_depth            : []f64                                                           |
+// [16..31] aerosol_layer_mid_pressure_hpa   : []f64                                                           |
+const Stage3ReflectanceJacobianEvidence = struct {
+    aerosol_optical_depth: []f64 = &.{},
+    aerosol_layer_mid_pressure_hpa: []f64 = &.{},
+};
+// ------------------------------------------------------------------------------------------------------------|
 
 const TestRadianceComputeError = error{
     InjectedFailure,
