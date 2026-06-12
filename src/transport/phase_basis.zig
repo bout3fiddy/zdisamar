@@ -812,15 +812,36 @@ fn fillZplusZminRow12(
         );
         if (coefficient == 0.0) continue;
 
-        const plus_l = choosePlusBasis(fourier_index, phase_index, geometry, plm_basis);
-        fillPhaseRow12(
-            &row,
-            coefficient,
-            &plus_l.plus,
-            minusParitySign(fourier_index, phase_index),
-            row_index,
-            first_order,
-        );
+        const minus_sign = minusParitySign(fourier_index, phase_index);
+        if (phase_index <= plm_basis.max_phase_index) {
+            const plus_l = &plm_basis.plus[phase_index];
+            const scaled_plus_row = coefficient * plus_l[row_index];
+            const scaled_minus_row = coefficient * minus_sign * plus_l[row_index];
+
+            inline for (0..12) |column| {
+                if (first_order) {
+                    row.zplus[column] = scaled_plus_row * plus_l[column];
+                    row.zmin[column] = scaled_minus_row * plus_l[column];
+                } else {
+                    row.zplus[column] += scaled_plus_row * plus_l[column];
+                    row.zmin[column] += scaled_minus_row * plus_l[column];
+                }
+            }
+        } else {
+            const plm = computePlm(fourier_index, phase_index, geometry);
+            const scaled_plus_row = coefficient * plm.plus[row_index];
+            const scaled_minus_row = coefficient * minus_sign * plm.plus[row_index];
+
+            inline for (0..12) |column| {
+                if (first_order) {
+                    row.zplus[column] = scaled_plus_row * plm.plus[column];
+                    row.zmin[column] = scaled_minus_row * plm.plus[column];
+                } else {
+                    row.zplus[column] += scaled_plus_row * plm.plus[column];
+                    row.zmin[column] += scaled_minus_row * plm.plus[column];
+                }
+            }
+        }
         first_order = false;
     }
 
@@ -895,34 +916,6 @@ fn fillPhaseTermGeneric(
                 zplus.data[index] += scaled_plus_i * plus_l[col];
                 zmin.data[index] += scaled_minus_i * plus_l[col];
             }
-        }
-    }
-}
-
-inline fn fillPhaseRow12(
-    noalias row: *PhaseKernelRow,
-    coefficient: f64,
-    noalias plus_l: *const [gauss_angles.max_stream_count]f64,
-    minus_sign: f64,
-    row_index: usize,
-    first_order: bool,
-) void {
-    // fillPhaseRow12 ---------------------------------------------------------------------------------------- |
-    // Add one beta_l row contribution into fixed 12-wide Z+ and Z- rows.                                      |
-    // --------------------------------------------------------------------------------------------------------|
-    const scaled_plus_row = coefficient * plus_l[row_index];
-    const scaled_minus_row = coefficient * minus_sign * plus_l[row_index];
-
-    inline for (0..12) |col| {
-        const zplus_value = scaled_plus_row * plus_l[col];
-        const zmin_value = scaled_minus_row * plus_l[col];
-
-        if (first_order) {
-            row.zplus[col] = zplus_value;
-            row.zmin[col] = zmin_value;
-        } else {
-            row.zplus[col] += zplus_value;
-            row.zmin[col] += zmin_value;
         }
     }
 }

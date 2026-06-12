@@ -12,6 +12,7 @@ pub const max_levels: usize = 65;
 const direction_cosine_floor: f64 = 1.0e-6;
 const spherical_denominator_floor: f64 = 1.0e-12;
 const earth_radius_km: f64 = 6371.0;
+const max_curved_fast_samples: usize = 512;
 
 // attenuation.zig ------------------------------------------------------------------------------------------- |
 // Direct-beam attenuation tables for LABOS transport.                                                         |
@@ -476,6 +477,17 @@ fn applyCurvedTopToLevelRuntime(
     const top_level = curved_grid.level_sample_starts.len - 1;
     const level_count = top_level + 1;
 
+    // --------------------------------------------------------------------------------------------------------|
+    // tradeoff: runtime pseudo-spherical prepared-grid cap                                                    |
+    // Use the old prepared-grid fast path only for <= 65 levels and <= 512 support samples.                   |
+    // --------------------------------------------------------------------------------------------------------|
+    // Larger support grids use the same spherical slant-depth formula in the generic loop below.              |
+    if (level_count <= max_levels and curved_grid.samples.len <= max_curved_fast_samples) {
+        applyCurvedTopToLevelRuntimePreparedGrid(top_to_level, curved_grid, geometry, top_level);
+        return;
+    }
+    // end tradeoff: runtime pseudo-spherical prepared-grid cap -----------------------------------------------|
+
     for (0..geometry.stream_count) |stream_index| {
         const top_offset = stream_index * level_count;
         top_to_level[top_offset + top_level] = 1.0;
@@ -498,11 +510,131 @@ fn applyCurvedTopToLevelDynamic(
     const top_level = curved_grid.level_sample_starts.len - 1;
     const level_count = top_level + 1;
 
+    // --------------------------------------------------------------------------------------------------------|
+    // tradeoff: dynamic pseudo-spherical prepared-grid cap                                                    |
+    // Use the old prepared-grid fast path only for <= 65 levels and <= 512 support samples.                   |
+    // --------------------------------------------------------------------------------------------------------|
+    // The dynamic table writes only the top-to-level row; other level pairs keep layer-product attenuation.   |
+    if (level_count <= max_levels and curved_grid.samples.len <= max_curved_fast_samples) {
+        applyCurvedTopToLevelDynamicPreparedGrid(attenuation, curved_grid, geometry, top_level);
+        return;
+    }
+    // end tradeoff: dynamic pseudo-spherical prepared-grid cap -----------------------------------------------|
+
     for (0..geometry.stream_count) |stream_index| {
         const values = attenuation.data[stream_index * level_count * level_count ..][0 .. level_count * level_count];
         const top_row = values[top_level * level_count ..][0..level_count];
         top_row[top_level] = 1.0;
         fillCurvedTopToLevelForStream(top_row, curved_grid, geometry.u[stream_index]);
+    }
+}
+
+fn applyCurvedTopToLevelRuntimePreparedGrid(
+    top_to_level: []f64,
+    curved_grid: CurvedSunPathGrid,
+    geometry: *const gauss_angles.GaussGeometry,
+    top_level: usize,
+) void {
+    // applyCurvedTopToLevelRuntimePreparedGrid -------------------------------------------------------------- |
+    // Use old-route precomputed radius terms while writing runtime top-to-level attenuation.                  |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports main:`radiative_transfer/labos/attenuation.zig`                                                 |
+    //   applyPseudoSphericalRuntimeTopToLevelWithPreparedGrid.                                                |
+    // --------------------------------------------------------------------------------------------------------|
+    const level_count = top_level + 1;
+    var level_radius_sq: [max_levels]f64 = undefined;
+    var sample_radius_sq: [max_curved_fast_samples]f64 = undefined;
+    var sample_weighted_radius: [max_curved_fast_samples]f64 = undefined;
+
+    for (0..level_count) |level| {
+        const radius = earth_radius_km + levelAltitudeFromCurvedGrid(curved_grid, level);
+        level_radius_sq[level] = radius * radius;
+    }
+
+    for (curved_grid.samples, 0..) |sample, sample_index| {
+        const radius = earth_radius_km + sample.altitude_km;
+        sample_radius_sq[sample_index] = radius * radius;
+        sample_weighted_radius[sample_index] =
+            if (sample.optical_depth > 0.0) sample.optical_depth * radius else 0.0;
+    }
+
+    for (0..geometry.stream_count) |stream_index| {
+        const top_offset = stream_index * level_count;
+        const mu = math.clamp(geometry.u[stream_index], -1.0, 1.0);
+        const sin2theta = @max(1.0 - mu * mu, 0.0);
+        top_to_level[top_offset + top_level] = 1.0;
+        var level = top_level;
+
+        while (level > 0) {
+            level -= 1;
+
+            const sqrx_sin2theta = sin2theta * level_radius_sq[level];
+            var optical_depth_sum: f64 = 0.0;
+
+            for (curved_grid.level_sample_starts[level]..curved_grid.samples.len) |sample_index| {
+                const denominator = @sqrt(@abs(sample_radius_sq[sample_index] - sqrx_sin2theta));
+                optical_depth_sum +=
+                    sample_weighted_radius[sample_index] / @max(denominator, spherical_denominator_floor);
+            }
+
+            top_to_level[top_offset + level] = math.exp(-optical_depth_sum);
+        }
+    }
+}
+
+fn applyCurvedTopToLevelDynamicPreparedGrid(
+    attenuation: *DynamicAttenuation,
+    curved_grid: CurvedSunPathGrid,
+    geometry: *const gauss_angles.GaussGeometry,
+    top_level: usize,
+) void {
+    // applyCurvedTopToLevelDynamicPreparedGrid -------------------------------------------------------------- |
+    // Use old-route precomputed radius terms while writing the full dynamic top-path row.                     |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports main:`radiative_transfer/labos/attenuation.zig`                                                 |
+    //   applyPseudoSphericalTopLevelAttenuationDynamicWithPreparedGrid.                                       |
+    // --------------------------------------------------------------------------------------------------------|
+    const level_count = top_level + 1;
+    const stream_stride = level_count * level_count;
+    var level_radius_sq: [max_levels]f64 = undefined;
+    var sample_radius_sq: [max_curved_fast_samples]f64 = undefined;
+    var sample_weighted_radius: [max_curved_fast_samples]f64 = undefined;
+
+    for (0..level_count) |level| {
+        const radius = earth_radius_km + levelAltitudeFromCurvedGrid(curved_grid, level);
+        level_radius_sq[level] = radius * radius;
+    }
+
+    for (curved_grid.samples, 0..) |sample, sample_index| {
+        const radius = earth_radius_km + sample.altitude_km;
+        sample_radius_sq[sample_index] = radius * radius;
+        sample_weighted_radius[sample_index] =
+            if (sample.optical_depth > 0.0) sample.optical_depth * radius else 0.0;
+    }
+
+    for (0..geometry.stream_count) |stream_index| {
+        const mu = math.clamp(geometry.u[stream_index], -1.0, 1.0);
+        const sin2theta = @max(1.0 - mu * mu, 0.0);
+        const values = attenuation.data[stream_index * stream_stride ..][0..stream_stride];
+        values[top_level * level_count + top_level] = 1.0;
+        var level = top_level;
+
+        while (level > 0) {
+            level -= 1;
+
+            const sqrx_sin2theta = sin2theta * level_radius_sq[level];
+            var optical_depth_sum: f64 = 0.0;
+
+            for (curved_grid.level_sample_starts[level]..curved_grid.samples.len) |sample_index| {
+                const denominator = @sqrt(@abs(sample_radius_sq[sample_index] - sqrx_sin2theta));
+                optical_depth_sum +=
+                    sample_weighted_radius[sample_index] / @max(denominator, spherical_denominator_floor);
+            }
+
+            values[top_level * level_count + level] = math.exp(-optical_depth_sum);
+        }
     }
 }
 
@@ -538,6 +670,26 @@ fn fillCurvedTopToLevelForStream(
 
         top_row[level] = math.exp(-optical_depth_sum);
     }
+}
+
+fn levelAltitudeFromCurvedGrid(curved_grid: CurvedSunPathGrid, level: usize) f64 {
+    // levelAltitudeFromCurvedGrid --------------------------------------------------------------------------- |
+    // Recover a level altitude from the pseudo-spherical support grid.                                        |
+    // --------------------------------------------------------------------------------------------------------|
+    if (curved_grid.level_altitudes_km.len != 0) return curved_grid.level_altitudes_km[level];
+    if (level == 0) {
+        const first = curved_grid.samples[0];
+        return @max(first.altitude_km - 0.5 * first.thickness_km, 0.0);
+    }
+
+    const start_index = curved_grid.level_sample_starts[level];
+    if (start_index >= curved_grid.samples.len) {
+        const last = curved_grid.samples[curved_grid.samples.len - 1];
+        return @max(last.altitude_km + 0.5 * last.thickness_km, 0.0);
+    }
+
+    const sample = curved_grid.samples[start_index];
+    return @max(sample.altitude_km - 0.5 * sample.thickness_km, 0.0);
 }
 
 fn requireCurvedGrid(
