@@ -23,6 +23,7 @@ test {
     _ = @import("transport/phase_basis_test.zig");
     _ = @import("transport/phase_timing_test.zig");
     _ = @import("transport/rows_test.zig");
+    _ = @import("transport/scattering_orders_test.zig");
     _ = @import("instrumentation/facades_test.zig");
 }
 
