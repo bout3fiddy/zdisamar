@@ -2,8 +2,12 @@ const std = @import("std");
 const builtin = @import("builtin");
 const internal = @import("internal");
 
+const jacobian_states = internal.transport.jacobian_states;
 const radiance_results = internal.spectrum.radiance_results;
 const radiance_wavelengths = internal.spectrum.radiance_wavelengths;
+const readers = internal.assets.readers;
+const sampling_table = internal.spectrum.sampling_table;
+const solar_table = internal.setup.solar_table;
 const spectrum_run = internal.spectrum.spectrum_run;
 
 const ExpectedWorkerPrimitiveLayout = struct {
@@ -174,6 +178,166 @@ test "prefetchRadianceRowsSingleWorker checks result shape and propagates comput
         ),
     );
     try std.testing.expectEqual(@as(usize, 2), context.call_count);
+}
+
+test "gatherProductRows gathers radiance irradiance and active Jacobian lanes" {
+    var rows = [_]sampling_table.SpectrumSamplingRow{
+        .{
+            .nominal_wavelength_nm = 760.0,
+            .radiance_wavelength_nm = 760.0,
+            .irradiance_wavelength_nm = 760.0,
+            .radiance_integration = sampling_table.IntegrationKernelRef.disabled(),
+            .irradiance_integration = sampling_table.IntegrationKernelRef.disabled(),
+        },
+        .{
+            .nominal_wavelength_nm = 761.0,
+            .radiance_wavelength_nm = 761.0,
+            .irradiance_wavelength_nm = 761.0,
+            .radiance_integration = .{
+                .side_start = 0,
+                .sample_count = 2,
+                .encoding = .side_samples,
+            },
+            .irradiance_integration = .{
+                .side_start = 0,
+                .sample_count = 2,
+                .encoding = .side_samples,
+            },
+        },
+    };
+    const offsets = [_]f64{ -1.0, 1.0 };
+    const weights = [_]f64{ 0.25, 0.75 };
+    const table = sampling_table.SpectrumSamplingTable{
+        .rows = &rows,
+        .kernel_storage = .{
+            .offsets_nm = offsets[0..],
+            .weights = weights[0..],
+        },
+    };
+    const sample_indices = [_]u32{ 1, 0, 2 };
+    var row_refs = [_]radiance_wavelengths.RadianceSampleIndexRef{
+        .{ .start = 0 },
+        .{ .start = 1 },
+    };
+    var dense = [_]radiance_results.RadianceResult{
+        .{ .radiance = 10.0, .jacobian = .{ 1.0, 10.0, 100.0 } },
+        .{ .radiance = 20.0, .jacobian = .{ 2.0, 20.0, 200.0 } },
+        .{ .radiance = 30.0, .jacobian = .{ 3.0, 30.0, 300.0 } },
+    };
+    var solar_rows = [_]readers.SolarAssetRow{
+        .{ .wavelength_nm = 759.0, .irradiance = 100.0 },
+        .{ .wavelength_nm = 760.0, .irradiance = 200.0 },
+        .{ .wavelength_nm = 761.0, .irradiance = 300.0 },
+        .{ .wavelength_nm = 762.0, .irradiance = 500.0 },
+    };
+    const solar = solar_table.SolarTable{
+        .rows = solar_rows[0..],
+        .spline_second_derivatives = &.{},
+    };
+    var solar_memory = internal.cache.solar_irradiance_memory.SolarIrradianceMemory.init(std.testing.allocator);
+    defer solar_memory.deinit();
+
+    var out_wavelengths: [2]f64 = undefined;
+    var out_radiance: [2]radiance_results.RadianceResult = undefined;
+    var out_irradiance: [2]f64 = undefined;
+    try spectrum_run.gatherProductRows(
+        .{
+            .derivative_mode = .semi_analytical,
+            .derivative_state_mask = jacobian_states.stateMask(.surface_albedo) |
+                jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa),
+        },
+        table,
+        .{
+            .rows = row_refs[0..],
+            .sample_indices = sample_indices[0..],
+            .wavelengths = &.{},
+        },
+        dense[0..],
+        solar,
+        &solar_memory,
+        out_wavelengths[0..],
+        out_radiance[0..],
+        out_irradiance[0..],
+    );
+
+    try std.testing.expectApproxEqAbs(760.0, out_wavelengths[0], 0.0);
+    try std.testing.expectApproxEqAbs(761.0, out_wavelengths[1], 0.0);
+    try std.testing.expectApproxEqAbs(20.0, out_radiance[0].radiance, 0.0);
+    try std.testing.expectEqual([3]f64{ 2.0, 20.0, 200.0 }, out_radiance[0].jacobian);
+    try std.testing.expectApproxEqAbs(25.0, out_radiance[1].radiance, 0.0);
+    try std.testing.expectApproxEqAbs(2.5, out_radiance[1].jacobian[0], 0.0);
+    try std.testing.expectApproxEqAbs(0.0, out_radiance[1].jacobian[1], 0.0);
+    try std.testing.expectApproxEqAbs(250.0, out_radiance[1].jacobian[2], 0.0);
+    try std.testing.expectApproxEqAbs(200.0, out_irradiance[0], 0.0);
+    try std.testing.expectApproxEqAbs(425.0, out_irradiance[1], 0.0);
+    try std.testing.expectEqual(@as(u32, 2), solar_memory.values.count());
+}
+
+test "gatherProductRows resets stale solar memory and rejects malformed shapes" {
+    var rows = [_]sampling_table.SpectrumSamplingRow{
+        .{
+            .nominal_wavelength_nm = 760.0,
+            .radiance_wavelength_nm = 760.0,
+            .irradiance_wavelength_nm = 760.0,
+            .radiance_integration = sampling_table.IntegrationKernelRef.disabled(),
+            .irradiance_integration = sampling_table.IntegrationKernelRef.disabled(),
+        },
+    };
+    const table = sampling_table.SpectrumSamplingTable{ .rows = &rows };
+    const sample_indices = [_]u32{0};
+    var row_refs = [_]radiance_wavelengths.RadianceSampleIndexRef{.{ .start = 0 }};
+    var dense = [_]radiance_results.RadianceResult{.{ .radiance = 3.0 }};
+    var solar_rows = [_]readers.SolarAssetRow{
+        .{ .wavelength_nm = 760.0, .irradiance = 22.0 },
+    };
+    const solar = solar_table.SolarTable{
+        .rows = solar_rows[0..],
+        .spline_second_derivatives = &.{},
+    };
+    var solar_memory = internal.cache.solar_irradiance_memory.SolarIrradianceMemory.init(std.testing.allocator);
+    defer solar_memory.deinit();
+    try solar_memory.put(760.0, 999.0);
+
+    var out_wavelengths: [1]f64 = undefined;
+    var out_radiance: [1]radiance_results.RadianceResult = undefined;
+    var out_irradiance: [1]f64 = undefined;
+    try spectrum_run.gatherProductRows(
+        .{},
+        table,
+        .{
+            .rows = row_refs[0..],
+            .sample_indices = sample_indices[0..],
+            .wavelengths = &.{},
+        },
+        dense[0..],
+        solar,
+        &solar_memory,
+        out_wavelengths[0..],
+        out_radiance[0..],
+        out_irradiance[0..],
+    );
+
+    try std.testing.expectApproxEqAbs(22.0, out_irradiance[0], 0.0);
+    try std.testing.expectEqual(@as(u32, 1), solar_memory.values.count());
+
+    try std.testing.expectError(
+        error.ShapeMismatch,
+        spectrum_run.gatherProductRows(
+            .{},
+            table,
+            .{
+                .rows = &.{},
+                .sample_indices = sample_indices[0..],
+                .wavelengths = &.{},
+            },
+            dense[0..],
+            solar,
+            &solar_memory,
+            out_wavelengths[0..],
+            out_radiance[0..],
+            out_irradiance[0..],
+        ),
+    );
 }
 
 test "spectrum run worker primitives keep explicit layout" {

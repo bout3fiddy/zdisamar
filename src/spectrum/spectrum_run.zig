@@ -3,7 +3,12 @@ const builtin = @import("builtin");
 
 const radiance_results = @import("radiance_results.zig");
 const radiance_wavelengths = @import("radiance_wavelengths.zig");
+const sampling_table = @import("sampling_table.zig");
+const solar_lookup = @import("solar_lookup.zig");
+const solar_irradiance_memory = @import("../cache/solar_irradiance_memory.zig");
+const solar_table = @import("../setup/solar_table.zig");
 const transport_worker_memory = @import("../cache/transport_worker_memory.zig");
+const controls = @import("../transport/controls.zig");
 const Trace = @import("../instrumentation/trace.zig");
 
 pub const Error = error{
@@ -277,6 +282,71 @@ fn prefetchRadianceChunk(
             wavelengths[index].wavelength_nm,
             worker_index,
             worker_memory,
+        );
+    }
+}
+
+pub fn gatherProductRows(
+    solve_config: controls.SolveConfig,
+    table: sampling_table.SpectrumSamplingTable,
+    wavelengths: radiance_wavelengths.RadianceWavelengthList,
+    dense_radiance: []const radiance_results.RadianceResult,
+    solar: solar_table.SolarTable,
+    solar_memory: *solar_irradiance_memory.SolarIrradianceMemory,
+    out_wavelengths_nm: []f64,
+    out_raw_radiance: []radiance_results.RadianceResult,
+    out_raw_irradiance: []f64,
+) (Error || radiance_results.Error || solar_lookup.Error || std.mem.Allocator.Error)!void {
+    // gatherProductRows -----------------------------------------------------------------------------------    |
+    // Gather nominal product rows after dense radiance prefetch.                                               |
+    //                                                                                                          |
+    // provenance                                                                                               |
+    //   Ports the cache-integration sections of old main:                                                      |
+    //   `src/forward_model/instrument_grid/grid_calculation/simulate.zig` `fillRadianceSamples` and            |
+    //   `fillIrradianceSamples`, delegating the scalar math to `radiance_results.zig` and `solar_lookup.zig`.  |
+    //                                                                                                          |
+    // data flow                                                                                                |
+    //   sampling row -> exact radiance sample indexes -> dense radiance rows -> raw product radiance           |
+    //   sampling row -> exact solar lookup/cache                     -> raw product irradiance                 |
+    //                                                                                                          |
+    // memory                                                                                                   |
+    //   Output slices are caller-owned. Solar memory is reset and reserved before the row loop so exact-key    |
+    //   inserts do not allocate while nominal rows are being gathered.                                         |
+    // ---------------------------------------------------------------------------------------------------------|
+    const row_count = table.rows.len;
+    const shape_matches = wavelengths.rows.len == row_count and
+        out_wavelengths_nm.len == row_count and
+        out_raw_radiance.len == row_count and
+        out_raw_irradiance.len == row_count;
+    if (!shape_matches) return error.ShapeMismatch;
+
+    solar_memory.reset();
+    try solar_lookup.reserveIrradianceMemory(solar_memory, table);
+
+    // instrumentation: trace zone: product row gather -------------------------------------------------------- |
+    // captures: nominal-row radiance and irradiance gather wall time                                           |
+    // why: separates dense transport prefetch from product-grid sampling work.                                 |
+    const zone = Trace.staticZone(@src(), "spectrum.product_row_gather");
+    zone.value(@intCast(row_count));
+    defer zone.end();
+    // end instrumentation: trace zone: product row gather ---------------------------------------------------- |
+
+    for (table.rows, 0..) |row, index| {
+        out_wavelengths_nm[index] = row.nominal_wavelength_nm;
+        out_raw_radiance[index] = try radiance_results.integratePrefetchedRadianceAtNominal(
+            solve_config,
+            dense_radiance,
+            wavelengths.rows[index],
+            wavelengths.sample_indices,
+            &row.radiance_integration,
+            table.kernel_storage,
+        );
+        out_raw_irradiance[index] = try solar_lookup.integrateIrradianceAtNominalAssumeCapacity(
+            solar,
+            solar_memory,
+            row.irradiance_wavelength_nm,
+            &row.irradiance_integration,
+            table.kernel_storage,
         );
     }
 }
