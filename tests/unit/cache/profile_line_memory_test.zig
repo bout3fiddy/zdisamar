@@ -176,6 +176,53 @@ test "ProfileLineValues match old profile-node total line sidecar evidence" {
     }
 }
 
+test "ProfileLineValues preserve caller-provided exact wavelength order" {
+    if (builtin.mode == .Debug) return error.SkipZigTest;
+
+    const wavelengths_nm = [_]f64{ 760.0, 758.0, 776.0 };
+    var values = try internal.cache.profile_line_memory.buildReferenceProfileLineValuesForWavelengths(
+        std.testing.allocator,
+        internal.input.defaults.referenceCase(),
+        wavelengths_nm[0..],
+    );
+    defer values.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(usize, wavelengths_nm.len), values.wavelength_count);
+    try std.testing.expectEqual(@as(usize, 45), values.profile_node_count);
+    try std.testing.expectEqual(@as(usize, 47), values.support_profile_node_count);
+
+    const row_760 = values.row(0, 0) orelse return error.MissingProfileLineValue;
+    const row_758 = values.row(1, 0) orelse return error.MissingProfileLineValue;
+    const row_776 = values.row(2, 44) orelse return error.MissingProfileLineValue;
+    try std.testing.expectApproxEqAbs(760.0, row_760.wavelength_nm, 0.0);
+    try std.testing.expectApproxEqAbs(758.0, row_758.wavelength_nm, 0.0);
+    try std.testing.expectApproxEqAbs(776.0, row_776.wavelength_nm, 0.0);
+
+    const expected_760 = findProfileLineProbeEvidence(760.0, 0) orelse return error.MissingProfileLineValue;
+    try std.testing.expectApproxEqAbs(expected_760.wavelength_nm, row_760.wavelength_nm, 0.0);
+    try std.testing.expectApproxEqRel(
+        expected_760.weak_line_sigma_cm2_per_molecule,
+        row_760.weak_line_sigma_cm2_per_molecule,
+        1.0e-12,
+    );
+
+    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+        std.testing.allocator,
+        internal.input.defaults.referenceCase(),
+    );
+    defer tables.deinit(std.testing.allocator);
+    const support_sigma = try std.testing.allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);
+    defer std.testing.allocator.free(support_sigma);
+
+    try values.fillSupportLineSigmaAtWavelengthIndex(tables.layers, 1, support_sigma);
+    const expected_support = support_line_sigma_evidence[0];
+    const support_index: usize = @intCast(expected_support.support_index);
+    const expected_sigma =
+        expected_support.gas_absorption_optical_depth /
+        (expected_support.oxygen_number_density_cm3 * expected_support.path_length_cm);
+    try std.testing.expectApproxEqRel(expected_sigma, support_sigma[support_index], 1.0e-12);
+}
+
 test "ProfileLineValues fill support-row sigma from old atmospheric-budget evidence" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
 
@@ -428,6 +475,19 @@ const profile_line_total_probe_evidence = [_]ProfileLineTotalProbeEvidence{
         .total_sigma_cm2_per_molecule = 1.58002063730110300e-32,
     },
 };
+
+fn findProfileLineProbeEvidence(
+    wavelength_nm: f64,
+    profile_node_index: u32,
+) ?ProfileLineProbeEvidence {
+    // findProfileLineProbeEvidence -------------------------------------------------------------------------- |
+    // Resolve one test evidence row by physical key instead of by table position.                             |
+    // --------------------------------------------------------------------------------------------------------|
+    for (profile_line_probe_evidence) |row| {
+        if (row.wavelength_nm == wavelength_nm and row.profile_node_index == profile_node_index) return row;
+    }
+    return null;
+}
 
 // Source: scratch/refactor/2026-06-11-explicit-dataflow-refactor/profile-line-baseline-probe.zig.
 // The WP1 public artifacts contain diagnostic optical depths, not per-layer line-cache rows, so this table is

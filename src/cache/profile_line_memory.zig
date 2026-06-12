@@ -245,14 +245,47 @@ pub fn buildReferenceProfileLineValues(
     case: o2_case.O2Case,
 ) !ProfileLineValues {
     // buildReferenceProfileLineValues ------------------------------------------------------------------------|
-    // Build weak-line values over the exact setup wavelengths and computed layer representative nodes.        |
+    // Build line values over the case's evenly spaced setup wavelengths.                                      |
+    // --------------------------------------------------------------------------------------------------------|
+    const wavelength_count = case.spectral_grid.sample_count;
+    const wavelengths_nm = try allocator.alloc(f64, wavelength_count);
+    defer allocator.free(wavelengths_nm);
+
+    const step_nm = if (wavelength_count > 1)
+        (case.spectral_grid.end_nm - case.spectral_grid.start_nm) / @as(f64, @floatFromInt(wavelength_count - 1))
+    else
+        0.0;
+
+    for (wavelengths_nm, 0..) |*wavelength_nm, wavelength_index| {
+        wavelength_nm.* = case.spectral_grid.start_nm + step_nm * @as(f64, @floatFromInt(wavelength_index));
+    }
+
+    return buildReferenceProfileLineValuesForWavelengths(allocator, case, wavelengths_nm);
+}
+
+pub fn buildReferenceProfileLineValuesForWavelengths(
+    allocator: Allocator,
+    case: o2_case.O2Case,
+    wavelengths_nm: []const f64,
+) !ProfileLineValues {
+    // buildReferenceProfileLineValuesForWavelengths ----------------------------------------------------------|
+    // Build retained line values over a caller-provided exact wavelength list.                                |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports the old profile-line cache fill from main:`state_build/state_spectroscopy.zig`, but accepts     |
+    //   the exact radiance wavelengths selected by `spectrum/radiance_wavelengths.zig` instead of assuming    |
+    //   a uniform public product grid.                                                                        |
+    //                                                                                                         |
+    // row contract                                                                                            |
+    //   Output rows stay wavelength-major and preserve the input wavelength order exactly. Dense spectrum     |
+    //   prefetch can therefore use its `RadianceWavelengthList` index as the ProfileLineValues index.         |
     // --------------------------------------------------------------------------------------------------------|
     var layers = try atmosphere_layers.build(allocator, case);
     defer layers.deinit(allocator);
     var lines = try line_tables.build(allocator, case);
     defer lines.deinit(allocator);
 
-    const wavelength_count = case.spectral_grid.sample_count;
+    const wavelength_count = wavelengths_nm.len;
     const profile_node_count = layers.layer_pressures_hpa.len;
     const support_profile_node_count = layers.spectroscopy_profile.rows.len;
     const values = try allocator.alloc(ProfileLineValue, wavelength_count * profile_node_count);
@@ -298,13 +331,7 @@ pub fn buildReferenceProfileLineValues(
         );
     }
 
-    const step_nm = if (wavelength_count > 1)
-        (case.spectral_grid.end_nm - case.spectral_grid.start_nm) / @as(f64, @floatFromInt(wavelength_count - 1))
-    else
-        0.0;
-
-    for (0..wavelength_count) |wavelength_index| {
-        const wavelength_nm = case.spectral_grid.start_nm + step_nm * @as(f64, @floatFromInt(wavelength_index));
+    for (wavelengths_nm, 0..) |wavelength_nm, wavelength_index| {
         for (0..profile_node_count) |profile_node_index| {
             const row_index = wavelength_index * profile_node_count + profile_node_index;
             const pressure_hpa = layers.layer_pressures_hpa[profile_node_index];
@@ -388,8 +415,18 @@ pub fn buildReferenceProfileLineValues(
         .wavelength_count = wavelength_count,
         .profile_node_count = profile_node_count,
         .support_profile_node_count = support_profile_node_count,
-        .reuse_stamp = hashing.ReuseStamp.fromBytes(case.id),
+        .reuse_stamp = profileLineReuseStamp(case.id, wavelengths_nm),
     };
+}
+
+fn profileLineReuseStamp(case_id: []const u8, wavelengths_nm: []const f64) hashing.ReuseStamp {
+    // profileLineReuseStamp ----------------------------------------------------------------------------------|
+    // Include exact wavelength bits in the retained line-value stamp.                                         |
+    // --------------------------------------------------------------------------------------------------------|
+    var hasher = std.hash.Wyhash.init(0);
+    hasher.update(case_id);
+    hasher.update(std.mem.sliceAsBytes(wavelengths_nm));
+    return .{ .value = hasher.final() };
 }
 
 // RuntimeControls --------------------------------------------------------------------------------------------|
