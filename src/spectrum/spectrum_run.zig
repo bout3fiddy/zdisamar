@@ -1,6 +1,15 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const radiance_results = @import("radiance_results.zig");
+const radiance_wavelengths = @import("radiance_wavelengths.zig");
+const transport_worker_memory = @import("../cache/transport_worker_memory.zig");
+const Trace = @import("../instrumentation/trace.zig");
+
+pub const Error = error{
+    ShapeMismatch,
+};
+
 // spectrum_run.zig -----------------------------------------------------------------------------------------   |
 // Spectrum-level worker policy for high-resolution radiance prefetch.                                          |
 //                                                                                                              |
@@ -178,6 +187,98 @@ pub fn nextStaticChunk(start_index: *usize, end_index: usize) ?Range {
     };
     start_index.* = chunk.end;
     return chunk;
+}
+
+pub fn prefetchRadianceRowsSingleWorker(
+    comptime ComputeState: type,
+    comptime ComputeError: type,
+    wavelengths: radiance_wavelengths.RadianceWavelengthList,
+    results: []radiance_results.RadianceResult,
+    worker_memory: *transport_worker_memory.TransportWorkerMemory,
+    compute_state: *ComputeState,
+    comptime compute: fn (
+        *ComputeState,
+        f64,
+        usize,
+        *transport_worker_memory.TransportWorkerMemory,
+    ) ComputeError!radiance_results.RadianceResult,
+) (Error || ComputeError)!void {
+    // prefetchRadianceRowsSingleWorker -------------------------------------------------------------------     |
+    // Fill dense high-resolution radiance rows for one worker-local memory owner.                              |
+    //                                                                                                          |
+    // provenance                                                                                               |
+    //   Ports the single-worker loop shape from main:                                                          |
+    //   `src/forward_model/instrument_grid/grid_calculation/spectral_forward.zig`                              |
+    //   `prefetchForwardSamples` and `computeForwardSampleAtWavelengthWithScratch`.                            |
+    //                                                                                                          |
+    // row contract                                                                                             |
+    //   results[index] corresponds to wavelengths.wavelengths[index]. Later nominal gathers read these rows    |
+    //   through RadianceSampleIndexRef/sample_indices, so this function must not reorder the dense array.      |
+    //                                                                                                          |
+    // memory                                                                                                   |
+    //   The worker memory is caller-owned and reusable. The compute callback receives explicit wavelength      |
+    //   and memory inputs; no scene, request, or generic cache is stored here.                                 |
+    // ---------------------------------------------------------------------------------------------------------|
+    if (results.len != wavelengths.wavelengths.len) return error.ShapeMismatch;
+    if (wavelengths.wavelengths.len == 0) return;
+
+    // instrumentation: trace counter: high-resolution radiance rows ------------------------------------------ |
+    // captures: unique exact radiance wavelengths evaluated by this prefetch pass                              |
+    // why: distinguishes fewer transport solves from cheaper work per solve.                                   |
+    Trace.plotU("high_resolution_misses", @intCast(wavelengths.wavelengths.len));
+    // end instrumentation: trace counter: high-resolution radiance rows -------------------------------------- |
+
+    var start_index: usize = 0;
+    while (nextStaticChunk(&start_index, wavelengths.wavelengths.len)) |chunk| {
+        try prefetchRadianceChunk(
+            ComputeState,
+            ComputeError,
+            wavelengths.wavelengths,
+            results,
+            chunk,
+            worker_memory,
+            compute_state,
+            compute,
+        );
+    }
+}
+
+fn prefetchRadianceChunk(
+    comptime ComputeState: type,
+    comptime ComputeError: type,
+    wavelengths: []const radiance_wavelengths.RadianceWavelength,
+    results: []radiance_results.RadianceResult,
+    chunk: Range,
+    worker_memory: *transport_worker_memory.TransportWorkerMemory,
+    compute_state: *ComputeState,
+    comptime compute: fn (
+        *ComputeState,
+        f64,
+        usize,
+        *transport_worker_memory.TransportWorkerMemory,
+    ) ComputeError!radiance_results.RadianceResult,
+) ComputeError!void {
+    // prefetchRadianceChunk --------------------------------------------------------------------------------   |
+    // Compute one contiguous chunk from the dense exact-wavelength list.                                       |
+    // ---------------------------------------------------------------------------------------------------------|
+    const worker_index: usize = 0;
+
+    // instrumentation: trace zone: radiance prefetch chunk --------------------------------------------------- |
+    // captures: one single-worker prefetch chunk size and wall time                                            |
+    // why: keeps dense radiance prefetch work visible separately from nominal gather loops.                    |
+    const chunk_zone = Trace.deepStaticZone(@src(), "radiance_prefetch.chunk");
+    chunk_zone.value(@intCast(chunk.len()));
+    defer chunk_zone.end();
+    // end instrumentation: trace zone: radiance prefetch chunk ----------------------------------------------- |
+
+    for (chunk.start..chunk.end) |index| {
+        results[index] = try compute(
+            compute_state,
+            wavelengths[index].wavelength_nm,
+            worker_index,
+            worker_memory,
+        );
+    }
 }
 
 pub fn preferredRadianceWorkerCount(radiance_count: usize) usize {

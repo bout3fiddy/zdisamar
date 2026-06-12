@@ -2,7 +2,10 @@ const std = @import("std");
 const builtin = @import("builtin");
 const internal = @import("internal");
 
+const radiance_results = internal.spectrum.radiance_results;
+const radiance_wavelengths = internal.spectrum.radiance_wavelengths;
 const spectrum_run = internal.spectrum.spectrum_run;
+
 const ExpectedWorkerPrimitiveLayout = struct {
     chunk_queue_size: usize,
     error_state_size: usize,
@@ -102,6 +105,77 @@ test "FirstWorkerErrorState stores only the first worker failure" {
     try std.testing.expectEqual(error.FirstFailure, state.err.?);
 }
 
+test "prefetchRadianceRowsSingleWorker fills dense rows in exact wavelength order" {
+    var wavelengths = [_]radiance_wavelengths.RadianceWavelength{
+        .{ .key = radiance_wavelengths.keyFor(758.0), .wavelength_nm = 758.0 },
+        .{ .key = radiance_wavelengths.keyFor(760.0), .wavelength_nm = 760.0 },
+        .{ .key = radiance_wavelengths.keyFor(765.0), .wavelength_nm = 765.0 },
+    };
+    var results: [3]radiance_results.RadianceResult = undefined;
+    var memory = internal.cache.transport_worker_memory.TransportWorkerMemory{};
+    var context = TestRadianceComputeContext{};
+
+    try spectrum_run.prefetchRadianceRowsSingleWorker(
+        TestRadianceComputeContext,
+        TestRadianceComputeError,
+        .{ .wavelengths = &wavelengths },
+        &results,
+        &memory,
+        &context,
+        testRadianceCompute,
+    );
+
+    try std.testing.expectEqual(@as(usize, 3), context.call_count);
+    try std.testing.expectEqual(@as(usize, 0), context.worker_index_sum);
+    try std.testing.expect(context.memory_seen == &memory);
+    try std.testing.expectApproxEqAbs(758.0, context.seen_wavelengths[0], 0.0);
+    try std.testing.expectApproxEqAbs(760.0, context.seen_wavelengths[1], 0.0);
+    try std.testing.expectApproxEqAbs(765.0, context.seen_wavelengths[2], 0.0);
+    try std.testing.expectApproxEqAbs(7.58, results[0].radiance, 1.0e-15);
+    try std.testing.expectApproxEqAbs(7.60, results[1].radiance, 1.0e-15);
+    try std.testing.expectApproxEqAbs(7.65, results[2].radiance, 1.0e-15);
+    try std.testing.expectEqual([3]f64{ 760.0, 0.0, 1.0 }, results[1].jacobian);
+}
+
+test "prefetchRadianceRowsSingleWorker checks result shape and propagates compute errors" {
+    var wavelengths = [_]radiance_wavelengths.RadianceWavelength{
+        .{ .key = radiance_wavelengths.keyFor(758.0), .wavelength_nm = 758.0 },
+        .{ .key = radiance_wavelengths.keyFor(760.0), .wavelength_nm = 760.0 },
+    };
+    var short_results: [1]radiance_results.RadianceResult = undefined;
+    var results: [2]radiance_results.RadianceResult = undefined;
+    var memory = internal.cache.transport_worker_memory.TransportWorkerMemory{};
+    var context = TestRadianceComputeContext{ .fail_at_call = 1 };
+
+    try std.testing.expectError(
+        error.ShapeMismatch,
+        spectrum_run.prefetchRadianceRowsSingleWorker(
+            TestRadianceComputeContext,
+            TestRadianceComputeError,
+            .{ .wavelengths = &wavelengths },
+            &short_results,
+            &memory,
+            &context,
+            testRadianceCompute,
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 0), context.call_count);
+
+    try std.testing.expectError(
+        error.InjectedFailure,
+        spectrum_run.prefetchRadianceRowsSingleWorker(
+            TestRadianceComputeContext,
+            TestRadianceComputeError,
+            .{ .wavelengths = &wavelengths },
+            &results,
+            &memory,
+            &context,
+            testRadianceCompute,
+        ),
+    );
+    try std.testing.expectEqual(@as(usize, 2), context.call_count);
+}
+
 test "spectrum run worker primitives keep explicit layout" {
     const ErrorState = spectrum_run.FirstWorkerErrorState(error{WorkerFailed});
 
@@ -110,4 +184,40 @@ test "spectrum run worker primitives keep explicit layout" {
     try std.testing.expectEqual(expected_worker_primitive_layout.error_state_size, @sizeOf(ErrorState));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(spectrum_run.Range, "start"));
     try std.testing.expectEqual(@as(usize, 8), @offsetOf(spectrum_run.Range, "end"));
+}
+
+const TestRadianceComputeError = error{
+    InjectedFailure,
+};
+
+const TestRadianceComputeContext = struct {
+    call_count: usize = 0,
+    fail_at_call: ?usize = null,
+    worker_index_sum: usize = 0,
+    memory_seen: ?*internal.cache.transport_worker_memory.TransportWorkerMemory = null,
+    seen_wavelengths: [8]f64 = [_]f64{0.0} ** 8,
+};
+
+fn testRadianceCompute(
+    context: *TestRadianceComputeContext,
+    wavelength_nm: f64,
+    worker_index: usize,
+    memory: *internal.cache.transport_worker_memory.TransportWorkerMemory,
+) TestRadianceComputeError!radiance_results.RadianceResult {
+    // testRadianceCompute ---------------------------------------------------------------------------------- |
+    // Test-local deterministic dense-row calculator for spectrum-run prefetch coverage.                      |
+    // -------------------------------------------------------------------------------------------------------|
+    const call_index = context.call_count;
+    context.call_count += 1;
+    context.worker_index_sum += worker_index;
+    context.memory_seen = memory;
+    context.seen_wavelengths[call_index] = wavelength_nm;
+    if (context.fail_at_call) |fail_at_call| {
+        if (call_index == fail_at_call) return error.InjectedFailure;
+    }
+
+    return .{
+        .radiance = wavelength_nm * 0.01,
+        .jacobian = .{ wavelength_nm, @floatFromInt(worker_index), @floatFromInt(call_index) },
+    };
 }
