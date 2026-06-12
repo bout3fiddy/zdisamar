@@ -60,8 +60,6 @@ pub const ViewAngles = struct {
     view_mu: f64,
     relative_azimuth_rad: f64 = 0.0,
 };
-// ------------------------------------------------------------------------------------------------------------|
-
 // ReflectanceResult ----------------------------------------------------------------------------------------  |
 // One top-of-atmosphere reflectance result and fixed state-order Jacobian vector.                             |
 //                                                                                                             |
@@ -325,6 +323,8 @@ fn solveLayerResolvedScattering(
         phase,
         rayleigh_phase_coefficient2,
     );
+    const source_phase_max_indices = work.source_phase_max_indices[0..level_count];
+    fillSourcePhaseMaxIndicesFromLayers(source_phase_max_indices, layer_phase_max_indices);
 
     const phase_max = maxLayerPhaseIndex(layer_phase_max_indices);
     const fourier_max = config.controls.performance_thresholds.cappedFourierMax(phase_max);
@@ -440,6 +440,7 @@ fn solveLayerResolvedScattering(
                     geometry,
                     plm_basis,
                     phase,
+                    source_phase_max_indices,
                 );
             }
 
@@ -637,6 +638,31 @@ fn maxLayerPhaseIndex(indices: []const usize) usize {
     var max_index: usize = 0;
     for (indices) |index| max_index = @max(max_index, index);
     return max_index;
+}
+
+fn fillSourcePhaseMaxIndicesFromLayers(
+    source_phase_max_indices: []usize,
+    layer_phase_max_indices: []const usize,
+) void {
+    // fillSourcePhaseMaxIndicesFromLayers --------------------------------------------------------------------|
+    // Port main:`radiative_transfer/labos/reflectance.zig` fillAdjacentLayerPhaseMaxIndices.                  |
+    // Integrated-source RTM quadrature levels use the larger phase ceiling from adjacent transport layers.    |
+    // --------------------------------------------------------------------------------------------------------|
+    const layer_count = layer_phase_max_indices.len;
+    std.debug.assert(source_phase_max_indices.len >= layer_count + 1);
+    if (layer_count == 0) {
+        if (source_phase_max_indices.len != 0) source_phase_max_indices[0] = 0;
+        return;
+    }
+
+    source_phase_max_indices[0] = layer_phase_max_indices[0];
+    for (1..layer_count) |level_index| {
+        source_phase_max_indices[level_index] = @max(
+            layer_phase_max_indices[level_index - 1],
+            layer_phase_max_indices[level_index],
+        );
+    }
+    source_phase_max_indices[layer_count] = layer_phase_max_indices[layer_count - 1];
 }
 
 fn totalScatteringOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {

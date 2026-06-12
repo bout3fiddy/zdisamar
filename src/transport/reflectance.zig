@@ -203,6 +203,7 @@ pub fn integratedSourceCoefficient(
     geometry: *const gauss_angles.GaussGeometry,
     plm_basis: *const phase_basis.FourierPlmBasis,
     phase: phase_table.PhaseTable,
+    source_phase_max_indices: []const usize,
 ) f64 {
     // integratedSourceCoefficient --------------------------------------------------------------------------- |
     // Integrated-source LABOS reflectance for one Fourier term.                                               |
@@ -219,7 +220,12 @@ pub fn integratedSourceCoefficient(
     //   Pplus  = 0.25 * Zplus / (mu_view * mu_source)                                                         |
     // --------------------------------------------------------------------------------------------------------|
     _ = layers;
-    if (levels.len < top_level + 1 or ud.len < top_level + 1) return 0.0;
+    if (levels.len < top_level + 1 or
+        ud.len < top_level + 1 or
+        source_phase_max_indices.len < top_level + 1)
+    {
+        return 0.0;
+    }
 
     const solar_column: usize = 1;
     const view_index = geometry.viewIndex();
@@ -231,7 +237,7 @@ pub fn integratedSourceCoefficient(
         const source = levels[level_index];
         if (source.weight_km <= 0.0 or source.scattering_per_km <= 0.0) continue;
 
-        const source_max_phase_index = sourceLevelPhaseMaxIndex(source, phase);
+        const source_max_phase_index = source_phase_max_indices[level_index];
         if (fourier_index > source_max_phase_index) continue;
 
         const phase_row = phase_basis.fillZplusZminRowFromWeightedPhaseLimited(
@@ -277,21 +283,6 @@ pub fn integratedSourceCoefficient(
     }
 
     return reflectance;
-}
-
-fn sourceLevelPhaseMaxIndex(
-    source: source_levels.SourceLevel,
-    phase: phase_table.PhaseTable,
-) usize {
-    // sourceLevelPhaseMaxIndex ------------------------------------------------------------------------------ |
-    // Return the highest active phase coefficient for one integrated-source level.                            |
-    // --------------------------------------------------------------------------------------------------------|
-    var max_index: usize = 0;
-    if (@abs(source.phase_rayleigh2_weight) > phase_support_floor) max_index = 2;
-    if (@abs(source.phase_aerosol_weight) > phase_support_floor) {
-        max_index = @max(max_index, phase.aerosol_phase_max_index);
-    }
-    return max_index;
 }
 
 pub fn integratedAerosolDerivativeWeighting(
@@ -423,7 +414,7 @@ pub fn integratedAerosolOpticalDepthWeighting(
         if (denominator <= 0.0) return 0.0;
 
         const cached_phase_rows: ?PhaseRowCache = choose_phase_cache: {
-            const unit_phase = commonActiveAerosolUnitPhase(levels, bounds, phase) orelse
+            const unit_phase = commonActiveAerosolUnitPhase(levels, bounds, &phase) orelse
                 break :choose_phase_cache null;
             if (fourier_index > unit_phase.max_index) return 0.0;
 
@@ -537,7 +528,7 @@ pub fn integratedAerosolOpticalDepthWeighting(
     }
 
     var weighting: f64 = 0.0;
-    const unit_phase = unitAerosolPhase(phase) orelse return 0.0;
+    const unit_phase = unitAerosolPhase(&phase) orelse return 0.0;
     for (0..top_level + 1) |level_index| {
         const source = levels[level_index];
         if (source.weight_km <= 0.0 or source.aerosol_ksca_jacobian == 0.0) continue;
@@ -689,7 +680,7 @@ fn aerosolSingleScatteringAlbedo(layers: []const layer_depths.LayerOptics) f64 {
     return math.clamp(aerosol_scattering_optical_depth / aerosol_optical_depth, 0.0, 1.0);
 }
 
-fn unitAerosolPhase(phase: phase_table.PhaseTable) ?UnitPhase {
+fn unitAerosolPhase(phase: *const phase_table.PhaseTable) ?UnitPhase {
     // unitAerosolPhase -------------------------------------------------------------------------------------  |
     // Return the aerosol phase expansion when the coefficient row is active.                                  |
     // --------------------------------------------------------------------------------------------------------|
@@ -703,7 +694,7 @@ fn unitAerosolPhase(phase: phase_table.PhaseTable) ?UnitPhase {
 fn commonActiveAerosolUnitPhase(
     levels: []const source_levels.SourceLevel,
     bounds: AerosolIntervalBounds,
-    phase: phase_table.PhaseTable,
+    phase: *const phase_table.PhaseTable,
 ) ?UnitPhase {
     // commonActiveAerosolUnitPhase -------------------------------------------------------------------------  |
     // Return the common aerosol phase row when any active interface carries aerosol scattering.               |
@@ -754,7 +745,7 @@ fn cachedCommonAerosolPhaseRows(
     // cachedCommonAerosolPhaseRows -------------------------------------------------------------------------  |
     // Build a shared aerosol phase-row cache only when this Fourier term can contribute.                      |
     // --------------------------------------------------------------------------------------------------------|
-    const unit_phase = commonActiveAerosolUnitPhase(levels, bounds, phase) orelse return null;
+    const unit_phase = commonActiveAerosolUnitPhase(levels, bounds, &phase) orelse return null;
     if (fourier_index > unit_phase.max_index) return null;
     storage.* = buildPhaseRowCache(unit_phase.coefficients, unit_phase.max_index, fourier_index, geometry, plm_basis);
     return storage;
@@ -796,7 +787,6 @@ fn aerosolOpticalDepthWeightingFromPhaseRows(
         if (needs_absorption_weighting) previous_weighting.absorption else 0.0,
         aerosol_ssa,
     );
-
     for (bounds.bottom + 1..bounds.top) |level_index| {
         const current_weighting = interfaceWeightingFromPhaseRows(
             phase_rows,
@@ -813,7 +803,6 @@ fn aerosolOpticalDepthWeightingFromPhaseRows(
             if (needs_absorption_weighting) current_weighting.absorption else 0.0,
             aerosol_ssa,
         );
-
         const dz = levels[level_index].altitude_km - levels[level_index - 1].altitude_km;
         if (dz > 0.0) integral += 0.5 * (previous + current) * dz;
 
@@ -921,7 +910,7 @@ fn scatteringCoefficientInterfaceWeighting(
     // --------------------------------------------------------------------------------------------------------|
     if (aerosol_ksca_per_km <= 0.0) return 0.0;
 
-    const unit_phase = unitAerosolPhase(phase) orelse return 0.0;
+    const unit_phase = unitAerosolPhase(&phase) orelse return 0.0;
     if (fourier_index > unit_phase.max_index) return 0.0;
 
     const source_weighting = scatteringSourceWeightingFromScaledPhase(

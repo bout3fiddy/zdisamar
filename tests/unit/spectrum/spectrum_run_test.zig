@@ -378,6 +378,131 @@ test "radianceAtWavelength checks caller-owned row shapes" {
     );
 }
 
+test "radianceAtWavelength matches old-route Stage 2 transport probes" {
+    const allocator = std.testing.allocator;
+    var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
+        allocator,
+        internal.input.defaults.referenceCase(),
+    );
+    defer tables.deinit(allocator);
+
+    const support_count = tables.layers.support_mid_altitudes_km.len;
+    const layer_count = tables.layers.layer_pressures_hpa.len;
+    var profile_lines = try internal.cache.profile_line_memory.buildReferenceProfileLineValuesForWavelengths(
+        allocator,
+        internal.input.defaults.referenceCase(),
+        stage2_transport_wavelengths_nm[0..],
+    );
+    defer profile_lines.deinit(allocator);
+
+    const line_sigma = try allocator.alloc(f64, support_count);
+    defer allocator.free(line_sigma);
+    const support = try allocator.alloc(layer_depths.SupportOptics, support_count);
+    defer allocator.free(support);
+    const layers = try allocator.alloc(layer_depths.LayerOptics, layer_count);
+    defer allocator.free(layers);
+    const source_rows = try allocator.alloc(internal.optics.source_levels.SourceLevel, layer_count + 1);
+    defer allocator.free(source_rows);
+    const curved_samples = try allocator.alloc(internal.optics.curved_sun_path.CurvedSunPathSample, support_count);
+    defer allocator.free(curved_samples);
+    const curved_level_starts = try allocator.alloc(usize, layer_count + 1);
+    defer allocator.free(curved_level_starts);
+    const curved_level_altitudes = try allocator.alloc(f64, layer_count + 1);
+    defer allocator.free(curved_level_altitudes);
+
+    var memory = internal.cache.transport_worker_memory.TransportWorkerMemory{};
+    defer memory.deinit(allocator);
+
+    const case = internal.input.defaults.referenceCase();
+    const degree = std.math.pi / 180.0;
+    const angles = solve.ViewAngles{
+        .solar_mu = @cos(case.geometry.solar_zenith_deg * degree),
+        .view_mu = @cos(case.geometry.viewing_zenith_deg * degree),
+
+        // main:`forward_model/optical_properties/state_build/forward_layers.zig` transport_dphi_rad.
+        .relative_azimuth_rad = std.math.degreesToRadians(@mod(180.0 - case.geometry.relative_azimuth_deg, 360.0)),
+    };
+    const solve_config = controls.SolveConfig{
+        .derivative_mode = .semi_analytical,
+        .derivative_state_mask = jacobian_states.stateMask(.aerosol_optical_depth) |
+            jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa),
+        .controls = .{
+            .scattering = .multiple,
+            .n_streams = @intCast(case.rtm.stream_count),
+            .performance_thresholds = controls.PerformanceThresholds.o2a_default,
+            .use_spherical_correction = case.geometry.pseudo_spherical,
+            .integrate_source_function = true,
+            .renorm_phase_function = true,
+        },
+    };
+    try memory.ensureCapacity(
+        allocator,
+        layer_count + 1,
+        case.rtm.stream_count,
+        40,
+        40,
+        true,
+    );
+
+    for (stage2_transport_evidence, 0..) |expected, wavelength_index| {
+        const solar_irradiance = try solar_lookup.irradianceAtWavelength(
+            tables.solar,
+            expected.wavelength_nm,
+        );
+        const scale = angles.solar_mu * solar_irradiance / std.math.pi;
+
+        const actual = try spectrum_run.radianceAtWavelength(
+            expected.wavelength_nm,
+            wavelength_index,
+            angles,
+            expected.surface_albedo,
+            tables.layers,
+            profile_lines,
+            tables.cia,
+            tables.aerosol,
+            tables.phase,
+            solar_irradiance,
+            solve_config,
+            line_sigma,
+            support,
+            layers,
+            source_rows,
+            curved_samples,
+            curved_level_starts,
+            curved_level_altitudes,
+            &memory,
+        );
+
+        try std.testing.expectApproxEqAbs(
+            expected.reflectance,
+            actual.radiance / scale,
+            1.0e-13,
+        );
+        try std.testing.expectApproxEqRel(expected.radiance, actual.radiance, 1.0e-13);
+        try std.testing.expectApproxEqRel(
+            expected.aerosol_optical_depth_radiance_jacobian,
+            actual.jacobian[1],
+            stage2_radiance_jacobian_relative_tolerance,
+        );
+        try std.testing.expectApproxEqRel(
+            expected.aerosol_layer_mid_pressure_radiance_jacobian,
+            actual.jacobian[2],
+            stage2_radiance_jacobian_relative_tolerance,
+        );
+        try std.testing.expectApproxEqAbs(
+            expected.aerosol_optical_depth_reflectance_jacobian,
+            actual.jacobian[1] / scale,
+            1.0e-13,
+        );
+        try std.testing.expectApproxEqAbs(
+            expected.aerosol_layer_mid_pressure_reflectance_jacobian,
+            actual.jacobian[2] / scale,
+            1.0e-13,
+        );
+        try std.testing.expectApproxEqAbs(0.0, actual.jacobian[0], 0.0);
+    }
+}
+
 test "prefetchReferenceRadianceRowsSingleWorker fills dense direct-route rows" {
     const allocator = std.testing.allocator;
     var tables = try internal.setup.o2_run_tables.buildReferenceO2RunTables(
@@ -1006,6 +1131,97 @@ test "spectrum run worker primitives keep explicit layout" {
     try std.testing.expectEqual(@as(usize, 8), @offsetOf(spectrum_run.Range, "end"));
 }
 
+// Stage2TransportEvidence ------------------------------------------------------------------------------------|
+// Old-route one-wavelength transport result at one WP3 probe wavelength.                                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 64 B (0.062 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] wavelength_nm                                      : f64                                           |
+// [ 8..15] surface_albedo                                     : f64                                           |
+// [16..23] reflectance                                        : f64                                           |
+// [24..31] radiance                                           : f64                                           |
+// [32..39] aerosol_optical_depth_reflectance_jacobian         : f64                                           |
+// [40..47] aerosol_layer_mid_pressure_reflectance_jacobian    : f64                                           |
+// [48..55] aerosol_optical_depth_radiance_jacobian            : f64                                           |
+// [56..63] aerosol_layer_mid_pressure_radiance_jacobian       : f64                                           |
+const Stage2TransportEvidence = struct {
+    wavelength_nm: f64,
+    surface_albedo: f64,
+    reflectance: f64,
+    radiance: f64,
+    aerosol_optical_depth_reflectance_jacobian: f64,
+    aerosol_layer_mid_pressure_reflectance_jacobian: f64,
+    aerosol_optical_depth_radiance_jacobian: f64,
+    aerosol_layer_mid_pressure_radiance_jacobian: f64,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// Source: scratch/refactor/2026-06-11-explicit-dataflow-refactor/transport-baseline-probe.zig,
+// importing main worktree `src/internal.zig` at 56605387621046dbeb11cca9ed268a3505a19104 and writing
+// evidence/baseline-main-56605387/transport-probe-baseline.json. The scratch probe uses old
+// configuredForwardInput + executePreparedWithLabosWorkspace + spectral_forward radiance scaling source order.
+const stage2_transport_evidence = [_]Stage2TransportEvidence{
+    .{
+        .wavelength_nm = 758.0,
+        .surface_albedo = 0.2,
+        .reflectance = 2.29993940259671200e-1,
+        .radiance = 1.79116911721170940e13,
+        .aerosol_optical_depth_reflectance_jacobian = 1.18128432103037900e-1,
+        .aerosol_layer_mid_pressure_reflectance_jacobian = 1.73670761003215180e-4,
+        .aerosol_optical_depth_radiance_jacobian = 9.19972061910463900e12,
+        .aerosol_layer_mid_pressure_radiance_jacobian = 1.35252999848779320e10,
+    },
+    .{
+        .wavelength_nm = 760.0,
+        .surface_albedo = 0.2,
+        .reflectance = 4.44799106979073100e-2,
+        .radiance = 3.45040801666285840e12,
+        .aerosol_optical_depth_reflectance_jacobian = 9.43744316080887100e-2,
+        .aerosol_layer_mid_pressure_reflectance_jacobian = 4.79663021351987800e-3,
+        .aerosol_optical_depth_radiance_jacobian = 7.32083968423682500e12,
+        .aerosol_layer_mid_pressure_radiance_jacobian = 3.72085534391032900e11,
+    },
+    .{
+        .wavelength_nm = 765.0,
+        .surface_albedo = 0.2,
+        .reflectance = 1.55241963571654300e-1,
+        .radiance = 1.16969133634011620e13,
+        .aerosol_optical_depth_reflectance_jacobian = 1.18268436065057520e-1,
+        .aerosol_layer_mid_pressure_reflectance_jacobian = 1.41979287256224840e-3,
+        .aerosol_optical_depth_radiance_jacobian = 8.91109348561807600e12,
+        .aerosol_layer_mid_pressure_radiance_jacobian = 1.06976192791260220e11,
+    },
+    .{
+        .wavelength_nm = 767.0,
+        .surface_albedo = 0.2,
+        .reflectance = 2.21472234161068870e-1,
+        .radiance = 1.70104200086156910e13,
+        .aerosol_optical_depth_reflectance_jacobian = 1.18482166027144400e-1,
+        .aerosol_layer_mid_pressure_reflectance_jacobian = 2.52173955696529250e-4,
+        .aerosol_optical_depth_radiance_jacobian = 9.10015386482493400e12,
+        .aerosol_layer_mid_pressure_radiance_jacobian = 1.93684997032736200e10,
+    },
+    .{
+        .wavelength_nm = 776.0,
+        .surface_albedo = 0.2,
+        .reflectance = 2.33612924092933000e-1,
+        .radiance = 1.77817953692175300e13,
+        .aerosol_optical_depth_reflectance_jacobian = 1.18064267591028280e-1,
+        .aerosol_layer_mid_pressure_reflectance_jacobian = 1.26237327430141310e-4,
+        .aerosol_optical_depth_radiance_jacobian = 8.98663742544077300e12,
+        .aerosol_layer_mid_pressure_radiance_jacobian = 9.60874203786223200e9,
+    },
+};
+
+const stage2_transport_wavelengths_nm = [_]f64{ 758.0, 760.0, 765.0, 767.0, 776.0 };
+
+// Radiance Jacobian rows are scaled diagnostics; the Stage 2 gate above keeps
+// reflectance/radiance outputs at 1e-13 and checks Jacobians in reflectance
+// space at 1e-13 absolute.
+const stage2_radiance_jacobian_relative_tolerance: f64 = 1.0e-10;
+
 const TestRadianceComputeError = error{
     InjectedFailure,
 };
@@ -1024,9 +1240,9 @@ fn testRadianceCompute(
     worker_index: usize,
     memory: *internal.cache.transport_worker_memory.TransportWorkerMemory,
 ) TestRadianceComputeError!radiance_results.RadianceResult {
-    // testRadianceCompute ---------------------------------------------------------------------------------- |
-    // Test-local deterministic dense-row calculator for spectrum-run prefetch coverage.                      |
-    // -------------------------------------------------------------------------------------------------------|
+    // testRadianceCompute ------------------------------------------------------------------------------------|
+    // Test-local deterministic dense-row calculator for spectrum-run prefetch coverage.                       |
+    // --------------------------------------------------------------------------------------------------------|
     const call_index = context.call_count;
     context.call_count += 1;
     context.worker_index_sum += worker_index;
@@ -1043,9 +1259,9 @@ fn testRadianceCompute(
 }
 
 fn testTotalOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {
-    // testTotalOpticalDepth -------------------------------------------------------------------------------  |
-    // Test-local mirror of the scalar direct-route reduction used by old LABOS.                              |
-    // -------------------------------------------------------------------------------------------------------|
+    // testTotalOpticalDepth ----------------------------------------------------------------------------------|
+    // Test-local mirror of the scalar direct-route reduction used by old LABOS.                               |
+    // --------------------------------------------------------------------------------------------------------|
     var total: f64 = 0.0;
     for (layers) |layer| total += layer.total_optical_depth;
     return total;

@@ -58,6 +58,19 @@ test "Fourier PLM basis matches scalar m1 seed and recurrence" {
     }
 }
 
+test "Fourier PLM basis matches scalar m2 seed" {
+    const geometry = try gauss_angles.GaussGeometry.init(4, 0.58, 0.64);
+    const basis = phase_basis.FourierPlmBasis.init(2, 2, &geometry);
+
+    for (0..geometry.stream_count) |stream_index| {
+        const mu = geometry.u[stream_index];
+        const one_minus_mu_squared = 1.0 - mu * mu;
+        const seed = 0.25 * @sqrt(6.0) * one_minus_mu_squared;
+
+        try std.testing.expectApproxEqAbs(seed * geometry.w[stream_index], basis.plus[2][stream_index], 1.0e-15);
+    }
+}
+
 test "Fourier PLM basis handles high-order seed" {
     const geometry = try gauss_angles.GaussGeometry.init(4, 0.58, 0.64);
     const basis = phase_basis.FourierPlmBasis.init(3, 3, &geometry);

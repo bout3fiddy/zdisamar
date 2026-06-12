@@ -94,25 +94,25 @@ pub const LayerGrid = struct {
         // ----------------------------------------------------------------------------------------------------|
         self.source_profile.deinit(allocator);
         self.spectroscopy_profile.deinit(allocator);
-        freeF64(allocator, self.layer_top_altitudes_km);
-        freeF64(allocator, self.layer_bottom_altitudes_km);
-        freeF64(allocator, self.layer_top_pressures_hpa);
-        freeF64(allocator, self.layer_bottom_pressures_hpa);
-        freeF64(allocator, self.layer_mid_altitudes_km);
-        freeF64(allocator, self.layer_pressures_hpa);
-        freeF64(allocator, self.layer_temperatures_k);
-        freeF64(allocator, self.layer_air_number_densities_cm3);
-        freeF64(allocator, self.layer_o2_number_densities_cm3);
-        freeF64(allocator, self.layer_path_lengths_cm);
+        allocator.free(self.layer_top_altitudes_km);
+        allocator.free(self.layer_bottom_altitudes_km);
+        allocator.free(self.layer_top_pressures_hpa);
+        allocator.free(self.layer_bottom_pressures_hpa);
+        allocator.free(self.layer_mid_altitudes_km);
+        allocator.free(self.layer_pressures_hpa);
+        allocator.free(self.layer_temperatures_k);
+        allocator.free(self.layer_air_number_densities_cm3);
+        allocator.free(self.layer_o2_number_densities_cm3);
+        allocator.free(self.layer_path_lengths_cm);
         allocator.free(self.layer_interval_indices_1based);
         allocator.free(self.layer_support_starts);
         allocator.free(self.layer_support_counts);
-        freeF64(allocator, self.support_mid_altitudes_km);
-        freeF64(allocator, self.support_pressures_hpa);
-        freeF64(allocator, self.support_temperatures_k);
-        freeF64(allocator, self.support_air_number_densities_cm3);
-        freeF64(allocator, self.support_o2_number_densities_cm3);
-        freeF64(allocator, self.support_path_lengths_cm);
+        allocator.free(self.support_mid_altitudes_km);
+        allocator.free(self.support_pressures_hpa);
+        allocator.free(self.support_temperatures_k);
+        allocator.free(self.support_air_number_densities_cm3);
+        allocator.free(self.support_o2_number_densities_cm3);
+        allocator.free(self.support_path_lengths_cm);
         allocator.free(self.support_interval_indices_1based);
         self.* = undefined;
     }
@@ -903,10 +903,3 @@ fn gravitationalAccelerationMetersPerSecondSquared(latitude_deg: f64, altitude_k
     return gravity_at_mean_sea_level - 3.086e-3 * altitude_km;
 }
 // ------------------------------------------------------------------------------------------------------------|
-
-fn freeF64(allocator: Allocator, values: []f64) void {
-    // freeF64 ------------------------------------------------------------------------------------------------|
-    // Release one f64 slice through the allocator callback used by LayerGrid.deinit.                          |
-    // --------------------------------------------------------------------------------------------------------|
-    allocator.free(values);
-}

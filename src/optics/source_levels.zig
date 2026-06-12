@@ -1,8 +1,8 @@
 const std = @import("std");
 
 const gauss_legendre = @import("../common/math/gauss_legendre.zig");
-const aerosol_tables = @import("../setup/aerosol_tables.zig");
 const atmosphere_layers = @import("../setup/atmosphere_layers.zig");
+const jacobian_states = @import("../transport/jacobian_states.zig");
 const layer_depths = @import("layer_depths.zig");
 const rayleigh = @import("rayleigh.zig");
 
@@ -16,7 +16,8 @@ const max_source_interval_nodes: usize = 128;
 //   Geometry follows main:`src/forward_model/optical_properties/state_build/shared_geometry.zig`: one level   |
 //   per layer boundary, boundary support rows for gas, first active support row above a boundary, and last    |
 //   active support row below a boundary. Level weights use the same interval-group Gauss-Legendre rule.       |
-//   Aerosol source Jacobian scale follows main:`state_build/rtm_quadrature.zig` fillAerosolSourceJacobian.    |
+//   Aerosol source Jacobian scale follows main:`state_build/rtm_quadrature.zig`                               |
+//   fillSharedAerosolSourceJacobianFromLayers.                                                                |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   This file reads already-filled support optical rows. It does not evaluate spectroscopy and does not       |
@@ -56,7 +57,7 @@ pub fn fillSourceLevelsAtWavelength(
     wavelength_nm: f64,
     layer_grid: atmosphere_layers.LayerGrid,
     support_rows: []const layer_depths.SupportOptics,
-    aerosol: aerosol_tables.AerosolLayerTable,
+    layer_rows: []const layer_depths.LayerOptics,
     out_levels: []SourceLevel,
 ) !void {
     // fillSourceLevelsAtWavelength ---------------------------------------------------------------------------|
@@ -69,6 +70,7 @@ pub fn fillSourceLevelsAtWavelength(
     // --------------------------------------------------------------------------------------------------------|
     const layer_count = layer_grid.layer_pressures_hpa.len;
     if (out_levels.len != layer_count + 1 or
+        layer_rows.len != layer_count or
         support_rows.len != layer_grid.support_mid_altitudes_km.len)
     {
         return error.InvalidShape;
@@ -109,9 +111,7 @@ pub fn fillSourceLevelsAtWavelength(
     }
 
     fillIntervalWeights(layer_grid, out_levels) catch return error.InvalidShape;
-    for (out_levels) |*level| {
-        level.aerosol_ksca_jacobian = aerosolSourceJacobian(aerosol, level.aerosol_ksca_above_per_km, level.weight_km);
-    }
+    fillSharedAerosolSourceJacobiansFromLayers(layer_rows, out_levels);
 }
 
 fn boundarySupportRowIndex(layer_grid: atmosphere_layers.LayerGrid, level_index: usize) usize {
@@ -168,17 +168,66 @@ fn aerosolScatteringPerKm(
     return row.aerosol_scattering_optical_depth / path_length_km;
 }
 
-fn aerosolSourceJacobian(
-    aerosol: aerosol_tables.AerosolLayerTable,
-    aerosol_scattering_per_km: f64,
-    level_weight_km: f64,
-) f64 {
-    // aerosolSourceJacobian ----------------------------------------------------------------------------------|
-    // Old shared-grid code first writes boundary-row source scales, then spreads layer aerosol derivatives    |
-    // over active weighted levels. Boundary levels keep zero; weighted aerosol levels use k_sca / tau_aer.    |
+fn fillSharedAerosolSourceJacobiansFromLayers(
+    layer_rows: []const layer_depths.LayerOptics,
+    out_levels: []SourceLevel,
+) void {
+    // fillSharedAerosolSourceJacobiansFromLayers -------------------------------------------------------------|
+    // Port main:`state_build/rtm_quadrature.zig` fillSharedAerosolSourceJacobianFromLayers.                   |
+    // Shared RTM quadrature spreads the layer aerosol-scattering derivative over active adjacent source       |
+    // weights instead of using each level's local k_sca/tau fallback scale.                                   |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   derivative per km = sum(d tau_sca_layer / d tau_aer) / sum(active adjacent source weights)            |
     // --------------------------------------------------------------------------------------------------------|
-    if (level_weight_km <= 0.0 or aerosol.optical_depth <= 0.0 or aerosol_scattering_per_km <= 0.0) return 0.0;
-    return aerosol_scattering_per_km / aerosol.optical_depth;
+    var total_scattering_derivative: f64 = 0.0;
+    for (layer_rows) |*layer| {
+        const derivative = jacobian_states.get(
+            layer.scattering_optical_depth_jacobian,
+            .aerosol_optical_depth,
+        );
+        if (derivative > 0.0) total_scattering_derivative += derivative;
+    }
+
+    if (total_scattering_derivative <= 0.0) return;
+
+    var total_weight_km: f64 = 0.0;
+    for (out_levels, 0..) |level, level_index| {
+        if (level.weight_km <= 0.0) continue;
+        const below_active =
+            level_index > 0 and
+            jacobian_states.get(
+                layer_rows[level_index - 1].scattering_optical_depth_jacobian,
+                .aerosol_optical_depth,
+            ) > 0.0;
+        const above_active =
+            level_index < layer_rows.len and
+            jacobian_states.get(
+                layer_rows[level_index].scattering_optical_depth_jacobian,
+                .aerosol_optical_depth,
+            ) > 0.0;
+        if (below_active or above_active) total_weight_km += level.weight_km;
+    }
+
+    if (total_weight_km <= 0.0) return;
+
+    const derivative_per_km = total_scattering_derivative / total_weight_km;
+    for (out_levels, 0..) |*level, level_index| {
+        if (level.weight_km <= 0.0) continue;
+        const below_active =
+            level_index > 0 and
+            jacobian_states.get(
+                layer_rows[level_index - 1].scattering_optical_depth_jacobian,
+                .aerosol_optical_depth,
+            ) > 0.0;
+        const above_active =
+            level_index < layer_rows.len and
+            jacobian_states.get(
+                layer_rows[level_index].scattering_optical_depth_jacobian,
+                .aerosol_optical_depth,
+            ) > 0.0;
+        if (below_active or above_active) level.aerosol_ksca_jacobian = derivative_per_km;
+    }
 }
 
 fn fillIntervalWeights(

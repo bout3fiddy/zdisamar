@@ -2,6 +2,7 @@ const std = @import("std");
 const internal = @import("internal");
 
 const defaults = internal.input.defaults;
+const jacobian = internal.transport.jacobian_states;
 const layer_depths = internal.optics.layer_depths;
 const setup = internal.setup.o2_run_tables;
 const source_levels = internal.optics.source_levels;
@@ -295,6 +296,8 @@ test "source levels reproduce shared RTM quadrature evidence rows" {
 
     const support_rows = try allocator.alloc(layer_depths.SupportOptics, tables.layers.support_mid_altitudes_km.len);
     defer allocator.free(support_rows);
+    const layer_rows = try allocator.alloc(layer_depths.LayerOptics, tables.layers.layer_pressures_hpa.len);
+    defer allocator.free(layer_rows);
     const levels = try allocator.alloc(source_levels.SourceLevel, tables.layers.layer_pressures_hpa.len + 1);
     defer allocator.free(levels);
 
@@ -309,11 +312,17 @@ test "source levels reproduce shared RTM quadrature evidence rows" {
                 tables.aerosol,
                 support_rows,
             );
+            try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, support_rows, layer_rows);
+            layer_depths.fillLayerAerosolJacobians(
+                tables.aerosol,
+                jacobian.stateMask(.aerosol_optical_depth),
+                layer_rows,
+            );
             try source_levels.fillSourceLevelsAtWavelength(
                 expected.wavelength_nm,
                 tables.layers,
                 support_rows,
-                tables.aerosol,
+                layer_rows,
                 levels,
             );
             previous_wavelength_nm = expected.wavelength_nm;

@@ -149,7 +149,7 @@ pub fn radianceAtWavelength(
                 wavelength_nm,
                 layer_grid,
                 out_support,
-                aerosol,
+                out_layers,
                 out_source_levels,
             );
             break :source_rows out_source_levels;
