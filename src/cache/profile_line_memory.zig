@@ -19,6 +19,7 @@ const hitran_pi = 3.1415926536;
 const min_spectroscopy_pressure_atm = 1.0e-12;
 const max_strong_line_sidecars: usize = 128;
 const max_spectroscopy_profile_nodes: usize = 64;
+const cutoff_grid_merge_tolerance_nm = 1.0e-9;
 
 // min_hitran_temperature_k -----------------------------------------------------------------------------------|
 // Old provenance: main:`src/input/reference/spectroscopy/physics_core.zig` clamps weak-line temperatures to   |
@@ -269,6 +270,18 @@ pub fn buildReferenceProfileLineValuesForWavelengths(
     wavelengths_nm: []const f64,
 ) !ProfileLineValues {
     // buildReferenceProfileLineValuesForWavelengths ----------------------------------------------------------|
+    // Build retained line values with the scalar weak-line cutoff fallback used by setup/profile parity tests.|
+    // --------------------------------------------------------------------------------------------------------|
+    return buildReferenceProfileLineValuesForWavelengthsWithCutoffGrid(allocator, case, wavelengths_nm, &.{});
+}
+
+pub fn buildReferenceProfileLineValuesForWavelengthsWithCutoffGrid(
+    allocator: Allocator,
+    case: o2_case.O2Case,
+    wavelengths_nm: []const f64,
+    cutoff_grid_wavelengths_nm: []const f64,
+) !ProfileLineValues {
+    // buildReferenceProfileLineValuesForWavelengths ----------------------------------------------------------|
     // Build retained line values over a caller-provided exact wavelength list.                                |
     //                                                                                                         |
     // provenance                                                                                              |
@@ -296,9 +309,13 @@ pub fn buildReferenceProfileLineValuesForWavelengths(
     );
     errdefer allocator.free(support_profile_values);
 
+    const cutoff_grid = try prepareCutoffGrid(allocator, cutoff_grid_wavelengths_nm);
+    defer cutoff_grid.deinit(allocator);
     const runtime = RuntimeControls{
         .cutoff_cm1 = lines.cutoff_sim_cm1,
         .line_mixing_factor = lines.line_mixing_factor,
+        .cutoff_grid_wavelengths_nm = cutoff_grid.wavelengths_nm,
+        .cutoff_grid_wavenumbers_cm1 = cutoff_grid.wavenumbers_cm1,
     };
     const line_strength_threshold = thresholdStrength(lines.rows, lines.threshold_line_sim);
     const active_lines = try collectActiveLines(
@@ -310,6 +327,28 @@ pub fn buildReferenceProfileLineValuesForWavelengths(
     defer allocator.free(active_lines);
     const total_lines = try collectRuntimeLines(allocator, lines.rows, lines.isotopes_sim);
     defer allocator.free(total_lines);
+    const weak_states = try prepareLayerWeakLineStates(
+        allocator,
+        active_lines,
+        layers.layer_temperatures_k,
+        layers.layer_pressures_hpa,
+        0.0,
+    );
+    defer deinitWeakLineStates(allocator, weak_states);
+    const total_weak_states = try prepareLayerWeakLineStates(
+        allocator,
+        total_lines,
+        layers.layer_temperatures_k,
+        layers.layer_pressures_hpa,
+        0.0,
+    );
+    defer deinitWeakLineStates(allocator, total_weak_states);
+    const support_total_weak_states = try prepareProfileWeakLineStates(
+        allocator,
+        total_lines,
+        layers.spectroscopy_profile.rows,
+    );
+    defer deinitWeakLineStates(allocator, support_total_weak_states);
     const strong_states = try allocator.alloc(StrongLinePreparedState, profile_node_count);
     defer allocator.free(strong_states);
     for (0..profile_node_count) |profile_node_index| {
@@ -336,11 +375,10 @@ pub fn buildReferenceProfileLineValuesForWavelengths(
             const row_index = wavelength_index * profile_node_count + profile_node_index;
             const pressure_hpa = layers.layer_pressures_hpa[profile_node_index];
             const temperature_k = layers.layer_temperatures_k[profile_node_index];
-            const sigma = weakLineSigmaAt(
+            const sigma = weakLineSigmaAtPrepared(
                 active_lines,
+                &weak_states[profile_node_index],
                 wavelength_nm,
-                temperature_k,
-                pressure_hpa,
                 runtime,
             );
             const upper_sigma = weakLineSigmaAt(
@@ -366,6 +404,7 @@ pub fn buildReferenceProfileLineValuesForWavelengths(
                 pressure_hpa,
                 runtime,
                 &strong_states[profile_node_index],
+                &total_weak_states[profile_node_index],
             );
 
             values[row_index] = .{
@@ -394,6 +433,7 @@ pub fn buildReferenceProfileLineValuesForWavelengths(
                 profile_row.pressure_hpa,
                 runtime,
                 &support_strong_states[profile_node_index],
+                &support_total_weak_states[profile_node_index],
             );
 
             support_profile_values[support_row_index] = .{
@@ -429,18 +469,84 @@ fn profileLineReuseStamp(case_id: []const u8, wavelengths_nm: []const f64) hashi
     return .{ .value = hasher.final() };
 }
 
+fn prepareCutoffGrid(allocator: Allocator, support_wavelengths_nm: []const f64) !CutoffGrid {
+    // prepareCutoffGrid --------------------------------------------------------------------------------------|
+    // Sort and merge the realized weak-line support grid before computing matching wavenumbers.               |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports main:`src/input/o2a_reference/run.zig` installVendorWeakCutoffGrid and old                      |
+    //   main:`instrument/adaptive_plan.zig` buildAdaptiveSupportWavelengths merge tolerance.                  |
+    // --------------------------------------------------------------------------------------------------------|
+    if (support_wavelengths_nm.len < 2) return .{};
+
+    const wavelengths = try allocator.dupe(f64, support_wavelengths_nm);
+    errdefer allocator.free(wavelengths);
+    std.mem.sort(f64, wavelengths, {}, lessThanF64);
+
+    var merged_count: usize = 0;
+    for (wavelengths) |wavelength_nm| {
+        if (merged_count != 0 and
+            @abs(wavelengths[merged_count - 1] - wavelength_nm) <= cutoff_grid_merge_tolerance_nm)
+        {
+            continue;
+        }
+        wavelengths[merged_count] = wavelength_nm;
+        merged_count += 1;
+    }
+
+    const merged_wavelengths = try allocator.realloc(wavelengths, merged_count);
+    errdefer allocator.free(merged_wavelengths);
+    const wavenumbers = try allocator.alloc(f64, merged_count);
+    errdefer allocator.free(wavenumbers);
+    for (merged_wavelengths, wavenumbers) |wavelength_nm, *wavenumber_cm1| {
+        wavenumber_cm1.* = wavelengthToWavenumberCm1(wavelength_nm);
+    }
+    return .{ .wavelengths_nm = merged_wavelengths, .wavenumbers_cm1 = wavenumbers };
+}
+
+fn lessThanF64(_: void, lhs: f64, rhs: f64) bool {
+    // lessThanF64 --------------------------------------------------------------------------------------------|
+    // Sort finite support wavelengths in ascending wavelength order for old cutoff-grid index searches.       |
+    // --------------------------------------------------------------------------------------------------------|
+    return lhs < rhs;
+}
+
 // RuntimeControls --------------------------------------------------------------------------------------------|
 // Borrowed line-list controls needed by weak-line setup evaluation.                                           |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+// size: 48 B (0.047 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [ 0.. 7] cutoff_cm1         : f64                                                                           |
-// [ 8..15] line_mixing_factor : f64                                                                           |
+// [ 0.. 7] cutoff_cm1               : f64                                                                     |
+// [ 8..15] line_mixing_factor       : f64                                                                     |
+// [16..31] cutoff_grid_wavelengths_nm : []const f64                                                           |
+// [32..47] cutoff_grid_wavenumbers_cm1: []const f64                                                           |
 const RuntimeControls = struct {
     cutoff_cm1: f64,
     line_mixing_factor: f64,
+    cutoff_grid_wavelengths_nm: []const f64 = &.{},
+    cutoff_grid_wavenumbers_cm1: []const f64 = &.{},
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// CutoffGrid -------------------------------------------------------------------------------------------------|
+// Owned weak-line cutoff support grid used during setup-time line evaluation.                                 |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] wavelengths_nm : []f64                                                                             |
+// [16..31] wavenumbers_cm1: []f64                                                                             |
+const CutoffGrid = struct {
+    wavelengths_nm: []f64 = &.{},
+    wavenumbers_cm1: []f64 = &.{},
+
+    fn deinit(self: *const CutoffGrid, allocator: Allocator) void {
+        allocator.free(self.wavenumbers_cm1);
+        allocator.free(self.wavelengths_nm);
+    }
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -490,6 +596,55 @@ const StrongLinePreparedState = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
+// WeakLinePreparedLineState ----------------------------------------------------------------------------------|
+// Per-line weak-lane constants prepared for one temperature and pressure.                                     |
+//                                                                                                             |
+// provenance                                                                                                  |
+//   Ports main:`src/input/reference/spectroscopy/types.zig` WeakLinePreparedLineState.                        |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] shifted_center_wavenumber_cm1 : f64                                                                |
+// [ 8..15] cte                            : f64                                                               |
+// [16..23] line_shape_y                   : f64                                                               |
+// [24..31] prefactor_base                 : f64                                                               |
+const WeakLinePreparedLineState = struct {
+    shifted_center_wavenumber_cm1: f64,
+    cte: f64,
+    line_shape_y: f64,
+    prefactor_base: f64,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// WeakLinePreparedState --------------------------------------------------------------------------------------|
+// Header over weak-line constants prepared for one temperature and pressure.                                  |
+//                                                                                                             |
+// provenance                                                                                                  |
+//   Ports main:`src/input/reference/spectroscopy/types.zig` WeakLinePreparedState.                            |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] line_count       : usize                                                                           |
+// [ 8..15] safe_temperature : f64                                                                             |
+// [16..23] safe_pressure    : f64                                                                             |
+// [24..39] lines            : []WeakLinePreparedLineState                                                     |
+const WeakLinePreparedState = struct {
+    line_count: usize,
+    safe_temperature: f64,
+    safe_pressure: f64,
+    lines: []WeakLinePreparedLineState,
+
+    fn deinit(self: *WeakLinePreparedState, allocator: Allocator) void {
+        allocator.free(self.lines);
+        self.* = undefined;
+    }
+};
+// ------------------------------------------------------------------------------------------------------------|
+
 // ComplexProbability -----------------------------------------------------------------------------------------|
 // Complex probability function result used by the weak-line Voigt formula.                                    |
 //                                                                                                             |
@@ -502,6 +657,21 @@ const StrongLinePreparedState = struct {
 const ComplexProbability = struct {
     wr: f64,
     wi: f64,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// LineWindow -------------------------------------------------------------------------------------------------|
+// Borrowed wavelength-local line slice plus its start index in the sorted source list.                        |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] lines      : []const O2LineAssetRow                                                                |
+// [16..23] start_index: usize                                                                                 |
+const LineWindow = struct {
+    lines: []const readers.O2LineAssetRow,
+    start_index: usize,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -578,6 +748,154 @@ fn lessByCenterWavelength(_: void, lhs: readers.O2LineAssetRow, rhs: readers.O2L
     return lhs.center_wavelength_nm < rhs.center_wavelength_nm;
 }
 
+fn prepareLayerWeakLineStates(
+    allocator: Allocator,
+    lines: []const readers.O2LineAssetRow,
+    temperatures_k: []const f64,
+    pressures_hpa: []const f64,
+    temperature_offset_k: f64,
+) ![]WeakLinePreparedState {
+    // prepareLayerWeakLineStates -----------------------------------------------------------------------------|
+    // Prepare one weak-line state per layer profile node for the exact-route setup grid.                      |
+    // --------------------------------------------------------------------------------------------------------|
+    if (temperatures_k.len != pressures_hpa.len) return error.InvalidShape;
+
+    const states = try allocator.alloc(WeakLinePreparedState, temperatures_k.len);
+    var initialized_count: usize = 0;
+    errdefer {
+        for (states[0..initialized_count]) |*state| state.deinit(allocator);
+        allocator.free(states);
+    }
+
+    for (states, temperatures_k, pressures_hpa) |*state, temperature_k, pressure_hpa| {
+        state.* = try prepareWeakLineState(
+            allocator,
+            lines,
+            @max(temperature_k + temperature_offset_k, min_hitran_temperature_k),
+            @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm),
+        );
+        initialized_count += 1;
+    }
+
+    return states;
+}
+
+fn prepareProfileWeakLineStates(
+    allocator: Allocator,
+    lines: []const readers.O2LineAssetRow,
+    profile_rows: []const readers.AtmosphereProfileRow,
+) ![]WeakLinePreparedState {
+    // prepareProfileWeakLineStates ---------------------------------------------------------------------------|
+    // Prepare one weak-line state per vendor spectroscopy-profile row for support-row interpolation.          |
+    // --------------------------------------------------------------------------------------------------------|
+    const states = try allocator.alloc(WeakLinePreparedState, profile_rows.len);
+    var initialized_count: usize = 0;
+    errdefer {
+        for (states[0..initialized_count]) |*state| state.deinit(allocator);
+        allocator.free(states);
+    }
+
+    for (states, profile_rows) |*state, profile_row| {
+        state.* = try prepareWeakLineState(
+            allocator,
+            lines,
+            profile_row.temperature_k,
+            @max(profile_row.pressure_hpa / 1013.25, min_spectroscopy_pressure_atm),
+        );
+        initialized_count += 1;
+    }
+
+    return states;
+}
+
+fn prepareWeakLineState(
+    allocator: Allocator,
+    lines: []const readers.O2LineAssetRow,
+    temperature_k: f64,
+    pressure_atm: f64,
+) !WeakLinePreparedState {
+    // prepareWeakLineState -----------------------------------------------------------------------------------|
+    // Prepare old-route weak-line constants for one thermodynamic point.                                      |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports main:`src/input/reference/spectroscopy/physics_core.zig` prepareWeakLinePreparedLineState.      |
+    // --------------------------------------------------------------------------------------------------------|
+    const safe_temperature = @max(temperature_k, min_hitran_temperature_k);
+    const safe_pressure = @max(pressure_atm, min_spectroscopy_pressure_atm);
+    const prepared_lines = try allocator.alloc(WeakLinePreparedLineState, lines.len);
+    errdefer allocator.free(prepared_lines);
+
+    for (lines, prepared_lines) |line, *prepared_line| {
+        prepared_line.* = prepareWeakLinePreparedLineState(line, safe_temperature, safe_pressure);
+    }
+
+    return .{
+        .line_count = lines.len,
+        .safe_temperature = safe_temperature,
+        .safe_pressure = safe_pressure,
+        .lines = prepared_lines,
+    };
+}
+
+fn deinitWeakLineStates(allocator: Allocator, states: []WeakLinePreparedState) void {
+    // deinitWeakLineStates -----------------------------------------------------------------------------------|
+    // Release a prepared weak-line state row set after setup evaluation completes.                            |
+    // --------------------------------------------------------------------------------------------------------|
+    for (states) |*state| state.deinit(allocator);
+    allocator.free(states);
+}
+
+fn prepareWeakLinePreparedLineState(
+    line: readers.O2LineAssetRow,
+    safe_temperature: f64,
+    safe_pressure: f64,
+) WeakLinePreparedLineState {
+    // prepareWeakLinePreparedLineState -----------------------------------------------------------------------|
+    // Precompute the temperature/pressure terms shared by all wavelength evaluations for one HITRAN line.     |
+    // --------------------------------------------------------------------------------------------------------|
+    const center_wavenumber_cm1 = line.center_wavenumber_cm1;
+    const temperature_ratio = hitran_reference_temperature_k / safe_temperature;
+    const shifted_center_wavenumber_cm1 = @max(
+        center_wavenumber_cm1 + line.pressure_shift_cm1 * safe_pressure,
+        1.0,
+    );
+    const half_width_cm1_at_t = @max(
+        line.air_half_width_cm1 * std.math.pow(f64, temperature_ratio, line.temperature_exponent),
+        1.0e-6,
+    );
+    const doppler_width_cm1 = @max(
+        dopplerWidthCm1(safe_temperature, shifted_center_wavenumber_cm1, molecularWeightForLine(line)),
+        1.0e-6,
+    );
+    const cte = @sqrt(@log(2.0)) / doppler_width_cm1;
+
+    var converted_strength = line.line_strength_cm2_per_molecule *
+        partitionRatioT0OverT(line, safe_temperature) *
+        @exp(
+            hitran_hc_over_kb_cm_k * line.lower_state_energy_cm1 *
+                ((1.0 / hitran_reference_temperature_k) - (1.0 / safe_temperature)),
+        ) /
+        shifted_center_wavenumber_cm1;
+    converted_strength *= 0.1013 /
+        hitran_boltzmann_constant_j_per_k /
+        safe_temperature /
+        @max(
+            1.0 - @exp(-hitran_hc_over_kb_cm_k * shifted_center_wavenumber_cm1 / hitran_reference_temperature_k),
+            1.0e-12,
+        );
+
+    return .{
+        .shifted_center_wavenumber_cm1 = shifted_center_wavenumber_cm1,
+        .cte = cte,
+        .line_shape_y = half_width_cm1_at_t * safe_pressure * cte,
+        .prefactor_base = @sqrt(@log(2.0)) /
+            doppler_width_cm1 /
+            @sqrt(hitran_pi) *
+            safe_pressure *
+            converted_strength,
+    };
+}
+
 fn totalSpectroscopyAt(
     runtime_lines: []const readers.O2LineAssetRow,
     strong_lines: []const readers.O2StrongLineAssetRow,
@@ -587,6 +905,7 @@ fn totalSpectroscopyAt(
     pressure_hpa: f64,
     runtime: RuntimeControls,
     strong_state: *const StrongLinePreparedState,
+    prepared_weak_state: ?*const WeakLinePreparedState,
 ) SpectroscopyComponents {
     // totalSpectroscopyAt ------------------------------------------------------------------------------------|
     // Sum old-route weak, strong-line, and line-mixing sigma for one profile-node row.                        |
@@ -601,11 +920,52 @@ fn totalSpectroscopyAt(
     const pressure_atm = @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm);
     const window = relevantLineWindow(runtime_lines, wavelength_nm, runtime.cutoff_cm1);
     const vendor_partition = usesVendorStrongLinePartition(runtime_lines, strong_lines);
+    const prepared_state = prepared_weak_state;
+    const prepared_matches = if (prepared_state) |state|
+        state.line_count == runtime_lines.len and state.lines.len == runtime_lines.len
+    else
+        false;
+
+    const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
+    const stimulated_emission_scale: f64 = stimulated_scale: {
+        if (!prepared_matches) break :stimulated_scale 0.0;
+
+        break :stimulated_scale weakLinePreparedStimulatedEmissionScale(
+            evaluation_wavenumber_cm1,
+            prepared_state.?.safe_temperature,
+        );
+    };
+    const thermodynamic_scale: f64 = thermodynamic_scale: {
+        if (!prepared_matches) break :thermodynamic_scale 0.0;
+
+        break :thermodynamic_scale weakLinePreparedThermodynamicScale(
+            prepared_state.?.safe_temperature,
+            prepared_state.?.safe_pressure,
+        );
+    };
 
     var weak_line_sigma: f64 = 0.0;
-    for (window, 0..) |line, line_index| {
-        if (shouldExcludeWeakLine(line, line_index, window, strong_lines, vendor_partition)) continue;
-        weak_line_sigma += weakLineContribution(wavelength_nm, line, safe_temperature, pressure_atm, runtime);
+    for (window.lines, 0..) |line, line_index| {
+        if (shouldExcludeWeakLine(line, line_index, window.lines, strong_lines, vendor_partition)) continue;
+
+        if (prepared_matches) {
+            weak_line_sigma += weakLinePreparedContribution(
+                evaluation_wavenumber_cm1,
+                prepared_state.?.lines[window.start_index + line_index],
+                runtime,
+                stimulated_emission_scale,
+                thermodynamic_scale,
+            );
+            continue;
+        }
+
+        weak_line_sigma += weakLineContribution(
+            wavelength_nm,
+            line,
+            safe_temperature,
+            pressure_atm,
+            runtime,
+        );
     }
 
     var strong_line_sigma: f64 = 0.0;
@@ -647,8 +1007,44 @@ fn weakLineSigmaAt(
     const pressure_atm = @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm);
     const window = relevantLineWindow(active_lines, wavelength_nm, runtime.cutoff_cm1);
     var sigma: f64 = 0.0;
-    for (window) |line| {
+    for (window.lines) |line| {
         sigma += weakLineContribution(wavelength_nm, line, safe_temperature, pressure_atm, runtime);
+    }
+    return sigma;
+}
+
+fn weakLineSigmaAtPrepared(
+    active_lines: []const readers.O2LineAssetRow,
+    state: *const WeakLinePreparedState,
+    wavelength_nm: f64,
+    runtime: RuntimeControls,
+) f64 {
+    // weakLineSigmaAtPrepared --------------------------------------------------------------------------------|
+    // Sum weak-line Voigt contributions using one thermodynamic state's prepared line constants.              |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports main:`src/input/reference/spectroscopy/physics_core.zig`                                        |
+    //   weakLineSigmaPreparedWithStimulatedEmissionScale over the WP2 setup row names.                        |
+    // --------------------------------------------------------------------------------------------------------|
+    std.debug.assert(state.line_count == active_lines.len);
+    std.debug.assert(state.lines.len == active_lines.len);
+
+    const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
+    const stimulated_emission_scale = weakLinePreparedStimulatedEmissionScale(
+        evaluation_wavenumber_cm1,
+        state.safe_temperature,
+    );
+    const thermodynamic_scale = weakLinePreparedThermodynamicScale(state.safe_temperature, state.safe_pressure);
+    const window = relevantLineWindow(active_lines, wavelength_nm, runtime.cutoff_cm1);
+    var sigma: f64 = 0.0;
+    for (window.lines, 0..) |_, line_index| {
+        sigma += weakLinePreparedContribution(
+            evaluation_wavenumber_cm1,
+            state.lines[window.start_index + line_index],
+            runtime,
+            stimulated_emission_scale,
+            thermodynamic_scale,
+        );
     }
     return sigma;
 }
@@ -657,11 +1053,11 @@ fn relevantLineWindow(
     active_lines: []const readers.O2LineAssetRow,
     wavelength_nm: f64,
     cutoff_cm1: f64,
-) []const readers.O2LineAssetRow {
+) LineWindow {
     // relevantLineWindow -------------------------------------------------------------------------------------|
     // Return the center-wavelength slice that can fall inside the old-route cutoff prewindow.                 |
     // --------------------------------------------------------------------------------------------------------|
-    if (active_lines.len == 0) return active_lines;
+    if (active_lines.len == 0) return .{ .lines = active_lines, .start_index = 0 };
 
     const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
     const prewindow_cm1 = cutoff_cm1 + vendor_cutoff_prewindow_margin_cm1;
@@ -672,7 +1068,7 @@ fn relevantLineWindow(
     const begin = lowerBoundByCenterWavelength(active_lines, lower_wavelength_nm);
     const end = lowerBoundByCenterWavelength(active_lines, upper_wavelength_nm);
 
-    return active_lines[begin..end];
+    return .{ .lines = active_lines[begin..end], .start_index = begin };
 }
 
 fn lowerBoundByCenterWavelength(lines: []const readers.O2LineAssetRow, wavelength_nm: f64) usize {
@@ -856,7 +1252,7 @@ fn weakLineContribution(
     //               * nu * (1 - exp(-(hc/k) * nu / T)) * T * k_B_cm3_hPa / pressure_atm / 1013.25             |
     //               * cpf.wr, 0)                                                                              |
     // --------------------------------------------------------------------------------------------------------|
-    if (!insideCutoff(line, wavelength_nm, pressure_atm, runtime.cutoff_cm1)) return 0.0;
+    if (!insideCutoff(line, wavelength_nm, pressure_atm, runtime)) return 0.0;
 
     const center_wavenumber_cm1 = line.center_wavenumber_cm1;
     const shifted_center_wavenumber_cm1 = @max(center_wavenumber_cm1 + line.pressure_shift_cm1 * pressure_atm, 1.0);
@@ -906,6 +1302,65 @@ fn weakLineContribution(
         1013.25;
 
     return @max(prefactor * cpf.wr, 0.0);
+}
+
+fn weakLinePreparedStimulatedEmissionScale(evaluation_wavenumber_cm1: f64, safe_temperature: f64) f64 {
+    // weakLinePreparedStimulatedEmissionScale ----------------------------------------------------------------|
+    // Compute the wavelength term shared by all prepared weak lines at one thermodynamic point.               |
+    // --------------------------------------------------------------------------------------------------------|
+    return evaluation_wavenumber_cm1 *
+        (1.0 - @exp(-hitran_hc_over_kb_cm_k * evaluation_wavenumber_cm1 / safe_temperature));
+}
+
+fn weakLinePreparedThermodynamicScale(safe_temperature: f64, safe_pressure: f64) f64 {
+    // weakLinePreparedThermodynamicScale ---------------------------------------------------------------------|
+    // Compute the number-density conversion shared by all prepared weak lines at one thermodynamic point.     |
+    // --------------------------------------------------------------------------------------------------------|
+    return safe_temperature *
+        hitran_boltzmann_constant_cm3_hpa_per_k /
+        safe_pressure /
+        1013.25;
+}
+
+fn weakLinePreparedContribution(
+    evaluation_wavenumber_cm1: f64,
+    prepared_line: WeakLinePreparedLineState,
+    runtime: RuntimeControls,
+    stimulated_emission_scale: f64,
+    thermodynamic_scale: f64,
+) f64 {
+    // weakLinePreparedContribution ---------------------------------------------------------------------------|
+    // Evaluate one prepared weak-line contribution with the old scalar fallback cutoff and CPF route.         |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports main:`src/input/reference/spectroscopy/physics_core.zig`                                        |
+    //   weakLineSigmaPreparedWithStimulatedEmissionScale.                                                     |
+    // --------------------------------------------------------------------------------------------------------|
+    if (!preparedInsideCutoff(prepared_line, evaluation_wavenumber_cm1, runtime)) return 0.0;
+
+    const cpf = complexProbabilityFunction(
+        (prepared_line.shifted_center_wavenumber_cm1 - evaluation_wavenumber_cm1) * prepared_line.cte,
+        prepared_line.line_shape_y,
+    );
+    const prefactor = prepared_line.prefactor_base *
+        stimulated_emission_scale *
+        thermodynamic_scale;
+    return @max(prefactor * cpf.wr, 0.0);
+}
+
+fn preparedInsideCutoff(
+    prepared_line: WeakLinePreparedLineState,
+    evaluation_wavenumber_cm1: f64,
+    runtime: RuntimeControls,
+) bool {
+    // preparedInsideCutoff -----------------------------------------------------------------------------------|
+    // Apply the HITRAN cutoff around a pre-shifted line center.                                               |
+    // --------------------------------------------------------------------------------------------------------|
+    return shiftedCenterInsideCutoff(
+        prepared_line.shifted_center_wavenumber_cm1,
+        evaluation_wavenumber_cm1,
+        runtime,
+    );
 }
 
 fn prepareStrongLineState(
@@ -1149,7 +1604,7 @@ fn insideCutoff(
     line: readers.O2LineAssetRow,
     wavelength_nm: f64,
     pressure_atm: f64,
-    cutoff_cm1: f64,
+    runtime: RuntimeControls,
 ) bool {
     // insideCutoff -------------------------------------------------------------------------------------------|
     // Apply the scalar HITRAN cutoff window around the pressure-shifted line center.                          |
@@ -1158,8 +1613,113 @@ fn insideCutoff(
         line.center_wavenumber_cm1 + line.pressure_shift_cm1 * pressure_atm,
         1.0,
     );
-    const center_distance_cm1 = @abs(shifted_center_wavenumber_cm1 - wavelengthToWavenumberCm1(wavelength_nm));
-    return center_distance_cm1 <= cutoff_cm1 + vendor_cutoff_boundary_margin_cm1;
+    return shiftedCenterInsideCutoff(
+        shifted_center_wavenumber_cm1,
+        wavelengthToWavenumberCm1(wavelength_nm),
+        runtime,
+    );
+}
+
+fn shiftedCenterInsideCutoff(
+    shifted_center_wavenumber_cm1: f64,
+    evaluation_wavenumber_cm1: f64,
+    runtime: RuntimeControls,
+) bool {
+    // shiftedCenterInsideCutoff ------------------------------------------------------------------------------|
+    // Apply old weak-line cutoff behavior, preferring the realized support-grid index route when present.     |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports main:`src/input/reference/spectroscopy/physics_core.zig` shiftedCenterInsideVendorCutoff.       |
+    // --------------------------------------------------------------------------------------------------------|
+    if (runtime.cutoff_grid_wavenumbers_cm1.len >= 2 and
+        runtime.cutoff_grid_wavenumbers_cm1.len == runtime.cutoff_grid_wavelengths_nm.len)
+    {
+        const lower_endpoint_index = nearestWavenumberGridIndexFromWavenumbers(
+            runtime.cutoff_grid_wavenumbers_cm1,
+            shifted_center_wavenumber_cm1 + runtime.cutoff_cm1,
+        );
+        const upper_endpoint_index = nearestWavenumberGridIndexFromWavenumbers(
+            runtime.cutoff_grid_wavenumbers_cm1,
+            shifted_center_wavenumber_cm1 - runtime.cutoff_cm1,
+        );
+        const evaluation_index = nearestWavenumberGridIndexFromWavenumbers(
+            runtime.cutoff_grid_wavenumbers_cm1,
+            evaluation_wavenumber_cm1,
+        );
+        return evaluation_index >= @min(lower_endpoint_index, upper_endpoint_index) and
+            evaluation_index <= @max(lower_endpoint_index, upper_endpoint_index);
+    }
+
+    const center_distance_cm1 = @abs(shifted_center_wavenumber_cm1 - evaluation_wavenumber_cm1);
+    return center_distance_cm1 <= runtime.cutoff_cm1 + vendor_cutoff_boundary_margin_cm1;
+}
+
+fn nearestWavenumberGridIndexFromWavenumbers(wavenumbers_cm1: []const f64, target_wavenumber_cm1: f64) usize {
+    // nearestWavenumberGridIndexFromWavenumbers --------------------------------------------------------------|
+    // Return the nearest support-grid index in wavenumber space with old minloc tie handling.                 |
+    // --------------------------------------------------------------------------------------------------------|
+    std.debug.assert(wavenumbers_cm1.len != 0);
+    if (wavenumbers_cm1.len == 1) return 0;
+
+    const first_wavenumber_cm1 = wavenumbers_cm1[0];
+    const last_index = wavenumbers_cm1.len - 1;
+    const last_wavenumber_cm1 = wavenumbers_cm1[last_index];
+    const descending = first_wavenumber_cm1 >= last_wavenumber_cm1;
+    if (descending) {
+        if (target_wavenumber_cm1 >= first_wavenumber_cm1) return 0;
+        if (target_wavenumber_cm1 <= last_wavenumber_cm1) return last_index;
+
+        var lower_index: usize = 0;
+        var upper_index: usize = last_index;
+        while (upper_index - lower_index > 1) {
+            const midpoint = lower_index + (upper_index - lower_index) / 2;
+            if (wavenumbers_cm1[midpoint] >= target_wavenumber_cm1) {
+                lower_index = midpoint;
+            } else {
+                upper_index = midpoint;
+            }
+        }
+        return nearestOfTwoPrecomputedWavenumberGridIndices(
+            wavenumbers_cm1,
+            target_wavenumber_cm1,
+            lower_index,
+            upper_index,
+        );
+    }
+
+    if (target_wavenumber_cm1 <= first_wavenumber_cm1) return 0;
+    if (target_wavenumber_cm1 >= last_wavenumber_cm1) return last_index;
+
+    var lower_index: usize = 0;
+    var upper_index: usize = last_index;
+    while (upper_index - lower_index > 1) {
+        const midpoint = lower_index + (upper_index - lower_index) / 2;
+        if (wavenumbers_cm1[midpoint] <= target_wavenumber_cm1) {
+            lower_index = midpoint;
+        } else {
+            upper_index = midpoint;
+        }
+    }
+    return nearestOfTwoPrecomputedWavenumberGridIndices(
+        wavenumbers_cm1,
+        target_wavenumber_cm1,
+        lower_index,
+        upper_index,
+    );
+}
+
+fn nearestOfTwoPrecomputedWavenumberGridIndices(
+    wavenumbers_cm1: []const f64,
+    target_wavenumber_cm1: f64,
+    lower_index: usize,
+    upper_index: usize,
+) usize {
+    // nearestOfTwoPrecomputedWavenumberGridIndices -----------------------------------------------------------|
+    // Pick the closest of two support-grid candidates, keeping the lower index on exact ties.                 |
+    // --------------------------------------------------------------------------------------------------------|
+    const lower_delta = @abs(wavenumbers_cm1[lower_index] - target_wavenumber_cm1);
+    const upper_delta = @abs(wavenumbers_cm1[upper_index] - target_wavenumber_cm1);
+    return if (upper_delta < lower_delta) upper_index else lower_index;
 }
 
 fn complexProbabilityFunction(x: f64, y: f64) ComplexProbability {
