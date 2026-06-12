@@ -153,6 +153,7 @@ pub const transport = struct {
     pub const matrix_12x10 = @import("transport/matrix_12x10.zig");
     pub const phase_basis = @import("transport/phase_basis.zig");
     pub const phase_timing = @import("transport/phase_timing.zig");
+    pub const reflectance = @import("transport/reflectance.zig");
     pub const rows = @import("transport/rows.zig");
     pub const scattering_orders = @import("transport/scattering_orders.zig");
 };
