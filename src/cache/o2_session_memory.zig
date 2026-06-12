@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const forward_worker_pool = @import("forward_worker_pool.zig");
 const profile_line_memory = @import("profile_line_memory.zig");
 const radiance_memory = @import("radiance_memory.zig");
 const solar_irradiance_memory = @import("solar_irradiance_memory.zig");
@@ -22,31 +23,35 @@ const Allocator = std.mem.Allocator;
 // ------------------------------------------------------------------------------------------------------------|
 
 // O2SessionMemory ------------------------------------------------------------------------------------------- |
-// Top-level allocation owner for reusable O2 A setup, spectrum, solar, and transport work.                    |
+// Top-level allocation owner for reusable O2 A setup, spectrum, solar, workers, and transport work.           |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// Debug build: size 3472 B (3.391 KiB), align 8                                                               |
-// optimized  : size 3464 B (3.383 KiB), align 8                                                               |
+// Debug build: size 432 B (0.422 KiB), align 8                                                                |
+// optimized  : size 400 B (0.391 KiB), align 8                                                                |
 //                                                                                                             |
 // memory                                                                                                      |
-// [   0..  47] spectrum          : SpectrumMemory                                                             |
-// [  48.. 143] radiance          : RadianceMemory                                                             |
-// [ 144.. 207] profile_lines     : ProfileLineValues                                                          |
-// [ 208.. 247] solar_irradiance  : SolarIrradianceMemory in Debug                                             |
-// [ 208.. 239] solar_irradiance  : SolarIrradianceMemory in optimized builds                                  |
-// [ 248..3439] transport_workers : TransportWorkerMemory in Debug                                             |
-// [ 240..3431] transport_workers : TransportWorkerMemory in optimized builds                                  |
-// [3440..3471] weak_line_cutoff  : WeakLineCutoffMemory in Debug                                              |
-// [3432..3463] weak_line_cutoff  : WeakLineCutoffMemory in optimized builds                                   |
+// [  0.. 47] spectrum          : SpectrumMemory                                                               |
+// [ 48..143] radiance          : RadianceMemory                                                               |
+// [144..207] profile_lines     : ProfileLineValues                                                            |
+// [208..247] solar_irradiance  : SolarIrradianceMemory in Debug                                               |
+// [208..239] solar_irradiance  : SolarIrradianceMemory in optimized builds                                    |
+// [248..383] worker_pool       : ForwardWorkerPool in Debug                                                   |
+// [240..351] worker_pool       : ForwardWorkerPool in optimized builds                                        |
+// [384..399] transport_workers : TransportWorkerMemoryCollection in Debug                                     |
+// [352..367] transport_workers : TransportWorkerMemoryCollection in optimized builds                          |
+// [400..431] weak_line_cutoff  : WeakLineCutoffMemory in Debug                                                |
+// [368..399] weak_line_cutoff  : WeakLineCutoffMemory in optimized builds                                     |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   Child memory owners release their own heap storage through deinit.                                        |
+//   Child memory owners release their own heap storage through deinit. Worker-local transport buffers live    |
+//   out-of-line in transport_workers so the session can grow from one worker to many.                         |
 pub const O2SessionMemory = struct {
     spectrum: spectrum_memory.SpectrumMemory = .{},
     radiance: radiance_memory.RadianceMemory = .{},
     profile_lines: profile_line_memory.ProfileLineValues = .{},
     solar_irradiance: solar_irradiance_memory.SolarIrradianceMemory,
-    transport_workers: transport_worker_memory.TransportWorkerMemory = .{},
+    worker_pool: forward_worker_pool.ForwardWorkerPool = .{},
+    transport_workers: transport_worker_memory.TransportWorkerMemoryCollection = .{},
     weak_line_cutoff: weak_line_cutoff_memory.WeakLineCutoffMemory = .{},
 
     pub fn init(allocator: Allocator) O2SessionMemory {
@@ -64,6 +69,7 @@ pub const O2SessionMemory = struct {
         // ----------------------------------------------------------------------------------------------------|
         self.weak_line_cutoff.deinit(allocator);
         self.transport_workers.deinit(allocator);
+        self.worker_pool.deinit();
         self.solar_irradiance.deinit();
         self.profile_lines.deinit(allocator);
         self.radiance.deinit(allocator);
@@ -74,6 +80,6 @@ pub const O2SessionMemory = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 comptime {
-    const expected_size: usize = if (@import("builtin").mode == .Debug) 3472 else 3464;
+    const expected_size: usize = if (@import("builtin").mode == .Debug) 432 else 400;
     std.debug.assert(@sizeOf(O2SessionMemory) == expected_size);
 }

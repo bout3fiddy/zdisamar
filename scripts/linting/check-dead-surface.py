@@ -13,6 +13,7 @@ PUB_FN_RE = re.compile(r"^\s*pub\s+(?:inline\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b
 
 
 ALLOWLIST: dict[tuple[str, str], str] = {
+    ("src/cache/forward_worker_pool.zig", "poolForWorkerCount"): "wp4.5-staged session pool selector; dense prefetch runner must wire in slice 3",
     ("src/cache/profile_line_memory.zig", "supportProfileRow"): "wp4-staged profile-line inspection helper; session runner must wire or demote before WP4 close",
     ("src/cache/solar_irradiance_memory.zig", "put"): "wp4-staged solar cache mutation surface; session runner must wire before WP4 close",
     ("src/cache/transport_worker_memory.zig", "resetValidity"): "wp4-staged worker-memory lifecycle; session runner must wire before WP4 close",

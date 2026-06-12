@@ -5,7 +5,6 @@ const hashing = @import("common/hashing.zig");
 const defaults = @import("input/defaults.zig");
 const input_json = @import("input/json.zig");
 const jacobian_states = @import("transport/jacobian_states.zig");
-const layer_depths = @import("optics/layer_depths.zig");
 const o2_case = @import("input/o2_case.zig");
 const o2_session_memory = @import("cache/o2_session_memory.zig");
 const atmospheric_budget = @import("output/atmospheric_budget.zig");
@@ -19,9 +18,7 @@ const setup_tables = @import("setup/o2_run_tables.zig");
 const profile_lines = @import("cache/profile_line_memory.zig");
 const sampling_table = @import("spectrum/sampling_table.zig");
 const solve = @import("transport/solve.zig");
-const source_levels = @import("optics/source_levels.zig");
 const spectrum_run = @import("spectrum/spectrum_run.zig");
-const curved_sun_path = @import("optics/curved_sun_path.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -144,8 +141,7 @@ pub fn runO2AWithSessionMemory(
     const table = prepared_rows.table;
     const wavelengths = session.radiance.wavelengthList();
     const product_count = table.rows.len;
-    const support_count = prepared.tables.layers.support_mid_altitudes_km.len;
-    const layer_count = prepared.tables.layers.layer_pressures_hpa.len;
+    const worker_memory = session.transport_workers.worker(0);
 
     var result = O2SpectrumRunResult{
         .spectrum = .{
@@ -168,20 +164,6 @@ pub fn runO2AWithSessionMemory(
     defer allocator.free(raw_irradiance);
     const product_radiance = try allocator.alloc(radiance_results.RadianceResult, product_count);
     defer allocator.free(product_radiance);
-    const line_sigma = try allocator.alloc(f64, support_count);
-    defer allocator.free(line_sigma);
-    const support = try allocator.alloc(layer_depths.SupportOptics, support_count);
-    defer allocator.free(support);
-    const layers = try allocator.alloc(layer_depths.LayerOptics, layer_count);
-    defer allocator.free(layers);
-    const source_rows = try allocator.alloc(source_levels.SourceLevel, layer_count + 1);
-    defer allocator.free(source_rows);
-    const curved_samples = try allocator.alloc(curved_sun_path.CurvedSunPathSample, support_count);
-    defer allocator.free(curved_samples);
-    const curved_level_starts = try allocator.alloc(usize, layer_count + 1);
-    defer allocator.free(curved_level_starts);
-    const curved_level_altitudes = try allocator.alloc(f64, layer_count + 1);
-    defer allocator.free(curved_level_altitudes);
 
     const summary = try spectrum_run.runO2ASpectrumSingleWorker(
         table,
@@ -209,14 +191,14 @@ pub fn runO2AWithSessionMemory(
         result.spectrum.irradiance,
         result.spectrum.reflectance,
         result.spectrum.jacobian,
-        line_sigma,
-        support,
-        layers,
-        source_rows,
-        curved_samples,
-        curved_level_starts,
-        curved_level_altitudes,
-        &session.transport_workers,
+        worker_memory.line_sigma_cm2_per_molecule,
+        worker_memory.support_optics,
+        worker_memory.layer_optics,
+        worker_memory.source_level_rows,
+        worker_memory.curved_samples,
+        worker_memory.curved_level_starts,
+        worker_memory.curved_level_altitudes_km,
+        worker_memory,
         &session.solar_irradiance,
     );
 
@@ -367,9 +349,13 @@ fn prepareSessionRows(
     }
 
     const layer_count = prepared.tables.layers.layer_pressures_hpa.len;
+    const support_count = prepared.tables.layers.support_mid_altitudes_km.len;
     const phase_max_index = @max(prepared.tables.phase.aerosol_phase_max_index, @as(usize, 2));
     const fourier_max_index = solve_config.controls.performance_thresholds.cappedFourierMax(phase_max_index);
-    try session.transport_workers.ensureCapacity(
+    try session.transport_workers.ensureWorkerCount(allocator, 1);
+    const worker_memory = session.transport_workers.worker(0);
+    try worker_memory.ensureOpticsCapacity(allocator, support_count, layer_count);
+    try worker_memory.ensureCapacity(
         allocator,
         layer_count + 1,
         solve_config.controls.n_streams,

@@ -7,7 +7,7 @@ const phase_table = internal.setup.phase_table;
 const transport_worker_memory = internal.cache.transport_worker_memory;
 
 test "TransportWorkerMemory layout matches LABOS worker owner contract" {
-    try std.testing.expectEqual(@as(usize, 3192), @sizeOf(transport_worker_memory.TransportWorkerMemory));
+    try std.testing.expectEqual(@as(usize, 3304), @sizeOf(transport_worker_memory.TransportWorkerMemory));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(transport_worker_memory.TransportWorkerMemory));
     try std.testing.expectEqual(
         @as(usize, 0),
@@ -15,12 +15,45 @@ test "TransportWorkerMemory layout matches LABOS worker owner contract" {
     );
     try std.testing.expectEqual(
         @as(usize, 352),
+        @offsetOf(transport_worker_memory.TransportWorkerMemory, "line_sigma_cm2_per_molecule"),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 464),
         @offsetOf(transport_worker_memory.TransportWorkerMemory, "cached_geometry"),
     );
     try std.testing.expectEqual(
-        @as(usize, 3184),
+        @as(usize, 3296),
         @offsetOf(transport_worker_memory.TransportWorkerMemory, "cached_geometry_valid"),
     );
+}
+
+test "TransportWorkerMemory layout exposes worker collection shape" {
+    try std.testing.expectEqual(@as(usize, 16), @sizeOf(transport_worker_memory.TransportWorkerMemoryCollection));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(transport_worker_memory.TransportWorkerMemoryCollection));
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        @offsetOf(transport_worker_memory.TransportWorkerMemoryCollection, "workers"),
+    );
+}
+
+test "TransportWorkerMemory reserves optics scratch rows" {
+    var memory = transport_worker_memory.TransportWorkerMemory{};
+    defer memory.deinit(std.testing.allocator);
+
+    try memory.ensureOpticsCapacity(std.testing.allocator, 5, 3);
+    try std.testing.expectEqual(@as(usize, 5), memory.line_sigma_cm2_per_molecule.len);
+    try std.testing.expectEqual(@as(usize, 5), memory.support_optics.len);
+    try std.testing.expectEqual(@as(usize, 3), memory.layer_optics.len);
+    try std.testing.expectEqual(@as(usize, 4), memory.source_level_rows.len);
+    try std.testing.expectEqual(@as(usize, 5), memory.curved_samples.len);
+    try std.testing.expectEqual(@as(usize, 4), memory.curved_level_starts.len);
+    try std.testing.expectEqual(@as(usize, 4), memory.curved_level_altitudes_km.len);
+
+    const line_sigma_ptr = memory.line_sigma_cm2_per_molecule.ptr;
+    const support_ptr = memory.support_optics.ptr;
+    try memory.ensureOpticsCapacity(std.testing.allocator, 4, 2);
+    try std.testing.expectEqual(line_sigma_ptr, memory.line_sigma_cm2_per_molecule.ptr);
+    try std.testing.expectEqual(support_ptr, memory.support_optics.ptr);
 }
 
 test "TransportWorkerMemory reserves active transport prefixes without physics inputs" {
@@ -148,5 +181,5 @@ test "TransportWorkerMemory resetValidity keeps buffers and clears validity flag
 
 test "TransportWorkerMemory size is stable across build modes" {
     _ = builtin;
-    try std.testing.expectEqual(@as(usize, 3192), @sizeOf(transport_worker_memory.TransportWorkerMemory));
+    try std.testing.expectEqual(@as(usize, 3304), @sizeOf(transport_worker_memory.TransportWorkerMemory));
 }

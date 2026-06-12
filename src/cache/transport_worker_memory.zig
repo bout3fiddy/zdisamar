@@ -1,6 +1,9 @@
 const std = @import("std");
 
 const memory = @import("../common/memory.zig");
+const curved_sun_path = @import("../optics/curved_sun_path.zig");
+const layer_depths = @import("../optics/layer_depths.zig");
+const source_levels = @import("../optics/source_levels.zig");
 const attenuation = @import("../transport/attenuation.zig");
 const gauss_angles = @import("../transport/gauss_angles.zig");
 const phase_basis = @import("../transport/phase_basis.zig");
@@ -16,19 +19,19 @@ pub const Error = error{
 } || gauss_angles.Error;
 
 // transport_worker_memory.zig ------------------------------------------------------------------------------  |
-// Reusable LABOS transport buffers for one forward worker.                                                    |
+// Reusable optics and LABOS transport buffers for one forward worker.                                         |
 //                                                                                                             |
 // provenance                                                                                                  |
 //   Splits the old main:`src/forward_model/radiative_transfer/labos/workspace.zig` allocation owner into a    |
 //   named WP3 memory block. The borrowed row types come from the new `transport/*` modules.                   |
 //                                                                                                             |
 // ownership boundary                                                                                          |
-//   This owner stores arrays, geometry reuse state, and validity flags only. Optical properties, phase        |
-//   coefficients, RTM controls, source levels, and angles stay visible in transport function signatures.      |
+//   This owner stores arrays, geometry reuse state, and validity flags only. Optical-property values, phase   |
+//   coefficients, RTM controls, source-level rows, and angles stay visible in worker function signatures.     |
 //                                                                                                             |
 // hot path contract                                                                                           |
-//   Call `ensureCapacity` before per-wavelength transport solves. Accessors below borrow active prefixes and  |
-//   do not allocate.                                                                                          |
+//   Call `ensureOpticsCapacity` and `ensureCapacity` before per-wavelength solves. Accessors below borrow     |
+//   active prefixes and do not allocate.                                                                      |
 // ------------------------------------------------------------------------------------------------------------|
 
 // GeometryCacheStatus --------------------------------------------------------------------------------------- |
@@ -66,10 +69,10 @@ pub const PlmBasisCacheStatus = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // TransportWorkerMemory ------------------------------------------------------------------------------------- |
-// Allocation owner for one worker-local LABOS solve path.                                                     |
+// Allocation owner for one worker-local optics and LABOS solve path.                                          |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 3192 B (3.117 KiB), align: 8 B                                                                        |
+// size: 3304 B (3.227 KiB), align: 8 B                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
 // [   0..  15] attenuation_data                         : []f64                                               |
@@ -94,12 +97,20 @@ pub const PlmBasisCacheStatus = struct {
 // [ 304.. 319] plm_basis_cache_valid                    : []bool                                              |
 // [ 320.. 335] previous_layer_phase_signatures          : []u64                                               |
 // [ 336.. 351] previous_layer_phase_signature_valid     : []bool                                              |
-// [ 352..3183] cached_geometry                          : GaussGeometry                                       |
-// [3184..3184] cached_geometry_valid                    : bool                                                |
-// [3185..3191] trailing padding                                                                               |
+// [ 352.. 367] line_sigma_cm2_per_molecule       : []f64                                                      |
+// [ 368.. 383] support_optics                    : []SupportOptics                                            |
+// [ 384.. 399] layer_optics                      : []LayerOptics                                              |
+// [ 400.. 415] source_level_rows                 : []SourceLevel                                              |
+// [ 416.. 431] curved_samples                    : []CurvedSunPathSample                                      |
+// [ 432.. 447] curved_level_starts               : []usize                                                    |
+// [ 448.. 463] curved_level_altitudes_km         : []f64                                                      |
+// [ 464..3295] cached_geometry                   : GaussGeometry                                              |
+// [3296..3296] cached_geometry_valid             : bool                                                       |
+// [3297..3303] trailing padding                                                                               |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   Every slice owns heap storage and is released by deinit. Active prefixes are borrowed by transport code.  |
+//   Every slice owns heap storage and is released by deinit. Optics rows are borrowed by spectrum prefetch;   |
+//   active LABOS prefixes are borrowed by transport code.                                                     |
 pub const TransportWorkerMemory = struct {
     attenuation_data: []f64 = &.{},
     attenuation_tangent_data: []f64 = &.{},
@@ -123,6 +134,13 @@ pub const TransportWorkerMemory = struct {
     plm_basis_cache_valid: []bool = &.{},
     previous_layer_phase_signatures: []u64 = &.{},
     previous_layer_phase_signature_valid: []bool = &.{},
+    line_sigma_cm2_per_molecule: []f64 = &.{},
+    support_optics: []layer_depths.SupportOptics = &.{},
+    layer_optics: []layer_depths.LayerOptics = &.{},
+    source_level_rows: []source_levels.SourceLevel = &.{},
+    curved_samples: []curved_sun_path.CurvedSunPathSample = &.{},
+    curved_level_starts: []usize = &.{},
+    curved_level_altitudes_km: []f64 = &.{},
     cached_geometry: gauss_angles.GaussGeometry = undefined,
     cached_geometry_valid: bool = false,
 
@@ -152,7 +170,53 @@ pub const TransportWorkerMemory = struct {
         allocator.free(self.plm_basis_cache_valid);
         allocator.free(self.previous_layer_phase_signatures);
         allocator.free(self.previous_layer_phase_signature_valid);
+        allocator.free(self.line_sigma_cm2_per_molecule);
+        allocator.free(self.support_optics);
+        allocator.free(self.layer_optics);
+        allocator.free(self.source_level_rows);
+        allocator.free(self.curved_samples);
+        allocator.free(self.curved_level_starts);
+        allocator.free(self.curved_level_altitudes_km);
         self.* = .{};
+    }
+
+    pub fn ensureOpticsCapacity(
+        self: *TransportWorkerMemory,
+        allocator: Allocator,
+        support_count: usize,
+        layer_count: usize,
+    ) Allocator.Error!void {
+        // TransportWorkerMemory.ensureOpticsCapacity ---------------------------------------------------------|
+        // Reserve per-wavelength optics rows before a worker enters dense radiance prefetch.                  |
+        //                                                                                                     |
+        // shape                                                                                               |
+        //   support_count : layer-grid support rows, one line-sigma and support-optics row each               |
+        //   layer_count   : reduced transport layers                                                          |
+        //   level_count   : layer_count + 1 source/curved boundary rows                                       |
+        //                                                                                                     |
+        // memory                                                                                              |
+        //   The active route fills these slices repeatedly for different wavelengths. Retaining them here     |
+        //   removes root-level per-run allocation and gives later multi-worker prefetch one private row set   |
+        //   per worker.                                                                                       |
+        // ----------------------------------------------------------------------------------------------------|
+        const level_count = layer_count + 1;
+        _ = try memory.ensureSliceCapacity(f64, allocator, &self.line_sigma_cm2_per_molecule, support_count);
+        _ = try memory.ensureSliceCapacity(
+            layer_depths.SupportOptics,
+            allocator,
+            &self.support_optics,
+            support_count,
+        );
+        _ = try memory.ensureSliceCapacity(layer_depths.LayerOptics, allocator, &self.layer_optics, layer_count);
+        _ = try memory.ensureSliceCapacity(source_levels.SourceLevel, allocator, &self.source_level_rows, level_count);
+        _ = try memory.ensureSliceCapacity(
+            curved_sun_path.CurvedSunPathSample,
+            allocator,
+            &self.curved_samples,
+            support_count,
+        );
+        _ = try memory.ensureSliceCapacity(usize, allocator, &self.curved_level_starts, level_count);
+        _ = try memory.ensureSliceCapacity(f64, allocator, &self.curved_level_altitudes_km, level_count);
     }
 
     pub fn ensureCapacity(
@@ -496,8 +560,65 @@ pub const TransportWorkerMemory = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
+// TransportWorkerMemoryCollection ----------------------------------------------------------------------------|
+// Retained worker-indexed memory array for the session prefetch worker set.                                   |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] workers : []TransportWorkerMemory                                                                  |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   workers owns one TransportWorkerMemory per possible worker index. Child heap buffers move with the value  |
+//   when the worker slice grows; only the outer slice is reallocated.                                         |
+pub const TransportWorkerMemoryCollection = struct {
+    workers: []TransportWorkerMemory = &.{},
+
+    pub fn deinit(self: *TransportWorkerMemoryCollection, allocator: Allocator) void {
+        // TransportWorkerMemoryCollection.deinit -------------------------------------------------------------|
+        // Release every worker-local owner, then release the outer worker slice.                              |
+        // ----------------------------------------------------------------------------------------------------|
+        for (self.workers) |*worker_memory| worker_memory.deinit(allocator);
+        allocator.free(self.workers);
+        self.* = .{};
+    }
+
+    pub fn ensureWorkerCount(
+        self: *TransportWorkerMemoryCollection,
+        allocator: Allocator,
+        worker_count: usize,
+    ) Allocator.Error!void {
+        // TransportWorkerMemoryCollection.ensureWorkerCount --------------------------------------------------|
+        // Grow the worker array while preserving each worker's retained child buffers.                        |
+        //                                                                                                     |
+        // memory                                                                                              |
+        //   TransportWorkerMemory is moved by value. Its slices still point at owned child allocations, so    |
+        //   the old outer slice is freed without deinitializing the moved workers.                            |
+        // ----------------------------------------------------------------------------------------------------|
+        if (self.workers.len >= worker_count) return;
+
+        const old_workers = self.workers;
+        const new_workers = try allocator.alloc(TransportWorkerMemory, worker_count);
+        for (new_workers) |*worker_memory| worker_memory.* = .{};
+        @memcpy(new_workers[0..old_workers.len], old_workers);
+        allocator.free(old_workers);
+        self.workers = new_workers;
+    }
+
+    pub fn worker(self: *TransportWorkerMemoryCollection, worker_index: usize) *TransportWorkerMemory {
+        // TransportWorkerMemoryCollection.worker -------------------------------------------------------------|
+        // Borrow the stable memory owner paired with one worker index.                                        |
+        // ----------------------------------------------------------------------------------------------------|
+        std.debug.assert(worker_index < self.workers.len);
+        return &self.workers[worker_index];
+    }
+};
+// ------------------------------------------------------------------------------------------------------------|
+
 comptime {
     std.debug.assert(@sizeOf(GeometryCacheStatus) == 16);
     std.debug.assert(@sizeOf(PlmBasisCacheStatus) == 16);
-    std.debug.assert(@sizeOf(TransportWorkerMemory) == 3192);
+    std.debug.assert(@sizeOf(TransportWorkerMemory) == 3304);
+    std.debug.assert(@sizeOf(TransportWorkerMemoryCollection) == 16);
 }

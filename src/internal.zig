@@ -112,6 +112,7 @@ pub const setup = struct {
 //                                                                                                             |
 // footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
 pub const cache = struct {
+    pub const forward_worker_pool = @import("cache/forward_worker_pool.zig");
     pub const o2_session_memory = @import("cache/o2_session_memory.zig");
     pub const profile_line_memory = @import("cache/profile_line_memory.zig");
     pub const radiance_memory = @import("cache/radiance_memory.zig");

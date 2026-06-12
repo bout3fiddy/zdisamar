@@ -13,6 +13,7 @@ test {
     _ = @import("common/math/spline_test.zig");
     _ = @import("setup/o2_run_tables_test.zig");
     _ = @import("setup/phase_table_test.zig");
+    _ = @import("cache/forward_worker_pool_test.zig");
     _ = @import("cache/o2_session_memory_test.zig");
     _ = @import("cache/profile_line_memory_test.zig");
     _ = @import("cache/radiance_memory_test.zig");
