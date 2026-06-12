@@ -94,19 +94,6 @@ pub const ReflectanceAssemblySummary = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn shiftedWavelength(calibration: Calibration, wavelength_nm: f64) f64 {
-    // shiftedWavelength ------------------------------------------------------------------------------------- |
-    // Apply the channel wavelength shift used before instrument integration kernels are built.                |
-    //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/forward_model/instrument_grid/spectral_math/calibration.zig` `shiftedWavelength`.     |
-    //                                                                                                         |
-    // math                                                                                                    |
-    //   lambda_shifted = lambda + wavelength_shift_nm                                                         |
-    // --------------------------------------------------------------------------------------------------------|
-    return wavelength_nm + calibration.wavelength_shift_nm;
-}
-
 pub fn applySignal(calibration: Calibration, signal: []const f64, output: []f64) Error!void {
     // applySignal ------------------------------------------------------------------------------------------- |
     // Apply gain, offset, and stray-light mixing to one sampled channel.                                      |

@@ -103,67 +103,6 @@ pub const OrdersWorkArrays = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn solveOrders(
-    work: *OrdersWorkArrays,
-    start_level: usize,
-    end_level: usize,
-    geometry: *const gauss_angles.GaussGeometry,
-    attenuation: anytype,
-    rt: []const rows.LayerRT,
-    transport_controls: controls.TransportControls,
-    num_orders_max: usize,
-) OrdersView {
-    // solveOrders ------------------------------------------------------------------------------------------- |
-    // Build transported LABOS scattering-order fields using a caller-owned workspace.                         |
-    //                                                                                                         |
-    // used by                                                                                                 |
-    //   Later `solveReflectance` orchestration calls this after layer RT rows and attenuation are ready.      |
-    // --------------------------------------------------------------------------------------------------------|
-    const result = solveOrdersInternal(
-        false,
-        false,
-        work,
-        start_level,
-        end_level,
-        geometry,
-        attenuation,
-        rt,
-        transport_controls,
-        num_orders_max,
-    );
-    return .{
-        .ud = result.ud,
-        .ud_sum_local = &.{},
-    };
-}
-
-pub fn solveOrdersWithLocalSum(
-    work: *OrdersWorkArrays,
-    start_level: usize,
-    end_level: usize,
-    geometry: *const gauss_angles.GaussGeometry,
-    attenuation: anytype,
-    rt: []const rows.LayerRT,
-    transport_controls: controls.TransportControls,
-    num_orders_max: usize,
-) OrdersView {
-    // solveOrdersWithLocalSum ------------------------------------------------------------------------------- |
-    // Build transported order fields and local-source sums for integrated-source Jacobian weighting.          |
-    // --------------------------------------------------------------------------------------------------------|
-    return solveOrdersInternal(
-        true,
-        false,
-        work,
-        start_level,
-        end_level,
-        geometry,
-        attenuation,
-        rt,
-        transport_controls,
-        num_orders_max,
-    );
-}
-
 pub fn solveOrdersWithActive(
     work: *OrdersWorkArrays,
     start_level: usize,
@@ -1458,39 +1397,6 @@ fn zeroQuad(
         c[stream_index] = 0.0;
         d[stream_index] = 0.0;
     }
-}
-
-pub fn dotGauss(
-    matrix: *const rows.Mat,
-    row: usize,
-    vector: *const rows.Vec,
-    gaussian_count: usize,
-) f64 {
-    // dotGauss ---------------------------------------------------------------------------------------------- |
-    // Dot one RT matrix row with one Gaussian-stream vector.                                                  |
-    // --------------------------------------------------------------------------------------------------------|
-    const row_offset = row * matrix.n;
-    if (gaussian_count == rows.max_gauss) {
-        const data = matrix.data[row_offset..];
-        const vec_data = vector.data;
-        var sum = data[0] * vec_data[0];
-        sum += data[1] * vec_data[1];
-        sum += data[2] * vec_data[2];
-        sum += data[3] * vec_data[3];
-        sum += data[4] * vec_data[4];
-        sum += data[5] * vec_data[5];
-        sum += data[6] * vec_data[6];
-        sum += data[7] * vec_data[7];
-        sum += data[8] * vec_data[8];
-        sum += data[9] * vec_data[9];
-        return sum;
-    }
-
-    var sum: f64 = 0.0;
-    for (0..gaussian_count) |col| {
-        sum += matrix.data[row_offset + col] * vector.data[col];
-    }
-    return sum;
 }
 
 // DotPair ----------------------------------------------------------------------------------------------------|

@@ -94,42 +94,55 @@ test "minus parity sign follows old coefficient parity" {
 
 test "phase kernel matches scalar m0 outer products" {
     const geometry = try gauss_angles.GaussGeometry.init(4, 0.58, 0.64);
-    const basis = phase_basis.FourierPlmBasis.init(0, 0, &geometry);
+    const basis = phase_basis.FourierPlmBasis.init(0, 2, &geometry);
     var coefficients = phase_table.zeroPhaseCoefficients();
     coefficients[2] = 0.37;
 
-    const kernel = phase_basis.fillZplusZminFromBasisLimited(0, &coefficients, 2, &geometry, &basis);
-
     for (0..geometry.stream_count) |row| {
+        const kernel_row = phase_basis.fillZplusZminRowFromBasisLimited(0, &coefficients, 2, &geometry, &basis, row);
         for (0..geometry.stream_count) |col| {
             const expected = scalarM0Coefficient(0, geometry.u[row], geometry.w[row]) *
                 scalarM0Coefficient(0, geometry.u[col], geometry.w[col]) +
                 coefficients[2] *
                     scalarM0Coefficient(2, geometry.u[row], geometry.w[row]) *
                     scalarM0Coefficient(2, geometry.u[col], geometry.w[col]);
-            const index = row * geometry.stream_count + col;
-            try std.testing.expectApproxEqAbs(expected, kernel.zplus.data[index], 1.0e-15);
-            try std.testing.expectApproxEqAbs(expected, kernel.zmin.data[index], 1.0e-15);
+            try std.testing.expectApproxEqAbs(expected, kernel_row.zplus[col], 1.0e-15);
+            try std.testing.expectApproxEqAbs(expected, kernel_row.zmin[col], 1.0e-15);
         }
     }
 }
 
-test "phase kernel row matches full matrix row" {
+test "phase kernel row matches scalar m1 outer products" {
     const geometry = try gauss_angles.GaussGeometry.init(4, 0.58, 0.64);
-    const basis = phase_basis.FourierPlmBasis.init(1, 3, &geometry);
+    const fourier_index: usize = 1;
+    const basis = phase_basis.FourierPlmBasis.init(fourier_index, 3, &geometry);
     var coefficients = phase_table.zeroPhaseCoefficients();
     coefficients[1] = 0.42;
-    coefficients[3] = -0.13;
+    coefficients[2] = -0.13;
     const row_index: usize = 3;
 
-    const kernel = phase_basis.fillZplusZminFromBasisLimited(1, &coefficients, 3, &geometry, &basis);
-    const row = phase_basis.fillZplusZminRowFromBasisLimited(1, &coefficients, 3, &geometry, &basis, row_index);
+    const row = phase_basis.fillZplusZminRowFromBasisLimited(
+        fourier_index,
+        &coefficients,
+        2,
+        &geometry,
+        &basis,
+        row_index,
+    );
 
     try std.testing.expectEqual(geometry.stream_count, row.n);
     for (0..geometry.stream_count) |col| {
-        const index = row_index * geometry.stream_count + col;
-        try std.testing.expectApproxEqAbs(kernel.zplus.data[index], row.zplus[col], 1.0e-15);
-        try std.testing.expectApproxEqAbs(kernel.zmin.data[index], row.zmin[col], 1.0e-15);
+        var expected_zplus: f64 = 0.0;
+        var expected_zmin: f64 = 0.0;
+        for (fourier_index..3) |phase_index| {
+            const term = coefficients[phase_index] *
+                basis.plus[phase_index][row_index] *
+                basis.plus[phase_index][col];
+            expected_zplus += term;
+            expected_zmin += phase_basis.minusParitySign(fourier_index, phase_index) * term;
+        }
+        try std.testing.expectApproxEqAbs(expected_zplus, row.zplus[col], 1.0e-15);
+        try std.testing.expectApproxEqAbs(expected_zmin, row.zmin[col], 1.0e-15);
     }
 }
 

@@ -35,7 +35,8 @@ test "single-scattering orders match scalar first-order reference" {
         geometry.stream_count,
     );
 
-    const result = scattering_orders.solveOrders(
+    installActiveMask(&work, scalarActiveMask(&rt, level_count, geometry.stream_count), level_count);
+    const result = scattering_orders.solveOrdersWithActive(
         &work,
         0,
         level_count - 1,
@@ -78,7 +79,8 @@ test "multiple-scattering orders add accepted second order and keep local sums" 
         .threshold_conv_mult = 0.0,
     };
 
-    const result = scattering_orders.solveOrdersWithLocalSum(
+    installActiveMask(&work, scalarActiveMask(&rt, level_count, geometry.stream_count), level_count);
+    const result = scattering_orders.solveOrdersWithActiveLocalSum(
         &work,
         0,
         level_count - 1,
@@ -865,6 +867,17 @@ fn scalarActiveMask(
         active[level] = found;
     }
     return active;
+}
+
+fn installActiveMask(
+    work: *scattering_orders.OrdersWorkArrays,
+    active: [3]bool,
+    level_count: usize,
+) void {
+    // installActiveMask ------------------------------------------------------------------------------------- |
+    // Copy scalar oracle active-layer decisions into the production order workspace.                          |
+    // --------------------------------------------------------------------------------------------------------|
+    for (0..level_count) |level| work.rt_active[level] = active[level];
 }
 
 fn expectFieldSlicesClose(

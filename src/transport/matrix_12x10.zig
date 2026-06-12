@@ -47,6 +47,7 @@ const lu_diagonal_floor: f64 = 1.0e-30;
 pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
     // smul (small matrix multiply with trace gate) ---------------------------------------------------------- |
     // Multiply two LABOS small dense matrices over the Gaussian directions.                                   |
+    // Reference form; production uses fused `*Into` variants, tests assert equality.                          |
     //                                                                                                         |
     //   C[i,j] = sum k=0..n_gauss-1 A[i,k] * B[k,j]                                                           |
     //                                                                                                         |
@@ -273,6 +274,7 @@ pub fn qseries(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *
     // qseries (thresholded product, then q-series transform) ------------------------------------------------ |
     // Build AB with the same trace-gated small matrix multiply as smul, then convert AB into the LABOS        |
     // q-series matrix.                                                                                        |
+    // Reference form; production uses fused `*Into` variants, tests assert equality.                          |
     //                                                                                                         |
     //   AB = A * B over Gaussian k                                                                            |
     //   out = Q(AB)                                                                                           |
@@ -323,6 +325,7 @@ pub inline fn qseriesKnownNonzeroProductInto(
 pub fn esmul(n: usize, e: *const Vec, a: *const Mat) Mat {
     // esmul (left diagonal scale: diag(e) * A) -------------------------------------------------------------- |
     // Scale each row by e[i].                                                                                 |
+    // Reference form; production uses fused `*Into` variants, tests assert equality.                          |
     //                                                                                                         |
     //   C[i,j] = e[i] * A[i,j]                                                                                |
     //                                                                                                         |
@@ -346,6 +349,7 @@ pub fn esmul(n: usize, e: *const Vec, a: *const Mat) Mat {
 pub fn semul(n: usize, a: *const Mat, e: *const Vec) Mat {
     // semul (right diagonal scale: A * diag(e)) ------------------------------------------------------------- |
     // Scale each column by e[j].                                                                              |
+    // Reference form; production uses fused `*Into` variants, tests assert equality.                          |
     //                                                                                                         |
     //   C[i,j] = A[i,j] * e[j]                                                                                |
     //                                                                                                         |
@@ -370,6 +374,7 @@ pub fn semul(n: usize, a: *const Mat, e: *const Vec) Mat {
 pub fn matAdd(n: usize, a: *const Mat, b: *const Mat) Mat {
     // matAdd (elementwise matrix add) ----------------------------------------------------------------------- |
     // Add two row-major Mat values element by element.                                                        |
+    // Reference form; production uses fused `*Into` variants, tests assert equality.                          |
     //                                                                                                         |
     //   C[i,j] = A[i,j] + B[i,j]                                                                              |
     // --------------------------------------------------------------------------------------------------------|

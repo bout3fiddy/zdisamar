@@ -274,47 +274,6 @@ fn computePlm(
     return .{ .plus = plm_plus };
 }
 
-pub fn fillZplusZminFromBasisLimited(
-    fourier_index: usize,
-    phase_coefficients: *const [phase_table.coefficient_count]f64,
-    max_phase_index: usize,
-    geometry: *const gauss_angles.GaussGeometry,
-    plm_basis: *const FourierPlmBasis,
-) PhaseKernel {
-    // fillZplusZminFromBasisLimited ------------------------------------------------------------------------- |
-    // Build dense Z+ and Z- phase matrices from phase coefficients and one Fourier PLM basis.                 |
-    //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports old `phase_basis.zig` `fillZplusZminFromBasisLimited`.                                          |
-    //                                                                                                         |
-    // math                                                                                                    |
-    //   Zplus(i,j) += beta_l * P_l^m(mu_i) * P_l^m(mu_j)                                                      |
-    //   Zmin(i,j)  += (-1)^(l-m) * beta_l * P_l^m(mu_i) * P_l^m(mu_j)                                         |
-    //                                                                                                         |
-    //   FourierPlmBasis stores P_l^m(mu_i) * w_i, so this builder reuses the old weighted outer product.      |
-    // --------------------------------------------------------------------------------------------------------|
-    if (geometry.stream_count == rows.max_stream_count) {
-        return fillZplusZminFromBasisLimited12(
-            fourier_index,
-            phase_coefficients,
-            max_phase_index,
-            geometry,
-            plm_basis,
-        );
-    }
-
-    return fillZplusZminGeneric(
-        fourier_index,
-        phase_coefficients,
-        max_phase_index,
-        geometry,
-        plm_basis,
-        false,
-        0.0,
-        0.0,
-    );
-}
-
 pub fn fillZplusZminFromWeightedPhaseLimited(
     fourier_index: usize,
     aerosol_weight: f64,
@@ -597,28 +556,6 @@ inline fn choosePlusBasis(
         return .{ .plus = plm_basis.plus[phase_index] };
     }
     return computePlm(fourier_index, phase_index, geometry);
-}
-
-fn fillZplusZminFromBasisLimited12(
-    fourier_index: usize,
-    phase_coefficients: *const [phase_table.coefficient_count]f64,
-    max_phase_index: usize,
-    geometry: *const gauss_angles.GaussGeometry,
-    plm_basis: *const FourierPlmBasis,
-) PhaseKernel {
-    // fillZplusZminFromBasisLimited12 ----------------------------------------------------------------------- |
-    // Fixed 12-stream full-matrix builder for one layer and one Fourier term.                                 |
-    // --------------------------------------------------------------------------------------------------------|
-    return fillZplusZmin12(
-        fourier_index,
-        phase_coefficients,
-        max_phase_index,
-        geometry,
-        plm_basis,
-        false,
-        0.0,
-        0.0,
-    );
 }
 
 fn fillZplusZminFromWeightedPhaseLimited12(

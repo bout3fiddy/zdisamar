@@ -3,7 +3,6 @@ const std = @import("std");
 const errors = @import("../common/errors.zig");
 const gauss_legendre = @import("../common/math/gauss_legendre.zig");
 const o2_case = @import("../input/o2_case.zig");
-const telemetry = @import("../instrumentation/telemetry.zig");
 const instrument_tables = @import("../setup/instrument_tables.zig");
 const line_tables = @import("../setup/line_tables.zig");
 
@@ -1073,28 +1072,6 @@ fn lessThanF64(_: void, lhs: f64, rhs: f64) bool {
     // Sort helper for f64 support lists; all callers filter non-finite values before sorting.                 |
     // --------------------------------------------------------------------------------------------------------|
     return lhs < rhs;
-}
-
-pub fn recordSamplingTable(table: SpectrumSamplingTable) void {
-    // recordSamplingTable ----------------------------------------------------------------------------------- |
-    // Emit the old wavelength-sampling telemetry row when telemetry is compiled in.                           |
-    // --------------------------------------------------------------------------------------------------------|
-    const summary = summarize(table);
-
-    // instrumentation: calculation telemetry: spectrum sampling table --------------------------------------- |
-    // captures: row count, integrated rows, sample counts, side samples                                       |
-    // why: preserves old wavelength_sampling.wavelengthSamplingPlan telemetry at the new spectrum boundary.   |
-    telemetry.wavelengthSamplingPlan(
-        summary.row_count,
-        summary.radiance_integrated_rows,
-        summary.irradiance_integrated_rows,
-        summary.radiance_sample_count,
-        summary.irradiance_sample_count,
-        summary.side_sample_count,
-        summary.max_kernel_sample_count,
-    );
-    // end instrumentation: calculation telemetry: spectrum sampling table ----------------------------------- |
-
 }
 
 comptime {
