@@ -161,6 +161,7 @@ pub const transport = struct {
     pub const reflectance = @import("transport/reflectance.zig");
     pub const rows = @import("transport/rows.zig");
     pub const scattering_orders = @import("transport/scattering_orders.zig");
+    pub const solve = @import("transport/solve.zig");
 };
 // ------------------------------------------------------------------------------------------------------------|
 

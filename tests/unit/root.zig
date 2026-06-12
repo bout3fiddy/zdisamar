@@ -31,6 +31,7 @@ test {
     _ = @import("transport/reflectance_test.zig");
     _ = @import("transport/rows_test.zig");
     _ = @import("transport/scattering_orders_test.zig");
+    _ = @import("transport/solve_test.zig");
     _ = @import("spectrum/instrument_average_test.zig");
     _ = @import("spectrum/radiance_results_test.zig");
     _ = @import("spectrum/radiance_wavelengths_test.zig");
