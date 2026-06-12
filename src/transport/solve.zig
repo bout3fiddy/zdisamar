@@ -83,24 +83,30 @@ pub const ReflectanceResult = struct {
 // Borrowed transport scratch passed to solveReflectance.                                                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// normal build: size 264 B (0.258 KiB), align 8                                                               |
-// trace build : size 272 B (0.266 KiB), align 8                                                               |
+// normal build: size 360 B (0.352 KiB), align 8                                                               |
+// trace build : size 368 B (0.359 KiB), align 8                                                               |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0..  7] geometry                     : *GaussGeometry                                                    |
 // [  8.. 23] dynamic_attenuation_data     : []f64                                                             |
 // [ 24.. 39] dynamic_attenuation_tangent_data: []f64                                                          |
 // [ 40.. 55] layer_transmittance          : []f64                                                             |
-// [ 56.. 71] rt_layers                    : []LayerRT                                                         |
-// [ 72.. 87] rt_layers_tangent            : []LayerRT                                                         |
-// [ 88..103] layer_phase_max_indices      : []usize                                                           |
-// [104..119] effective_scattering_suffixes: []f64                                                             |
-// [120..231] normal build: orders         : OrdersWorkArrays                                                  |
-// [232..247] normal build: plm_basis_cache: []FourierPlmBasis                                                 |
-// [248..263] normal build: valid flags    : []bool                                                            |
-// [232..239] trace build only: orders extra trace field                                                       |
-// [240..255] trace build : plm_basis_cache: []FourierPlmBasis                                                 |
-// [256..271] trace build : valid flags    : []bool                                                            |
+// [ 56.. 71] top_to_level_attenuation     : []f64                                                             |
+// [ 72.. 87] rt_layers                    : []LayerRT                                                         |
+// [ 88..103] rt_layers_tangent            : []LayerRT                                                         |
+// [104..119] layer_phase_max_indices      : []usize                                                           |
+// [120..135] effective_scattering_suffixes: []f64                                                             |
+// [136..151] source_phase_max_indices     : []usize                                                           |
+// [152..167] phase_row_cache              : []PhaseKernelRow                                                  |
+// [168..183] phase_row_valid              : []bool                                                            |
+// [184..199] curved_level_starts          : []const usize                                                     |
+// [200..215] curved_level_altitudes_km    : []const f64                                                       |
+// [216..327] normal build: orders         : OrdersWorkArrays                                                  |
+// [328..343] normal build: plm_basis_cache: []FourierPlmBasis                                                 |
+// [344..359] normal build: valid flags    : []bool                                                            |
+// [328..335] trace build only: orders extra trace field                                                       |
+// [336..351] trace build : plm_basis_cache: []FourierPlmBasis                                                 |
+// [352..367] trace build : valid flags    : []bool                                                            |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Every slice borrows caller-owned memory, normally from TransportWorkerMemory.                             |
@@ -110,10 +116,16 @@ pub const TransportWorkArrays = struct {
     dynamic_attenuation_data: []f64,
     dynamic_attenuation_tangent_data: []f64,
     layer_transmittance: []f64,
+    top_to_level_attenuation: []f64,
     rt_layers: []rows.LayerRT,
     rt_layers_tangent: []rows.LayerRT,
     layer_phase_max_indices: []usize,
     effective_scattering_suffixes: []f64,
+    source_phase_max_indices: []usize,
+    phase_row_cache: []phase_basis.PhaseKernelRow,
+    phase_row_valid: []bool,
+    curved_level_starts: []const usize,
+    curved_level_altitudes_km: []const f64,
     orders: scattering_orders.OrdersWorkArrays,
     plm_basis_cache: []phase_basis.FourierPlmBasis,
     plm_basis_cache_valid: []bool,
@@ -140,11 +152,9 @@ pub fn solveReflectance(
     //   reflectance = surface_albedo * direct path                                                            |
     //                                                                                                         |
     // unsupported routes                                                                                      |
-    //   Integrated-source rows, spherical correction, and aerosol Jacobian propagation are rejected until     |
-    //   their matching old routes are fully ported.                                                           |
+    //   Integrated-source aerosol and pressure Jacobian lanes are rejected until their old weighting routes   |
+    //   are fully ported.                                                                                     |
     // --------------------------------------------------------------------------------------------------------|
-    _ = curved_samples;
-
     const config = try controls.prepareSolveConfig(prepared_config);
     if (config.controls.scattering == .none) {
         if (config.controls.use_spherical_correction) return error.UnsupportedRadiativeTransferControls;
@@ -157,24 +167,41 @@ pub fn solveReflectance(
         );
     }
 
-    if (config.controls.integrate_source_function or level_sources.len != 0) {
-        return error.UnsupportedRadiativeTransferControls;
-    }
-
-    if (config.controls.use_spherical_correction) return error.UnsupportedRadiativeTransferControls;
-
     if (config.derivative_mode != .none and
         jacobian_states.includes(config.derivative_state_mask, .aerosol_layer_mid_pressure_hpa))
     {
         return error.UnsupportedDerivativeMode;
     }
 
-    return solveNonIntegratedScattering(
+    const wants_aerosol_optical_depth =
+        config.derivative_mode != .none and
+        jacobian_states.includes(config.derivative_state_mask, .aerosol_optical_depth);
+    const use_integrated_source =
+        config.controls.integrate_source_function and
+        layers.len > 1 and
+        level_sources.len == layers.len + 1;
+    if (config.controls.integrate_source_function and !use_integrated_source) {
+        return error.UnsupportedRadiativeTransferControls;
+    }
+    if (use_integrated_source and wants_aerosol_optical_depth) {
+        return error.UnsupportedDerivativeMode;
+    }
+
+    const curved_grid = attenuation.CurvedSunPathGrid{
+        .samples = curved_samples,
+        .level_sample_starts = work.curved_level_starts,
+        .level_altitudes_km = work.curved_level_altitudes_km,
+    };
+
+    return solveLayerResolvedScattering(
         angles,
         surface_albedo,
         layers,
         phase,
         rayleigh_phase_coefficient2,
+        level_sources,
+        curved_grid,
+        use_integrated_source,
         config,
         work,
     );
@@ -226,27 +253,31 @@ fn totalLayerOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {
     return total;
 }
 
-fn solveNonIntegratedScattering(
+fn solveLayerResolvedScattering(
     angles: ViewAngles,
     surface_albedo: f64,
     layers: []const layer_depths.LayerOptics,
     phase: phase_table.PhaseTable,
     rayleigh_phase_coefficient2: f64,
+    level_sources: []const source_levels.SourceLevel,
+    curved_grid: attenuation.CurvedSunPathGrid,
+    use_integrated_source: bool,
     config: controls.SolveConfig,
     work: *TransportWorkArrays,
 ) Error!ReflectanceResult {
-    // solveNonIntegratedScattering ------------------------------------------------------------------------   |
-    // Run the old non-integrated LABOS Fourier route with caller-owned storage.                               |
+    // solveLayerResolvedScattering -----------------------------------------------------------------------    |
+    // Run the old layer-resolved LABOS Fourier route with caller-owned storage.                               |
     //                                                                                                         |
     // steps                                                                                                   |
     //   1. build direction geometry and direct-beam attenuation                                               |
     //   2. prepare per-layer phase limits and layer-doubling suffix rows                                      |
     //   3. loop retained Fourier terms: PLM basis -> RT layers -> scattering orders -> rho_m                  |
-    //   4. add Fourier-weighted rho_m and requested non-integrated tangents                                   |
+    //   4. add Fourier-weighted rho_m and requested supported tangents                                        |
     //   5. stop at the old Fourier tail gate and clamp the public reflectance                                 |
     //                                                                                                         |
     // unsupported here                                                                                        |
-    //   Integrated source and pressure derivatives are separate old routes and stay rejected by the caller.   |
+    //   Integrated-source aerosol/pressure derivatives are separate old weighting routes and stay rejected    |
+    //   by the caller.                                                                                        |
     // --------------------------------------------------------------------------------------------------------|
     if (layers.len == 0) return .{ .reflectance = 0.0 };
 
@@ -260,6 +291,8 @@ fn solveNonIntegratedScattering(
     if (work.rt_layers.len < level_count or
         work.rt_layers_tangent.len < level_count or
         work.layer_phase_max_indices.len < layer_count or
+        work.phase_row_cache.len < level_count or
+        work.phase_row_valid.len < level_count or
         work.orders.ud.len < level_count or
         work.orders.ud_orde.len < level_count or
         work.orders.ud_local.len < level_count or
@@ -270,14 +303,27 @@ fn solveNonIntegratedScattering(
         return error.InvalidShape;
     }
 
-    const dynamic_attenuation = try attenuation.fillDynamicWithLayerCache(
-        work.dynamic_attenuation_data,
-        work.layer_transmittance,
-        layers,
-        .{},
-        geometry,
-        false,
-    );
+    var dynamic_attenuation: ?attenuation.DynamicAttenuation = null;
+    var runtime_attenuation: ?attenuation.RuntimeAttenuation = null;
+    if (use_integrated_source) {
+        runtime_attenuation = try attenuation.fillRuntimeInBuffers(
+            work.layer_transmittance,
+            work.top_to_level_attenuation,
+            layers,
+            curved_grid,
+            geometry,
+            config.controls.use_spherical_correction,
+        );
+    } else {
+        dynamic_attenuation = try attenuation.fillDynamicWithLayerCache(
+            work.dynamic_attenuation_data,
+            work.layer_transmittance,
+            layers,
+            curved_grid,
+            geometry,
+            config.controls.use_spherical_correction,
+        );
+    }
 
     const layer_phase_max_indices = work.layer_phase_max_indices[0..layer_count];
     layer_reflect_transmit.fillLayerPhaseMaxIndices(
@@ -310,6 +356,8 @@ fn solveNonIntegratedScattering(
     const wants_aerosol_optical_depth =
         config.derivative_mode != .none and
         jacobian_states.includes(config.derivative_state_mask, .aerosol_optical_depth);
+    const layer_phase_row_cache = work.phase_row_cache[0..level_count];
+    const layer_phase_row_valid = work.phase_row_valid[0..level_count];
 
     var result_reflectance: f64 = 0.0;
     var surface_albedo_tangent: f64 = 0.0;
@@ -335,25 +383,59 @@ fn solveNonIntegratedScattering(
             layer_phase_max_indices,
             effective_scattering_suffixes,
             phase_suffix_stride,
-            null,
-            null,
+            if (use_integrated_source) layer_phase_row_cache else null,
+            if (use_integrated_source) layer_phase_row_valid else null,
             work.orders.rt_active,
             null,
         );
         rt_layers[0] = layer_reflect_transmit.fillSurface(fourier_index, surface_albedo, geometry);
         work.orders.rt_active[0] = fourier_index == 0 and surface_albedo != 0.0;
 
-        const orders_view = scattering_orders.solveOrdersWithActive(
-            &work.orders,
-            0,
-            layer_count,
-            geometry,
-            dynamic_attenuation,
-            rt_layers,
-            config.controls,
-            order_count,
-        );
-        const rho_m = reflectance_helpers.topReflectanceCoefficient(orders_view.ud, layer_count, geometry);
+        const orders_view = choose_orders_view: {
+            if (use_integrated_source) {
+                break :choose_orders_view scattering_orders.solveOrdersWithActive(
+                    &work.orders,
+                    0,
+                    layer_count,
+                    geometry,
+                    runtime_attenuation.?,
+                    rt_layers,
+                    config.controls,
+                    order_count,
+                );
+            }
+
+            break :choose_orders_view scattering_orders.solveOrdersWithActive(
+                &work.orders,
+                0,
+                layer_count,
+                geometry,
+                dynamic_attenuation.?,
+                rt_layers,
+                config.controls,
+                order_count,
+            );
+        };
+        const rho_m = choose_reflectance_coefficient: {
+            if (use_integrated_source) {
+                break :choose_reflectance_coefficient reflectance_helpers.integratedSourceCoefficient(
+                    layers,
+                    level_sources,
+                    orders_view.ud,
+                    layer_count,
+                    fourier_index,
+                    geometry,
+                    plm_basis,
+                    phase,
+                );
+            }
+
+            break :choose_reflectance_coefficient reflectance_helpers.topReflectanceCoefficient(
+                orders_view.ud,
+                layer_count,
+                geometry,
+            );
+        };
         const contribution = reflectance_helpers.weightedFourierContribution(
             fourier_index,
             angles.relative_azimuth_rad,
@@ -389,7 +471,7 @@ fn solveNonIntegratedScattering(
                 0,
                 layer_count,
                 geometry,
-                dynamic_attenuation,
+                dynamic_attenuation.?,
                 tangent_attenuation,
                 rt_layers,
                 rt_layers_tangent,
@@ -473,7 +555,7 @@ fn totalScatteringOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {
 }
 
 comptime {
-    const expected_work_size: usize = if (@sizeOf(scattering_orders.OrdersWorkArrays) == 120) 272 else 264;
+    const expected_work_size: usize = if (@sizeOf(scattering_orders.OrdersWorkArrays) == 120) 368 else 360;
     std.debug.assert(@sizeOf(ViewAngles) == 24);
     std.debug.assert(@sizeOf(ReflectanceResult) == 32);
     std.debug.assert(@sizeOf(TransportWorkArrays) == expected_work_size);

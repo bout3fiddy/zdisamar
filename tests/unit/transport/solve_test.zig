@@ -136,6 +136,48 @@ test "non-integrated scattering route runs Fourier surface term without allocati
     try std.testing.expect(result.jacobian[jacobian_states.stateIndex(.surface_albedo)] > 0.0);
 }
 
+test "integrated scattering route accepts source rows and pseudo-spherical metadata" {
+    var storage = TestSolveWorkStorage{};
+    var work = storage.work();
+    const curved_starts = [_]usize{ 0, 0, 0 };
+    const curved_altitudes = [_]f64{ 10.0, 5.0, 0.0 };
+    work.curved_level_starts = curved_starts[0..];
+    work.curved_level_altitudes_km = curved_altitudes[0..];
+
+    const layers = [_]layer_depths.LayerOptics{
+        .{},
+        .{},
+    };
+    const levels = [_]internal.optics.source_levels.SourceLevel{
+        .{},
+        .{},
+        .{},
+    };
+    const result = try solve.solveReflectance(
+        .{ .solar_mu = 0.58, .view_mu = 0.64 },
+        0.3,
+        &layers,
+        &levels,
+        &.{},
+        testPhase(),
+        0.5,
+        .{
+            .derivative_mode = .semi_analytical,
+            .derivative_state_mask = jacobian_states.stateMask(.surface_albedo),
+            .controls = .{
+                .scattering = .single,
+                .n_streams = 8,
+                .integrate_source_function = true,
+                .use_spherical_correction = true,
+            },
+        },
+        &work,
+    );
+
+    try std.testing.expectApproxEqAbs(0.3, result.reflectance, 1.0e-14);
+    try std.testing.expect(result.jacobian[jacobian_states.stateIndex(.surface_albedo)] > 0.0);
+}
+
 test "scattering route propagates AOD tangent and rejects pressure lane" {
     var storage = TestSolveWorkStorage{};
     var work = storage.work();
@@ -231,7 +273,7 @@ test "scattering route propagates AOD tangent and rejects pressure lane" {
 
 test "solve route rows keep explicit layout" {
     const expected_work_size: usize =
-        if (@sizeOf(internal.transport.scattering_orders.OrdersWorkArrays) == 120) 272 else 264;
+        if (@sizeOf(internal.transport.scattering_orders.OrdersWorkArrays) == 120) 368 else 360;
 
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(solve.ViewAngles));
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(solve.ReflectanceResult));
@@ -245,7 +287,7 @@ test "solve route rows keep explicit layout" {
         @as(usize, 24),
         @offsetOf(solve.TransportWorkArrays, "dynamic_attenuation_tangent_data"),
     );
-    try std.testing.expectEqual(@as(usize, 120), @offsetOf(solve.TransportWorkArrays, "orders"));
+    try std.testing.expectEqual(@as(usize, 216), @offsetOf(solve.TransportWorkArrays, "orders"));
 }
 
 // TestSolveWorkStorage -------------------------------------------------------------------------------------  |
@@ -261,10 +303,14 @@ const TestSolveWorkStorage = struct {
     dynamic_attenuation_data: [72]f64 = undefined,
     dynamic_attenuation_tangent_data: [72]f64 = undefined,
     layer_transmittance: [12]f64 = undefined,
+    top_to_level_attenuation: [24]f64 = undefined,
     rt_layers: [3]rows.LayerRT = undefined,
     rt_layers_tangent: [3]rows.LayerRT = undefined,
     layer_phase_max_indices: [2]usize = undefined,
     effective_scattering_suffixes: [phase_table.coefficient_count * 2]f64 = undefined,
+    source_phase_max_indices: [3]usize = undefined,
+    phase_row_cache: [3]phase_basis.PhaseKernelRow = undefined,
+    phase_row_valid: [3]bool = .{ false, false, false },
     order_ud: [3]rows.UDField = undefined,
     order_ud_sum_local: [3]rows.UDLocal = undefined,
     order_ud_orde: [3]rows.UDLocal = undefined,
@@ -284,10 +330,16 @@ const TestSolveWorkStorage = struct {
             .dynamic_attenuation_data = self.dynamic_attenuation_data[0..],
             .dynamic_attenuation_tangent_data = self.dynamic_attenuation_tangent_data[0..],
             .layer_transmittance = self.layer_transmittance[0..],
+            .top_to_level_attenuation = self.top_to_level_attenuation[0..],
             .rt_layers = self.rt_layers[0..],
             .rt_layers_tangent = self.rt_layers_tangent[0..],
             .layer_phase_max_indices = self.layer_phase_max_indices[0..],
             .effective_scattering_suffixes = self.effective_scattering_suffixes[0..],
+            .source_phase_max_indices = self.source_phase_max_indices[0..],
+            .phase_row_cache = self.phase_row_cache[0..],
+            .phase_row_valid = self.phase_row_valid[0..],
+            .curved_level_starts = &.{},
+            .curved_level_altitudes_km = &.{},
             .orders = .{
                 .ud = self.order_ud[0..],
                 .ud_sum_local = self.order_ud_sum_local[0..],
