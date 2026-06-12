@@ -73,6 +73,21 @@ pub const ZdsDiagnosticReport = extern struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
+// ZdsAtmosphericBudget ---------------------------------------------------------------------------------------|
+// Borrowed atmospheric-budget rows returned by zds_atmospheric_budget. rows owns a Context-free allocation.   |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0.. 7] len : usize                                                                                         |
+// [8..15] rows: ?[*]const AtmosphericBudgetRow                                                                |
+pub const ZdsAtmosphericBudget = extern struct {
+    len: usize = 0,
+    rows: ?[*]const zdisamar.AtmosphericBudgetRow = null,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
 // CResult ----------------------------------------------------------------------------------------------------|
 // Context-owned native spectrum plus optional compact C-facing Jacobian rows.                                 |
 //                                                                                                             |
@@ -366,11 +381,53 @@ export fn zds_spectrum_report(ctx: ?*Context, spectrum: ?*const ZdsSpectrum, out
     return @intFromEnum(ZdsStatus.ok);
 }
 
-export fn zds_atmospheric_budget(ctx: ?*Context, _: ?[*]const f64, _: usize, _: ?*anyopaque) c_int {
+export fn zds_atmospheric_budget(
+    ctx: ?*Context,
+    wavelengths: ?[*]const f64,
+    wavelength_count: usize,
+    out: ?*ZdsAtmosphericBudget,
+) c_int {
     // zds_atmospheric_budget ---------------------------------------------------------------------------------|
-    // Return a typed failure until atmospheric diagnostic rows are ported.                                    |
+    // Build atmospheric support-row diagnostic records for caller-selected wavelengths.                       |
     // --------------------------------------------------------------------------------------------------------|
-    return unsupported(ctx, "UnsupportedAtmosphericBudget");
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+    const prepared = &(resolved.prepared orelse {
+        resolved.setError("not prepared");
+        return @intFromEnum(ZdsStatus.failure);
+    });
+
+    const wavelengths_ptr = wavelengths orelse {
+        resolved.setError("null wavelength input");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    if (wavelength_count == 0) {
+        resolved.setError("empty wavelength input");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+
+    const output = out orelse {
+        resolved.setError("null atmospheric budget output");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    output.* = .{};
+
+    var budget = zdisamar.buildAtmosphericBudget(
+        allocator,
+        prepared,
+        wavelengths_ptr[0..wavelength_count],
+    ) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    errdefer budget.deinit(allocator);
+
+    output.* = .{
+        .len = budget.rows.len,
+        .rows = if (budget.rows.len == 0) null else budget.rows.ptr,
+    };
+    budget.rows = &.{};
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
 }
 
 export fn zds_o2_line_contributions(ctx: ?*Context, _: ?[*]const f64, _: usize, _: usize, _: ?*anyopaque) c_int {
@@ -461,10 +518,15 @@ export fn zds_optimal_estimation_fastmode_batch_result_free(_: ?*Context, _: ?*a
     // --------------------------------------------------------------------------------------------------------|
 }
 
-export fn zds_atmospheric_budget_free(_: ?*Context, _: ?*anyopaque) void {
+export fn zds_atmospheric_budget_free(_: ?*Context, raw: ?*ZdsAtmosphericBudget) void {
     // zds_atmospheric_budget_free ----------------------------------------------------------------------------|
-    // Placeholder free hook for the unimplemented atmospheric budget route.                                   |
+    // Release atmospheric-budget rows returned by zds_atmospheric_budget.                                     |
     // --------------------------------------------------------------------------------------------------------|
+    const budget = raw orelse return;
+    if (budget.rows) |rows| {
+        allocator.free(rows[0..budget.len]);
+    }
+    budget.* = .{};
 }
 
 export fn zds_o2_line_contributions_free(_: ?*Context, _: ?*anyopaque) void {
@@ -669,5 +731,6 @@ fn unsupported(ctx: ?*Context, message: []const u8) c_int {
 comptime {
     std.debug.assert(@sizeOf(ZdsSpectrum) == 64);
     std.debug.assert(@sizeOf(ZdsDiagnosticReport) == 48);
+    std.debug.assert(@sizeOf(ZdsAtmosphericBudget) == 16);
     std.debug.assert(@sizeOf(CResult) == 184);
 }

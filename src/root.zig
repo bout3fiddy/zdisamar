@@ -8,6 +8,7 @@ const jacobian_states = @import("transport/jacobian_states.zig");
 const layer_depths = @import("optics/layer_depths.zig");
 const o2_case = @import("input/o2_case.zig");
 const o2_session_memory = @import("cache/o2_session_memory.zig");
+const atmospheric_budget = @import("output/atmospheric_budget.zig");
 const o2_spectrum = @import("output/spectrum.zig");
 const radiance_results = @import("spectrum/radiance_results.zig");
 const radiance_wavelengths = @import("spectrum/radiance_wavelengths.zig");
@@ -37,6 +38,8 @@ pub const O2Case = o2_case.O2Case;
 pub const O2RunTables = setup_tables.O2RunTables;
 pub const ProfileLineValues = profile_lines.ProfileLineValues;
 pub const O2SessionMemory = o2_session_memory.O2SessionMemory;
+pub const AtmosphericBudget = atmospheric_budget.AtmosphericBudget;
+pub const AtmosphericBudgetRow = atmospheric_budget.AtmosphericBudgetRow;
 pub const O2Spectrum = o2_spectrum.O2Spectrum;
 pub const O2SpectrumRunResult = o2_spectrum.O2SpectrumRunResult;
 pub const O2SpectrumRunSummary = o2_spectrum.O2SpectrumRunSummary;
@@ -222,6 +225,17 @@ pub fn runO2A(allocator: Allocator, prepared: *const PreparedO2A, solve_config: 
     var session = initO2SessionMemory(allocator);
     defer session.deinit(allocator);
     return runO2AWithSessionMemory(allocator, &session, prepared, solve_config);
+}
+
+pub fn buildAtmosphericBudget(
+    allocator: Allocator,
+    prepared: *const PreparedO2A,
+    wavelengths_nm: []const f64,
+) !AtmosphericBudget {
+    // buildAtmosphericBudget ---------------------------------------------------------------------------------|
+    // Build public atmospheric support-row diagnostic rows for the prepared O2 A case.                        |
+    // --------------------------------------------------------------------------------------------------------|
+    return atmospheric_budget.build(allocator, prepared.case, &prepared.tables, wavelengths_nm);
 }
 
 pub fn o2aSolveConfig(case: O2Case) SolveConfig {
