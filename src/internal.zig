@@ -180,6 +180,7 @@ pub const spectrum = struct {
     pub const radiance_wavelengths = @import("spectrum/radiance_wavelengths.zig");
     pub const sampling_table = @import("spectrum/sampling_table.zig");
     pub const solar_lookup = @import("spectrum/solar_lookup.zig");
+    pub const spectrum_run = @import("spectrum/spectrum_run.zig");
 };
 // ------------------------------------------------------------------------------------------------------------|
 
