@@ -43,6 +43,14 @@ test "TransportWorkerMemory reserves active transport prefixes without physics i
     try std.testing.expectEqual(@as(usize, 4), orders.ud_orde.len);
     try std.testing.expectEqual(@as(usize, 4), orders.ud_local.len);
     try std.testing.expectEqual(@as(usize, 4), orders.rt_active.len);
+
+    const solve_work = try memory.solveWorkArrays(3, 6);
+    try std.testing.expectEqual(@as(usize, 96), solve_work.dynamic_attenuation_data.len);
+    try std.testing.expectEqual(@as(usize, 18), solve_work.layer_transmittance.len);
+    try std.testing.expectEqual(@as(usize, 4), solve_work.rt_layers.len);
+    try std.testing.expectEqual(@as(usize, 3), solve_work.layer_phase_max_indices.len);
+    try std.testing.expectEqual(@as(usize, 4), solve_work.orders.ud.len);
+    try std.testing.expectEqual(@as(usize, 3), solve_work.plm_basis_cache.len);
 }
 
 test "TransportWorkerMemory geometry changes invalidate geometry-dependent caches" {

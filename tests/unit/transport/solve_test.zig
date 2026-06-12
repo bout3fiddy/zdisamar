@@ -5,10 +5,14 @@ const internal = @import("internal");
 const controls = internal.transport.controls;
 const jacobian_states = internal.transport.jacobian_states;
 const layer_depths = internal.optics.layer_depths;
+const phase_basis = internal.transport.phase_basis;
+const phase_table = internal.setup.phase_table;
+const rows = internal.transport.rows;
 const solve = internal.transport.solve;
 
 test "direct surface solve ports old scalar formula and surface Jacobian" {
-    var work = solve.TransportWorkArrays{};
+    var storage = TestSolveWorkStorage{};
+    var work = storage.work();
     const layers = [_]layer_depths.LayerOptics{
         .{ .total_optical_depth = 0.12 },
         .{ .total_optical_depth = 0.08 },
@@ -28,6 +32,8 @@ test "direct surface solve ports old scalar formula and surface Jacobian" {
         &layers,
         &.{},
         &.{},
+        testPhase(),
+        0.5,
         config,
         &work,
     );
@@ -64,8 +70,9 @@ test "direct surface solve respects active Jacobian mask and public clamp" {
     try std.testing.expectEqual(@as(f64, 0.0), jacobian_states.get(clamped.jacobian, .surface_albedo));
 }
 
-test "solveReflectance rejects enabled LABOS physics until Fourier route is wired" {
-    var work = solve.TransportWorkArrays{};
+test "solveReflectance rejects unported integrated and spherical LABOS controls" {
+    var storage = TestSolveWorkStorage{};
+    var work = storage.work();
 
     try std.testing.expectError(
         error.UnsupportedRadiativeTransferControls,
@@ -75,7 +82,9 @@ test "solveReflectance rejects enabled LABOS physics until Fourier route is wire
             &.{},
             &.{},
             &.{},
-            .{ .controls = .{ .scattering = .multiple } },
+            testPhase(),
+            0.5,
+            .{ .controls = .{ .scattering = .multiple, .integrate_source_function = true } },
             &work,
         ),
     );
@@ -87,17 +96,143 @@ test "solveReflectance rejects enabled LABOS physics until Fourier route is wire
             &.{},
             &.{},
             &.{},
+            testPhase(),
+            0.5,
             .{ .controls = .{ .scattering = .none, .use_spherical_correction = true } },
             &work,
         ),
     );
 }
 
+test "non-integrated scattering route runs Fourier surface term without allocation" {
+    var storage = TestSolveWorkStorage{};
+    var work = storage.work();
+    const layers = [_]layer_depths.LayerOptics{
+        .{},
+    };
+    const result = try solve.solveReflectance(
+        .{ .solar_mu = 0.58, .view_mu = 0.64 },
+        0.3,
+        &layers,
+        &.{},
+        &.{},
+        testPhase(),
+        0.5,
+        .{
+            .derivative_mode = .semi_analytical,
+            .derivative_state_mask = jacobian_states.stateMask(.surface_albedo),
+            .controls = .{
+                .scattering = .single,
+                .n_streams = 8,
+                .integrate_source_function = false,
+            },
+        },
+        &work,
+    );
+
+    try std.testing.expectApproxEqAbs(0.3, result.reflectance, 1.0e-14);
+    try std.testing.expect(result.jacobian[jacobian_states.stateIndex(.surface_albedo)] > 0.0);
+}
+
+test "scattering route rejects unported aerosol Jacobian lanes explicitly" {
+    var storage = TestSolveWorkStorage{};
+    var work = storage.work();
+
+    try std.testing.expectError(
+        error.UnsupportedDerivativeMode,
+        solve.solveReflectance(
+            .{ .solar_mu = 0.58, .view_mu = 0.64 },
+            0.3,
+            &[_]layer_depths.LayerOptics{.{}},
+            &.{},
+            &.{},
+            testPhase(),
+            0.5,
+            .{
+                .derivative_mode = .semi_analytical,
+                .derivative_state_mask = jacobian_states.stateMask(.aerosol_optical_depth),
+                .controls = .{
+                    .scattering = .single,
+                    .n_streams = 8,
+                    .integrate_source_function = false,
+                },
+            },
+            &work,
+        ),
+    );
+}
+
 test "solve route rows keep explicit layout" {
+    const expected_work_size: usize =
+        if (@sizeOf(internal.transport.scattering_orders.OrdersWorkArrays) == 88) 208 else 200;
+
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(solve.ViewAngles));
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(solve.ReflectanceResult));
-    try std.testing.expectEqual(@as(usize, 0), @sizeOf(solve.TransportWorkArrays));
+    try std.testing.expectEqual(expected_work_size, @sizeOf(solve.TransportWorkArrays));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(solve.ViewAngles, "solar_mu"));
     try std.testing.expectEqual(@as(usize, 8), @offsetOf(solve.ViewAngles, "view_mu"));
     try std.testing.expectEqual(@as(usize, 16), @offsetOf(solve.ViewAngles, "relative_azimuth_rad"));
+    try std.testing.expectEqual(@as(usize, 0), @offsetOf(solve.TransportWorkArrays, "geometry"));
+    try std.testing.expectEqual(@as(usize, 8), @offsetOf(solve.TransportWorkArrays, "dynamic_attenuation_data"));
+    try std.testing.expectEqual(@as(usize, 88), @offsetOf(solve.TransportWorkArrays, "orders"));
+}
+
+// TestSolveWorkStorage -------------------------------------------------------------------------------------  |
+// Stack backing for solve.TransportWorkArrays.                                                                |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: compiler-owned test fixture, align: 8                                                                 |
+//                                                                                                             |
+// memory                                                                                                      |
+//   geometry, attenuation, RT, phase, PLM, and order rows for tiny solve tests                                |
+const TestSolveWorkStorage = struct {
+    geometry: internal.transport.gauss_angles.GaussGeometry = undefined,
+    dynamic_attenuation_data: [72]f64 = undefined,
+    layer_transmittance: [12]f64 = undefined,
+    rt_layers: [3]rows.LayerRT = undefined,
+    layer_phase_max_indices: [2]usize = undefined,
+    effective_scattering_suffixes: [phase_table.coefficient_count * 2]f64 = undefined,
+    order_ud: [3]rows.UDField = undefined,
+    order_ud_sum_local: [3]rows.UDLocal = undefined,
+    order_ud_orde: [3]rows.UDLocal = undefined,
+    order_ud_local: [3]rows.UDLocal = undefined,
+    rt_active: [3]bool = .{ false, false, false },
+    plm_basis_cache: [phase_table.coefficient_count]phase_basis.FourierPlmBasis = undefined,
+    plm_basis_cache_valid: [phase_table.coefficient_count]bool = [_]bool{false} ** phase_table.coefficient_count,
+
+    fn work(self: *TestSolveWorkStorage) solve.TransportWorkArrays {
+        // TestSolveWorkStorage.work ------------------------------------------------------------------------  |
+        // Borrow all stack rows in the shape expected by solveReflectance.                                    |
+        // ----------------------------------------------------------------------------------------------------|
+        return .{
+            .geometry = &self.geometry,
+            .dynamic_attenuation_data = self.dynamic_attenuation_data[0..],
+            .layer_transmittance = self.layer_transmittance[0..],
+            .rt_layers = self.rt_layers[0..],
+            .layer_phase_max_indices = self.layer_phase_max_indices[0..],
+            .effective_scattering_suffixes = self.effective_scattering_suffixes[0..],
+            .orders = .{
+                .ud = self.order_ud[0..],
+                .ud_sum_local = self.order_ud_sum_local[0..],
+                .ud_orde = self.order_ud_orde[0..],
+                .ud_local = self.order_ud_local[0..],
+                .rt_active = self.rt_active[0..],
+            },
+            .plm_basis_cache = self.plm_basis_cache[0..],
+            .plm_basis_cache_valid = self.plm_basis_cache_valid[0..],
+        };
+    }
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+fn testPhase() phase_table.PhaseTable {
+    // testPhase --------------------------------------------------------------------------------------------- |
+    // Return isotropic aerosol phase coefficients for tiny transport tests.                                   |
+    // --------------------------------------------------------------------------------------------------------|
+    const coefficients = phase_table.zeroPhaseCoefficients();
+    return .{
+        .aerosol_phase_coefficients = coefficients,
+        .aerosol_phase_max_index = 0,
+        .aerosol_asymmetry_factor = 0.0,
+    };
 }

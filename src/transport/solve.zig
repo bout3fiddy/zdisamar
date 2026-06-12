@@ -1,16 +1,24 @@
 const std = @import("std");
 
+const attenuation = @import("attenuation.zig");
 const controls = @import("controls.zig");
 const curved_sun_path = @import("../optics/curved_sun_path.zig");
+const gauss_angles = @import("gauss_angles.zig");
 const jacobian_states = @import("jacobian_states.zig");
 const layer_depths = @import("../optics/layer_depths.zig");
+const layer_reflect_transmit = @import("layer_reflect_transmit.zig");
+const phase_basis = @import("phase_basis.zig");
+const phase_table = @import("../setup/phase_table.zig");
+const reflectance_helpers = @import("reflectance.zig");
+const rows = @import("rows.zig");
+const scattering_orders = @import("scattering_orders.zig");
 const source_levels = @import("../optics/source_levels.zig");
 
 const math = std.math;
 
 const direct_direction_cosine_floor: f64 = 0.05;
 
-pub const Error = controls.PrepareError || error{
+pub const Error = controls.PrepareError || attenuation.Error || gauss_angles.Error || error{
     InvalidShape,
 };
 
@@ -18,10 +26,9 @@ pub const Error = controls.PrepareError || error{
 // Transport-solve dispatch for explicit WP3 optical rows.                                                     |
 //                                                                                                             |
 // provenance                                                                                                  |
-//   The direct-surface route ports main:`src/forward_model/radiative_transfer/labos/execute.zig`              |
-//   `directSurfaceOnly` and the no-scattering dispatch in `executeWithWorkspace`. The Fourier/LABOS route     |
-//   remains a typed unsupported branch until this file wires the already-ported attenuation, layer RT,        |
-//   scattering-order, and reflectance helpers together.                                                       |
+//   Ports the non-integrated branch of main:`src/forward_model/radiative_transfer/labos/execute.zig`:         |
+//   `directSurfaceOnly`, geometry setup, attenuation fill, RT layer build, scattering-order propagation,      |
+//   Fourier weighting, tail stop, public clamp, and zero-Fourier surface-albedo tangent.                      |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   Inputs are explicit rows and scalars: angles, surface albedo, layer optics, source levels, curved-path    |
@@ -32,8 +39,7 @@ pub const Error = controls.PrepareError || error{
 //   direct route sums layer total optical depths before applying the same scalar formula.                     |
 //                                                                                                             |
 // allocation                                                                                                  |
-//   This file allocates nothing. The work-array argument exists for the full LABOS route and is unused by     |
-//   the direct-surface route.                                                                                 |
+//   This file allocates nothing. Callers pass borrowed work arrays sized before the per-wavelength solve.     |
 // ------------------------------------------------------------------------------------------------------------|
 
 // ViewAngles ------------------------------------------------------------------------------------------------ |
@@ -76,15 +82,37 @@ pub const ReflectanceResult = struct {
 // Borrowed transport scratch passed to solveReflectance.                                                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 0 B (0.000 KiB), align: 1 B                                                                           |
+// normal build: size 200 B (0.195 KiB), align 8                                                               |
+// trace build : size 208 B (0.203 KiB), align 8                                                               |
 //                                                                                                             |
 // memory                                                                                                      |
-//   no stored fields yet                                                                                      |
+// [  0..  7] geometry                     : *GaussGeometry                                                    |
+// [  8.. 23] dynamic_attenuation_data     : []f64                                                             |
+// [ 24.. 39] layer_transmittance          : []f64                                                             |
+// [ 40.. 55] rt_layers                    : []LayerRT                                                         |
+// [ 56.. 71] layer_phase_max_indices      : []usize                                                           |
+// [ 72.. 87] effective_scattering_suffixes: []f64                                                             |
+// [ 88..167] normal build: orders         : OrdersWorkArrays                                                  |
+// [168..183] normal build: plm_basis_cache: []FourierPlmBasis                                                 |
+// [184..199] normal build: valid flags    : []bool                                                            |
+// [168..175] trace build only: orders extra trace field                                                       |
+// [176..191] trace build : plm_basis_cache: []FourierPlmBasis                                                 |
+// [192..207] trace build : valid flags    : []bool                                                            |
 //                                                                                                             |
-// direct-route note                                                                                           |
-//   The no-scattering route does not need LABOS scratch. Later Fourier orchestration fills this struct with   |
-//   borrowed attenuation, RT, order, phase-row, and basis arrays from TransportWorkerMemory.                  |
-pub const TransportWorkArrays = struct {};
+// referenced storage                                                                                          |
+//   Every slice borrows caller-owned memory, normally from TransportWorkerMemory.                             |
+//   This view owns no heap allocation and stores no physics inputs or controls.                               |
+pub const TransportWorkArrays = struct {
+    geometry: *gauss_angles.GaussGeometry,
+    dynamic_attenuation_data: []f64,
+    layer_transmittance: []f64,
+    rt_layers: []rows.LayerRT,
+    layer_phase_max_indices: []usize,
+    effective_scattering_suffixes: []f64,
+    orders: scattering_orders.OrdersWorkArrays,
+    plm_basis_cache: []phase_basis.FourierPlmBasis,
+    plm_basis_cache_valid: []bool,
+};
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn solveReflectance(
@@ -93,35 +121,58 @@ pub fn solveReflectance(
     layers: []const layer_depths.LayerOptics,
     level_sources: []const source_levels.SourceLevel,
     curved_samples: []const curved_sun_path.CurvedSunPathSample,
+    phase: phase_table.PhaseTable,
+    rayleigh_phase_coefficient2: f64,
     prepared_config: controls.SolveConfig,
     work: *TransportWorkArrays,
 ) Error!ReflectanceResult {
     // solveReflectance -------------------------------------------------------------------------------------  |
-    // Dispatch one explicit transport solve. The implemented direct route follows old LABOS scalar behavior;  |
-    // enabled scattering still returns a typed error until the full Fourier loop lands in this file.          |
+    // Dispatch one explicit transport solve. The direct route follows old LABOS scalar behavior; the          |
+    // scattering route wires the non-integrated Fourier path through caller-owned work arrays.                |
     //                                                                                                         |
     // direct math                                                                                             |
     //   direct path = exp(-tau / max(mu0, 0.05)) * exp(-tau / max(muv, 0.05))                                 |
     //   reflectance = surface_albedo * direct path                                                            |
     //                                                                                                         |
-    // unsupported route                                                                                       |
-    //   Scattering-enabled controls are rejected here rather than silently dropping layer RT, source rows,    |
-    //   curved-path samples, or Jacobian propagation.                                                         |
+    // unsupported routes                                                                                      |
+    //   Integrated-source rows, spherical correction, and aerosol Jacobian propagation are rejected until     |
+    //   their matching old routes are fully ported.                                                           |
     // --------------------------------------------------------------------------------------------------------|
-    _ = level_sources;
     _ = curved_samples;
-    _ = work;
 
     const config = try controls.prepareSolveConfig(prepared_config);
-    if (config.controls.scattering != .none) return error.UnsupportedRadiativeTransferControls;
+    if (config.controls.scattering == .none) {
+        if (config.controls.use_spherical_correction) return error.UnsupportedRadiativeTransferControls;
+        return directSurfaceOnly(
+            angles,
+            surface_albedo,
+            totalLayerOpticalDepth(layers),
+            config.derivative_mode,
+            config.derivative_state_mask,
+        );
+    }
+
+    if (config.controls.integrate_source_function or level_sources.len != 0) {
+        return error.UnsupportedRadiativeTransferControls;
+    }
+
     if (config.controls.use_spherical_correction) return error.UnsupportedRadiativeTransferControls;
 
-    return directSurfaceOnly(
+    if (config.derivative_mode != .none and
+        (jacobian_states.includes(config.derivative_state_mask, .aerosol_optical_depth) or
+            jacobian_states.includes(config.derivative_state_mask, .aerosol_layer_mid_pressure_hpa)))
+    {
+        return error.UnsupportedDerivativeMode;
+    }
+
+    return solveNonIntegratedScattering(
         angles,
         surface_albedo,
-        totalLayerOpticalDepth(layers),
-        config.derivative_mode,
-        config.derivative_state_mask,
+        layers,
+        phase,
+        rayleigh_phase_coefficient2,
+        config,
+        work,
     );
 }
 
@@ -171,8 +222,203 @@ fn totalLayerOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {
     return total;
 }
 
+fn solveNonIntegratedScattering(
+    angles: ViewAngles,
+    surface_albedo: f64,
+    layers: []const layer_depths.LayerOptics,
+    phase: phase_table.PhaseTable,
+    rayleigh_phase_coefficient2: f64,
+    config: controls.SolveConfig,
+    work: *TransportWorkArrays,
+) Error!ReflectanceResult {
+    // solveNonIntegratedScattering ------------------------------------------------------------------------   |
+    // Run the old non-integrated LABOS Fourier route with caller-owned storage.                               |
+    //                                                                                                         |
+    // steps                                                                                                   |
+    //   1. build direction geometry and direct-beam attenuation                                               |
+    //   2. prepare per-layer phase limits and layer-doubling suffix rows                                      |
+    //   3. loop retained Fourier terms: PLM basis -> RT layers -> scattering orders -> rho_m                  |
+    //   4. add Fourier-weighted rho_m and optional zero-Fourier surface-albedo tangent                        |
+    //   5. stop at the old Fourier tail gate and clamp the public reflectance                                 |
+    //                                                                                                         |
+    // unsupported here                                                                                        |
+    //   Integrated source and aerosol derivatives are separate old routes and stay rejected by the caller.    |
+    // --------------------------------------------------------------------------------------------------------|
+    if (layers.len == 0) return .{ .reflectance = 0.0 };
+
+    const mu0 = @max(angles.solar_mu, direct_direction_cosine_floor);
+    const muv = @max(angles.view_mu, direct_direction_cosine_floor);
+    work.geometry.* = try gauss_angles.GaussGeometry.init(config.controls.nGauss(), mu0, muv);
+    const geometry = work.geometry;
+    const layer_count = layers.len;
+    const level_count = layer_count + 1;
+
+    if (work.rt_layers.len < level_count or
+        work.layer_phase_max_indices.len < layer_count or
+        work.orders.ud.len < level_count or
+        work.orders.ud_orde.len < level_count or
+        work.orders.ud_local.len < level_count or
+        work.orders.rt_active.len < level_count)
+    {
+        return error.InvalidShape;
+    }
+
+    const dynamic_attenuation = try attenuation.fillDynamicWithLayerCache(
+        work.dynamic_attenuation_data,
+        work.layer_transmittance,
+        layers,
+        .{},
+        geometry,
+        false,
+    );
+
+    const layer_phase_max_indices = work.layer_phase_max_indices[0..layer_count];
+    layer_reflect_transmit.fillLayerPhaseMaxIndices(
+        layer_phase_max_indices,
+        layers,
+        phase,
+        rayleigh_phase_coefficient2,
+    );
+
+    const phase_max = maxLayerPhaseIndex(layer_phase_max_indices);
+    const fourier_max = config.controls.performance_thresholds.cappedFourierMax(phase_max);
+    const phase_suffix_stride = @min(phase_max, fourier_max) + 1;
+    const suffix_required = layer_count * phase_suffix_stride;
+    if (work.effective_scattering_suffixes.len < suffix_required) return error.InvalidShape;
+    const effective_scattering_suffixes = work.effective_scattering_suffixes[0..suffix_required];
+    layer_reflect_transmit.fillLayerEffectiveScatteringSuffixes(
+        effective_scattering_suffixes,
+        layers,
+        phase,
+        rayleigh_phase_coefficient2,
+        layer_phase_max_indices,
+        phase_suffix_stride,
+    );
+
+    const rt_layers = work.rt_layers[0..level_count];
+    const order_count: usize = @intCast(config.controls.resolvedNumOrdersMax(totalScatteringOpticalDepth(layers)));
+    const wants_surface_albedo =
+        config.derivative_mode != .none and
+        jacobian_states.includes(config.derivative_state_mask, .surface_albedo);
+
+    var result_reflectance: f64 = 0.0;
+    var surface_albedo_tangent: f64 = 0.0;
+    for (0..fourier_max + 1) |fourier_index| {
+        const plm_basis = try cachedPlmBasis(
+            fourier_index,
+            phase_max,
+            geometry,
+            work.plm_basis_cache,
+            work.plm_basis_cache_valid,
+        );
+
+        layer_reflect_transmit.fillLayerReflectTransmitRowsWithBasis(
+            rt_layers,
+            layers,
+            fourier_index,
+            geometry,
+            config.controls,
+            phase,
+            rayleigh_phase_coefficient2,
+            plm_basis,
+            layer_phase_max_indices,
+            effective_scattering_suffixes,
+            phase_suffix_stride,
+            null,
+            null,
+            work.orders.rt_active,
+            null,
+        );
+        rt_layers[0] = layer_reflect_transmit.fillSurface(fourier_index, surface_albedo, geometry);
+        work.orders.rt_active[0] = fourier_index == 0 and surface_albedo != 0.0;
+
+        const orders_view = scattering_orders.solveOrdersWithActive(
+            &work.orders,
+            0,
+            layer_count,
+            geometry,
+            dynamic_attenuation,
+            rt_layers,
+            config.controls,
+            order_count,
+        );
+        const rho_m = reflectance_helpers.topReflectanceCoefficient(orders_view.ud, layer_count, geometry);
+        const contribution = reflectance_helpers.weightedFourierContribution(
+            fourier_index,
+            angles.relative_azimuth_rad,
+            rho_m,
+            config.controls.performance_thresholds,
+        );
+        result_reflectance += contribution.weighted;
+
+        if (wants_surface_albedo and fourier_index == 0) {
+            surface_albedo_tangent += reflectance_helpers.surfaceAlbedoWeighting(orders_view.ud, geometry);
+        }
+        if (contribution.tail_break) break;
+    }
+
+    var jacobian = jacobian_states.zero();
+    if (wants_surface_albedo) {
+        jacobian_states.set(&jacobian, .surface_albedo, surface_albedo_tangent);
+    }
+    return .{
+        .reflectance = reflectance_helpers.clampPublicReflectance(result_reflectance),
+        .jacobian = jacobian,
+    };
+}
+
+fn cachedPlmBasis(
+    fourier_index: usize,
+    max_phase_index: usize,
+    geometry: *const gauss_angles.GaussGeometry,
+    cache: []phase_basis.FourierPlmBasis,
+    cache_valid: []bool,
+) Error!*const phase_basis.FourierPlmBasis {
+    // cachedPlmBasis --------------------------------------------------------------------------------------   |
+    // Reuse the Fourier PLM basis row for one geometry when caller-owned cache storage is available.          |
+    // --------------------------------------------------------------------------------------------------------|
+    if (fourier_index >= phase_table.coefficient_count or
+        max_phase_index >= phase_table.coefficient_count or
+        fourier_index >= cache.len or
+        fourier_index >= cache_valid.len)
+    {
+        return error.InvalidShape;
+    }
+
+    const needs_rebuild = !cache_valid[fourier_index] or
+        cache[fourier_index].max_phase_index < max_phase_index;
+    if (needs_rebuild) {
+        cache[fourier_index] = phase_basis.FourierPlmBasis.init(
+            fourier_index,
+            max_phase_index,
+            geometry,
+        );
+        cache_valid[fourier_index] = true;
+    }
+    return &cache[fourier_index];
+}
+
+fn maxLayerPhaseIndex(indices: []const usize) usize {
+    // maxLayerPhaseIndex -----------------------------------------------------------------------------------  |
+    // Return the highest layer phase index that can contribute to the Fourier route.                          |
+    // --------------------------------------------------------------------------------------------------------|
+    var max_index: usize = 0;
+    for (indices) |index| max_index = @max(max_index, index);
+    return max_index;
+}
+
+fn totalScatteringOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {
+    // totalScatteringOpticalDepth --------------------------------------------------------------------------  |
+    // Sum layer scattering optical depth for the old default scattering-order cap.                            |
+    // --------------------------------------------------------------------------------------------------------|
+    var total: f64 = 0.0;
+    for (layers) |layer| total += layer.total_scattering_optical_depth;
+    return total;
+}
+
 comptime {
+    const expected_work_size: usize = if (@sizeOf(scattering_orders.OrdersWorkArrays) == 88) 208 else 200;
     std.debug.assert(@sizeOf(ViewAngles) == 24);
     std.debug.assert(@sizeOf(ReflectanceResult) == 32);
-    std.debug.assert(@sizeOf(TransportWorkArrays) == 0);
+    std.debug.assert(@sizeOf(TransportWorkArrays) == expected_work_size);
 }

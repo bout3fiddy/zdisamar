@@ -6,6 +6,7 @@ const phase_basis = @import("../transport/phase_basis.zig");
 const phase_table = @import("../setup/phase_table.zig");
 const rows = @import("../transport/rows.zig");
 const scattering_orders = @import("../transport/scattering_orders.zig");
+const solve = @import("../transport/solve.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -355,6 +356,32 @@ pub const TransportWorkerMemory = struct {
             .ud_orde = self.order_ud_orde[0..level_count],
             .ud_local = self.order_ud_local[0..level_count],
             .rt_active = self.rt_active[0..level_count],
+        };
+    }
+
+    pub fn solveWorkArrays(
+        self: *TransportWorkerMemory,
+        layer_count: usize,
+        stream_count: usize,
+    ) Error!solve.TransportWorkArrays {
+        // solveWorkArrays ---------------------------------------------------------------------------------   |
+        // Borrow the active per-worker arrays consumed by `transport/solve.zig`.                              |
+        //                                                                                                     |
+        // boundary                                                                                            |
+        //   The owner provides storage and cached geometry only. Solve inputs remain explicit at the call     |
+        //   site: angles, layers, phase rows, controls, source rows, and curved-path samples.                 |
+        // ----------------------------------------------------------------------------------------------------|
+        const level_count = layer_count + 1;
+        return .{
+            .geometry = &self.cached_geometry,
+            .dynamic_attenuation_data = try self.dynamicAttenuationBuffer(stream_count, layer_count),
+            .layer_transmittance = try self.layerTransmittanceBuffer(stream_count, layer_count),
+            .rt_layers = try self.layerRt(level_count),
+            .layer_phase_max_indices = try self.layerPhaseMaxIndices(layer_count),
+            .effective_scattering_suffixes = self.layer_effective_scattering_suffixes,
+            .orders = try self.ordersWorkArrays(level_count, false),
+            .plm_basis_cache = self.plm_basis_cache,
+            .plm_basis_cache_valid = self.plm_basis_cache_valid,
         };
     }
 
