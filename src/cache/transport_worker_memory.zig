@@ -1,0 +1,437 @@
+const std = @import("std");
+
+const attenuation = @import("../transport/attenuation.zig");
+const gauss_angles = @import("../transport/gauss_angles.zig");
+const phase_basis = @import("../transport/phase_basis.zig");
+const phase_table = @import("../setup/phase_table.zig");
+const rows = @import("../transport/rows.zig");
+const scattering_orders = @import("../transport/scattering_orders.zig");
+
+const Allocator = std.mem.Allocator;
+
+pub const Error = error{
+    ShapeMismatch,
+} || gauss_angles.Error;
+
+// transport_worker_memory.zig ------------------------------------------------------------------------------  |
+// Reusable LABOS transport buffers for one forward worker.                                                    |
+//                                                                                                             |
+// provenance                                                                                                  |
+//   Splits the old main:`src/forward_model/radiative_transfer/labos/workspace.zig` allocation owner into a    |
+//   named WP3 memory block. The borrowed row types come from the new `transport/*` modules.                   |
+//                                                                                                             |
+// ownership boundary                                                                                          |
+//   This owner stores arrays, geometry reuse state, and validity flags only. Optical properties, phase        |
+//   coefficients, RTM controls, source levels, and angles stay visible in transport function signatures.      |
+//                                                                                                             |
+// hot path contract                                                                                           |
+//   Call `ensureCapacity` before per-wavelength transport solves. Accessors below borrow active prefixes and  |
+//   do not allocate.                                                                                          |
+// ------------------------------------------------------------------------------------------------------------|
+
+// GeometryCacheStatus --------------------------------------------------------------------------------------- |
+// Cached geometry pointer plus whether it matched the requested angles.                                       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] geometry : *const GaussGeometry                                                                    |
+// [ 8.. 8] hit      : bool                                                                                    |
+// [ 9..15] padding  : 7 B                                                                                     |
+pub const GeometryCacheStatus = struct {
+    geometry: *const gauss_angles.GaussGeometry,
+    hit: bool,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// PlmBasisCacheStatus --------------------------------------------------------------------------------------- |
+// Cached Fourier basis pointer plus reuse details for telemetry.                                              |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] plm_basis: *const FourierPlmBasis                                                                  |
+// [ 8.. 8] hit      : bool                                                                                    |
+// [ 9.. 9] extended : bool                                                                                    |
+// [10..15] padding  : 6 B                                                                                     |
+pub const PlmBasisCacheStatus = struct {
+    plm_basis: *const phase_basis.FourierPlmBasis,
+    hit: bool,
+    extended: bool,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// TransportWorkerMemory ------------------------------------------------------------------------------------- |
+// Allocation owner for one worker-local LABOS solve path.                                                     |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 3128 B (3.055 KiB), align: 8 B                                                                        |
+//                                                                                                             |
+// memory                                                                                                      |
+// [   0..  15] attenuation_data                         : []f64                                               |
+// [  16..  31] attenuation_layer_transmittance          : []f64                                               |
+// [  32..  47] attenuation_top_to_level                 : []f64                                               |
+// [  48..  63] rt_layers                                : []LayerRT                                           |
+// [  64..  79] layer_phase_max_indices                  : []usize                                             |
+// [  80..  95] layer_effective_scattering_suffixes      : []f64                                               |
+// [  96.. 111] source_phase_max_indices                 : []usize                                             |
+// [ 112.. 127] order_ud                                 : []UDField                                           |
+// [ 128.. 143] order_ud_sum_local                       : []UDLocal                                           |
+// [ 144.. 159] order_ud_orde                            : []UDLocal                                           |
+// [ 160.. 175] order_ud_local                           : []UDLocal                                           |
+// [ 176.. 191] rt_active                                : []bool                                              |
+// [ 192.. 207] layer_phase_rows                         : []PhaseKernelRow                                    |
+// [ 208.. 223] layer_phase_row_valid                    : []bool                                              |
+// [ 224.. 239] plm_basis_cache                          : []FourierPlmBasis                                   |
+// [ 240.. 255] plm_basis_cache_valid                    : []bool                                              |
+// [ 256.. 271] previous_layer_phase_signatures          : []u64                                               |
+// [ 272.. 287] previous_layer_phase_signature_valid     : []bool                                              |
+// [ 288..3119] cached_geometry                          : GaussGeometry                                       |
+// [3120..3120] cached_geometry_valid                    : bool                                                |
+// [3121..3127] trailing padding                                                                               |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   Every slice owns heap storage and is released by deinit. Active prefixes are borrowed by transport code.  |
+pub const TransportWorkerMemory = struct {
+    attenuation_data: []f64 = &.{},
+    attenuation_layer_transmittance: []f64 = &.{},
+    attenuation_top_to_level: []f64 = &.{},
+    rt_layers: []rows.LayerRT = &.{},
+    layer_phase_max_indices: []usize = &.{},
+    layer_effective_scattering_suffixes: []f64 = &.{},
+    source_phase_max_indices: []usize = &.{},
+    order_ud: []rows.UDField = &.{},
+    order_ud_sum_local: []rows.UDLocal = &.{},
+    order_ud_orde: []rows.UDLocal = &.{},
+    order_ud_local: []rows.UDLocal = &.{},
+    rt_active: []bool = &.{},
+    layer_phase_rows: []phase_basis.PhaseKernelRow = &.{},
+    layer_phase_row_valid: []bool = &.{},
+    plm_basis_cache: []phase_basis.FourierPlmBasis = &.{},
+    plm_basis_cache_valid: []bool = &.{},
+    previous_layer_phase_signatures: []u64 = &.{},
+    previous_layer_phase_signature_valid: []bool = &.{},
+    cached_geometry: gauss_angles.GaussGeometry = undefined,
+    cached_geometry_valid: bool = false,
+
+    pub fn deinit(self: *TransportWorkerMemory, allocator: Allocator) void {
+        // TransportWorkerMemory.deinit ---------------------------------------------------------------------- |
+        // Release every worker-local transport buffer and invalidate cached geometry state.                   |
+        // ----------------------------------------------------------------------------------------------------|
+        allocator.free(self.attenuation_data);
+        allocator.free(self.attenuation_layer_transmittance);
+        allocator.free(self.attenuation_top_to_level);
+        allocator.free(self.rt_layers);
+        allocator.free(self.layer_phase_max_indices);
+        allocator.free(self.layer_effective_scattering_suffixes);
+        allocator.free(self.source_phase_max_indices);
+        allocator.free(self.order_ud);
+        allocator.free(self.order_ud_sum_local);
+        allocator.free(self.order_ud_orde);
+        allocator.free(self.order_ud_local);
+        allocator.free(self.rt_active);
+        allocator.free(self.layer_phase_rows);
+        allocator.free(self.layer_phase_row_valid);
+        allocator.free(self.plm_basis_cache);
+        allocator.free(self.plm_basis_cache_valid);
+        allocator.free(self.previous_layer_phase_signatures);
+        allocator.free(self.previous_layer_phase_signature_valid);
+        self.* = .{};
+    }
+
+    pub fn ensureCapacity(
+        self: *TransportWorkerMemory,
+        allocator: Allocator,
+        level_count: usize,
+        stream_count: usize,
+        phase_stride: usize,
+        fourier_basis_count: usize,
+        needs_local_sum: bool,
+    ) Allocator.Error!void {
+        // ensureCapacity -----------------------------------------------------------------------------------  |
+        // Reserve all arrays a worker needs before transport enters a per-wavelength solve.                   |
+        //                                                                                                     |
+        // shape                                                                                               |
+        //   level_count         : layer_count + 1                                                             |
+        //   phase_stride        : active suffix rows per layer, capped by phase coefficient count             |
+        //   fourier_basis_count : retained PLM basis rows for Fourier-index reuse                             |
+        // ----------------------------------------------------------------------------------------------------|
+        const layer_count = if (level_count == 0) 0 else level_count - 1;
+        const phase_row_count = layer_count * phase_stride;
+        const dynamic_attenuation_count = attenuation.dynamicRequiredLength(stream_count, layer_count);
+        const layer_transmittance_count = attenuation.layerTransmittanceRequiredLength(stream_count, layer_count);
+        const top_to_level_count = attenuation.topToLevelRequiredLength(stream_count, layer_count);
+
+        _ = try ensureSliceCapacity(f64, allocator, &self.attenuation_data, dynamic_attenuation_count);
+        _ = try ensureSliceCapacity(f64, allocator, &self.attenuation_layer_transmittance, layer_transmittance_count);
+        _ = try ensureSliceCapacity(f64, allocator, &self.attenuation_top_to_level, top_to_level_count);
+        _ = try ensureSliceCapacity(rows.LayerRT, allocator, &self.rt_layers, level_count);
+        _ = try ensureSliceCapacity(usize, allocator, &self.layer_phase_max_indices, layer_count);
+        _ = try ensureSliceCapacity(f64, allocator, &self.layer_effective_scattering_suffixes, phase_row_count);
+        _ = try ensureSliceCapacity(usize, allocator, &self.source_phase_max_indices, level_count);
+        _ = try ensureSliceCapacity(rows.UDField, allocator, &self.order_ud, level_count);
+        if (needs_local_sum) {
+            _ = try ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_sum_local, level_count);
+        }
+        _ = try ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_orde, level_count);
+        _ = try ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_local, level_count);
+        _ = try ensureSliceCapacity(bool, allocator, &self.rt_active, level_count);
+        _ = try ensureSliceCapacity(phase_basis.PhaseKernelRow, allocator, &self.layer_phase_rows, level_count);
+        _ = try ensureSliceCapacity(bool, allocator, &self.layer_phase_row_valid, level_count);
+
+        const plm_replaced = try ensureSliceCapacity(
+            phase_basis.FourierPlmBasis,
+            allocator,
+            &self.plm_basis_cache,
+            fourier_basis_count,
+        );
+        const plm_valid_replaced = try ensureSliceCapacity(
+            bool,
+            allocator,
+            &self.plm_basis_cache_valid,
+            fourier_basis_count,
+        );
+        if (plm_replaced or plm_valid_replaced) @memset(self.plm_basis_cache_valid, false);
+
+        _ = try ensureSliceCapacity(u64, allocator, &self.previous_layer_phase_signatures, layer_count);
+        const signatures_replaced = try ensureSliceCapacity(
+            bool,
+            allocator,
+            &self.previous_layer_phase_signature_valid,
+            layer_count,
+        );
+        if (signatures_replaced) @memset(self.previous_layer_phase_signature_valid, false);
+    }
+
+    pub fn resetValidity(self: *TransportWorkerMemory) void {
+        // TransportWorkerMemory.resetValidity --------------------------------------------------------------- |
+        // Clear geometry-dependent validity while retaining every allocated transport buffer.                 |
+        // ----------------------------------------------------------------------------------------------------|
+        self.cached_geometry_valid = false;
+        @memset(self.plm_basis_cache_valid, false);
+        @memset(self.layer_phase_row_valid, false);
+        @memset(self.previous_layer_phase_signature_valid, false);
+    }
+
+    pub fn geometryWithStatus(
+        self: *TransportWorkerMemory,
+        n_gauss: usize,
+        solar_mu: f64,
+        view_mu: f64,
+    ) Error!GeometryCacheStatus {
+        // geometryWithStatus -------------------------------------------------------------------------------  |
+        // Return cached LABOS stream geometry or rebuild it when the angle key changes.                       |
+        // ----------------------------------------------------------------------------------------------------|
+        const hit = self.cached_geometry_valid and
+            self.cached_geometry.n_gauss == n_gauss and
+            self.cached_geometry.solar_mu == solar_mu and
+            self.cached_geometry.view_mu == view_mu;
+
+        if (!hit) {
+            self.cached_geometry = try gauss_angles.GaussGeometry.init(n_gauss, solar_mu, view_mu);
+            self.cached_geometry_valid = true;
+            @memset(self.plm_basis_cache_valid, false);
+            @memset(self.previous_layer_phase_signature_valid, false);
+        }
+
+        return .{
+            .geometry = &self.cached_geometry,
+            .hit = hit,
+        };
+    }
+
+    pub fn dynamicAttenuationBuffer(
+        self: *TransportWorkerMemory,
+        stream_count: usize,
+        layer_count: usize,
+    ) Error![]f64 {
+        // TransportWorkerMemory.dynamicAttenuationBuffer ---------------------------------------------------- |
+        // Borrow full [direction, from level, to level] attenuation storage.                                  |
+        // ----------------------------------------------------------------------------------------------------|
+        const required = attenuation.dynamicRequiredLength(stream_count, layer_count);
+        if (required > self.attenuation_data.len) return error.ShapeMismatch;
+        return self.attenuation_data[0..required];
+    }
+
+    pub fn layerTransmittanceBuffer(
+        self: *TransportWorkerMemory,
+        stream_count: usize,
+        layer_count: usize,
+    ) Error![]f64 {
+        // TransportWorkerMemory.layerTransmittanceBuffer ---------------------------------------------------- |
+        // Borrow adjacent-layer survival storage.                                                             |
+        // ----------------------------------------------------------------------------------------------------|
+        const required = attenuation.layerTransmittanceRequiredLength(stream_count, layer_count);
+        if (required > self.attenuation_layer_transmittance.len) return error.ShapeMismatch;
+        return self.attenuation_layer_transmittance[0..required];
+    }
+
+    pub fn topToLevelBuffer(
+        self: *TransportWorkerMemory,
+        stream_count: usize,
+        layer_count: usize,
+    ) Error![]f64 {
+        // topToLevelBuffer ---------------------------------------------------------------------------------  |
+        // Borrow top-to-interface direct-beam survival storage.                                               |
+        // ----------------------------------------------------------------------------------------------------|
+        const required = attenuation.topToLevelRequiredLength(stream_count, layer_count);
+        if (required > self.attenuation_top_to_level.len) return error.ShapeMismatch;
+        return self.attenuation_top_to_level[0..required];
+    }
+
+    pub fn layerRt(self: *TransportWorkerMemory, level_count: usize) Error![]rows.LayerRT {
+        // TransportWorkerMemory.layerRt --------------------------------------------------------------------- |
+        // Borrow one reflection/transmission row per surface or layer boundary slot.                          |
+        // ----------------------------------------------------------------------------------------------------|
+        if (level_count > self.rt_layers.len) return error.ShapeMismatch;
+        return self.rt_layers[0..level_count];
+    }
+
+    pub fn layerPhaseMaxIndices(self: *TransportWorkerMemory, layer_count: usize) Error![]usize {
+        // layerPhaseMaxIndices -----------------------------------------------------------------------------  |
+        // Borrow per-layer maximum active phase-coefficient indexes.                                          |
+        // ----------------------------------------------------------------------------------------------------|
+        if (layer_count > self.layer_phase_max_indices.len) return error.ShapeMismatch;
+        return self.layer_phase_max_indices[0..layer_count];
+    }
+
+    pub fn layerEffectiveScatteringSuffixes(
+        self: *TransportWorkerMemory,
+        layer_count: usize,
+        phase_stride: usize,
+    ) Error![]f64 {
+        // layerEffectiveScatteringSuffixes -----------------------------------------------------------------  |
+        // Borrow per-layer suffix rows used by layer-doubling activity decisions.                             |
+        // ----------------------------------------------------------------------------------------------------|
+        if (phase_stride > phase_table.coefficient_count) {
+            return error.ShapeMismatch;
+        }
+
+        const required = layer_count * phase_stride;
+        if (required > self.layer_effective_scattering_suffixes.len) {
+            return error.ShapeMismatch;
+        }
+
+        return self.layer_effective_scattering_suffixes[0..required];
+    }
+
+    pub fn sourcePhaseMaxIndices(self: *TransportWorkerMemory, level_count: usize) Error![]usize {
+        // sourcePhaseMaxIndices ----------------------------------------------------------------------------  |
+        // Borrow per-interface maximum phase indexes for source weighting.                                    |
+        // ----------------------------------------------------------------------------------------------------|
+        if (level_count > self.source_phase_max_indices.len) return error.ShapeMismatch;
+        return self.source_phase_max_indices[0..level_count];
+    }
+
+    pub fn ordersWorkArrays(
+        self: *TransportWorkerMemory,
+        level_count: usize,
+        needs_local_sum: bool,
+    ) Error!scattering_orders.OrdersWorkArrays {
+        // ordersWorkArrays ---------------------------------------------------------------------------------  |
+        // Borrow scattering-order rows in the shape consumed by `scattering_orders.zig`.                      |
+        // ----------------------------------------------------------------------------------------------------|
+        if (level_count > self.order_ud.len or
+            level_count > self.order_ud_orde.len or
+            level_count > self.order_ud_local.len or
+            level_count > self.rt_active.len)
+        {
+            return error.ShapeMismatch;
+        }
+        if (needs_local_sum and level_count > self.order_ud_sum_local.len) {
+            return error.ShapeMismatch;
+        }
+
+        const ud_sum_local = if (needs_local_sum)
+            self.order_ud_sum_local[0..level_count]
+        else
+            self.order_ud_sum_local[0..0];
+
+        return .{
+            .ud = self.order_ud[0..level_count],
+            .ud_sum_local = ud_sum_local,
+            .ud_orde = self.order_ud_orde[0..level_count],
+            .ud_local = self.order_ud_local[0..level_count],
+            .rt_active = self.rt_active[0..level_count],
+        };
+    }
+
+    pub fn phaseRowCache(self: *TransportWorkerMemory, level_count: usize) Error![]phase_basis.PhaseKernelRow {
+        // phaseRowCache ------------------------------------------------------------------------------------  |
+        // Borrow cached phase-kernel rows for source-interface reuse.                                         |
+        // ----------------------------------------------------------------------------------------------------|
+        if (level_count > self.layer_phase_rows.len) return error.ShapeMismatch;
+        return self.layer_phase_rows[0..level_count];
+    }
+
+    pub fn phaseRowValid(self: *TransportWorkerMemory, level_count: usize) Error![]bool {
+        // phaseRowValid ------------------------------------------------------------------------------------  |
+        // Borrow validity flags paired with phaseRowCache.                                                    |
+        // ----------------------------------------------------------------------------------------------------|
+        if (level_count > self.layer_phase_row_valid.len) return error.ShapeMismatch;
+        return self.layer_phase_row_valid[0..level_count];
+    }
+
+    pub fn fourierPlmBasisWithStatus(
+        self: *TransportWorkerMemory,
+        fourier_index: usize,
+        max_phase_index: usize,
+        cache_max_index: usize,
+        geometry: *const gauss_angles.GaussGeometry,
+    ) Error!PlmBasisCacheStatus {
+        // fourierPlmBasisWithStatus -----------------------------------------------------------------------   |
+        // Return a cached weighted associated-Legendre basis row for one Fourier index.                       |
+        // ----------------------------------------------------------------------------------------------------|
+        if (fourier_index >= phase_table.coefficient_count or
+            max_phase_index >= phase_table.coefficient_count or
+            cache_max_index >= phase_table.coefficient_count or
+            fourier_index >= self.plm_basis_cache.len or
+            fourier_index >= self.plm_basis_cache_valid.len)
+        {
+            return error.ShapeMismatch;
+        }
+
+        const was_valid = self.plm_basis_cache_valid[fourier_index];
+        const needs_extend = was_valid and self.plm_basis_cache[fourier_index].max_phase_index < max_phase_index;
+        if (!was_valid or needs_extend) {
+            self.plm_basis_cache[fourier_index] = phase_basis.FourierPlmBasis.init(
+                fourier_index,
+                max_phase_index,
+                geometry,
+            );
+            self.plm_basis_cache_valid[fourier_index] = true;
+        }
+
+        return .{
+            .plm_basis = &self.plm_basis_cache[fourier_index],
+            .hit = was_valid,
+            .extended = needs_extend,
+        };
+    }
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+fn ensureSliceCapacity(
+    comptime T: type,
+    allocator: Allocator,
+    slice: *[]T,
+    required_len: usize,
+) Allocator.Error!bool {
+    // ensureSliceCapacity ----------------------------------------------------------------------------------- |
+    // Replace backing storage when the retained slice is too small; old values are intentionally discarded.   |
+    // --------------------------------------------------------------------------------------------------------|
+    if (slice.len >= required_len) return false;
+
+    const new_slice = try allocator.alloc(T, required_len);
+    allocator.free(slice.*);
+    slice.* = new_slice;
+    return true;
+}
+
+comptime {
+    std.debug.assert(@sizeOf(GeometryCacheStatus) == 16);
+    std.debug.assert(@sizeOf(PlmBasisCacheStatus) == 16);
+    std.debug.assert(@sizeOf(TransportWorkerMemory) == 3128);
+}
