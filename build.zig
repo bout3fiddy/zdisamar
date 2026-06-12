@@ -120,6 +120,28 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(lib);
 
+    const c_api_module = b.createModule(.{
+        .root_source_file = b.path("src/api/c.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "zdisamar", .module = lib_module },
+            .{ .name = "build_options", .module = disabled_instrumentation.build_options },
+            .{ .name = "ztracy", .module = disabled_instrumentation.ztracy },
+            .{ .name = "calculation_telemetry_sink", .module = disabled_instrumentation.calculation_telemetry_sink },
+            .{
+                .name = "perturbation_sensitivity_sink",
+                .module = disabled_instrumentation.perturbation_sensitivity_sink,
+            },
+        },
+    });
+    const c_api_lib = b.addLibrary(.{
+        .linkage = .dynamic,
+        .name = "zdisamar_c",
+        .root_module = c_api_module,
+    });
+    b.installArtifact(c_api_lib);
+
     const internal_module = addSourceModule(b, target, optimize, disabled_instrumentation, "src/internal.zig");
     const enabled_internal_module = addSourceModule(
         b,
@@ -177,6 +199,7 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&fmt_check_cmd.step);
     check_step.dependOn(&no_inline_src_tests_cmd.step);
     check_step.dependOn(&lib.step);
+    check_step.dependOn(&c_api_lib.step);
     check_step.dependOn(&run_unit_tests.step);
     check_step.dependOn(&run_enabled_instrumentation_tests.step);
 

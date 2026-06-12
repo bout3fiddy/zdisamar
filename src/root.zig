@@ -41,6 +41,8 @@ pub const O2SpectrumRunResult = o2_spectrum.O2SpectrumRunResult;
 pub const O2SpectrumRunSummary = o2_spectrum.O2SpectrumRunSummary;
 pub const SolveConfig = controls.SolveConfig;
 pub const TransportControls = controls.TransportControls;
+pub const JacobianVector = jacobian_states.Vector;
+pub const jacobian_state_count = jacobian_states.state_count;
 
 pub const defaultO2Case = defaults.referenceCase;
 pub const buildReferenceO2RunTables = setup_tables.buildReferenceO2RunTables;

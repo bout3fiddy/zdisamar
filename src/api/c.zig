@@ -1,0 +1,618 @@
+const std = @import("std");
+const zdisamar = @import("zdisamar");
+
+const allocator = std.heap.smp_allocator;
+
+// c.zig ------------------------------------------------------------------------------------------------------|
+// C ABI boundary for Python bindings and external callers.                                                    |
+//                                                                                                             |
+// called from                                                                                                 |
+//   build.zig builds this file as the `zdisamar_c` dynamic-library root.                                      |
+//   python/zdisamar/bindings/signatures.py binds the exported `zds_*` symbols with ctypes.                    |
+//                                                                                                             |
+// boundary                                                                                                    |
+//   Context owns prepared setup tables, reusable O2 session memory, returned spectrum handles, and error      |
+//   text. Compute receives only the public root inputs: PreparedO2A, O2SessionMemory, and SolveConfig.        |
+//   JSON parsing, diagnostic tables, retrieval, and fastmode return typed failures until their WP4/WP5        |
+//   ports land; no parsed control is silently ignored.                                                        |
+// ------------------------------------------------------------------------------------------------------------|
+
+pub const ZdsStatus = enum(c_int) {
+    ok = 0,
+    failure = 1,
+};
+
+// ZdsSpectrum ------------------------------------------------------------------------------------------------|
+// Borrowed spectrum arrays returned by run calls. result_handle owns the backing CResult.                     |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 64 B (0.062 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] len                  : usize                                                                       |
+// [ 8..15] wavelength_nm        : [*]const f64                                                                |
+// [16..23] radiance             : [*]const f64                                                                |
+// [24..31] irradiance           : [*]const f64                                                                |
+// [32..39] reflectance          : [*]const f64                                                                |
+// [40..47] jacobian             : ?[*]const f64                                                               |
+// [48..55] jacobian_state_count : usize                                                                       |
+// [56..63] result_handle        : ?*anyopaque                                                                 |
+pub const ZdsSpectrum = extern struct {
+    len: usize = 0,
+    wavelength_nm: [*]const f64 = undefined,
+    radiance: [*]const f64 = undefined,
+    irradiance: [*]const f64 = undefined,
+    reflectance: [*]const f64 = undefined,
+    jacobian: ?[*]const f64 = null,
+    jacobian_state_count: usize = 0,
+    result_handle: ?*anyopaque = null,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// ZdsDiagnosticReport ----------------------------------------------------------------------------------------|
+// Small scalar summary for one spectrum.                                                                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 48 B (0.047 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 3] sample_count        : u32                                                                          |
+// [ 4.. 7] padding             : 4 B                                                                          |
+// [ 8..15] wavelength_start_nm : f64                                                                          |
+// [16..23] wavelength_end_nm   : f64                                                                          |
+// [24..31] mean_radiance       : f64                                                                          |
+// [32..39] mean_irradiance     : f64                                                                          |
+// [40..47] mean_reflectance    : f64                                                                          |
+pub const ZdsDiagnosticReport = extern struct {
+    sample_count: u32 = 0,
+    wavelength_start_nm: f64 = 0.0,
+    wavelength_end_nm: f64 = 0.0,
+    mean_radiance: f64 = 0.0,
+    mean_irradiance: f64 = 0.0,
+    mean_reflectance: f64 = 0.0,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// CResult ----------------------------------------------------------------------------------------------------|
+// Context-owned native spectrum plus optional compact C-facing Jacobian rows.                                 |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 184 B (0.180 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..159] native          : O2SpectrumRunResult                                                            |
+// [160..175] compact_jacobian: []f64                                                                          |
+// [176..183] state_count     : usize                                                                          |
+const CResult = struct {
+    native: zdisamar.O2SpectrumRunResult = .{},
+    compact_jacobian: []f64 = &.{},
+    state_count: usize = 0,
+
+    fn deinit(self: *CResult) void {
+        // CResult.deinit -------------------------------------------------------------------------------------|
+        // Release the native spectrum and optional compact Jacobian copy.                                     |
+        // ----------------------------------------------------------------------------------------------------|
+        allocator.free(self.compact_jacobian);
+        self.native.deinit(allocator);
+        self.* = .{};
+    }
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// Context ----------------------------------------------------------------------------------------------------|
+// Native owner behind the opaque C handle.                                                                    |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 2824 B (2.758 KiB), align: 8 B                                                                        |
+//                                                                                                             |
+// memory                                                                                                      |
+// [   0..2519] prepared : ?PreparedO2A                                                                        |
+// [2520..2559] session  : O2SessionMemory prefix in optimized builds                                          |
+// [   varies] results   : ArrayList(*CResult)                                                                 |
+// [   varies] last_error: [256:0]u8                                                                           |
+const Context = struct {
+    prepared: ?zdisamar.PreparedO2A = null,
+    session: zdisamar.O2SessionMemory,
+    results: std.ArrayList(*CResult) = .empty,
+    last_error: [256:0]u8 = [_:0]u8{0} ** 256,
+
+    fn init() Context {
+        // Context.init ---------------------------------------------------------------------------------------|
+        // Create an empty API context with initialized session memory.                                        |
+        // ----------------------------------------------------------------------------------------------------|
+        return .{ .session = zdisamar.initO2SessionMemory(allocator) };
+    }
+
+    fn deinit(self: *Context) void {
+        // Context.deinit -------------------------------------------------------------------------------------|
+        // Release prepared setup, retained session rows, and any live spectrum handles.                       |
+        // ----------------------------------------------------------------------------------------------------|
+        for (self.results.items) |result| {
+            result.deinit();
+            allocator.destroy(result);
+        }
+        self.results.deinit(allocator);
+        if (self.prepared) |*prepared| prepared.deinit(allocator);
+        self.session.deinit(allocator);
+        self.* = undefined;
+    }
+
+    fn setError(self: *Context, message: []const u8) void {
+        // Context.setError -----------------------------------------------------------------------------------|
+        // Store a nul-terminated bounded error message for zds_last_error.                                    |
+        // ----------------------------------------------------------------------------------------------------|
+        @memset(self.last_error[0..], 0);
+        const n = @min(message.len, self.last_error.len - 1);
+        @memcpy(self.last_error[0..n], message[0..n]);
+    }
+
+    fn ownsResult(self: *const Context, result: *const CResult) bool {
+        // Context.ownsResult ---------------------------------------------------------------------------------|
+        // Check whether a CResult handle is still retained by this context.                                   |
+        // ----------------------------------------------------------------------------------------------------|
+        for (self.results.items) |stored| {
+            if (stored == result) return true;
+        }
+        return false;
+    }
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+export fn zds_context_create() ?*Context {
+    // zds_context_create -------------------------------------------------------------------------------------|
+    // Allocate one opaque C context for Python or external callers.                                           |
+    // --------------------------------------------------------------------------------------------------------|
+    const ctx = allocator.create(Context) catch return null;
+    ctx.* = Context.init();
+    return ctx;
+}
+
+export fn zds_context_destroy(ctx: ?*Context) void {
+    // zds_context_destroy ------------------------------------------------------------------------------------|
+    // Release a context and every result handle still retained by it.                                         |
+    // --------------------------------------------------------------------------------------------------------|
+    const resolved = ctx orelse return;
+    resolved.deinit();
+    allocator.destroy(resolved);
+}
+
+export fn zds_prepare_default_o2a(ctx: ?*Context) c_int {
+    // zds_prepare_default_o2a --------------------------------------------------------------------------------|
+    // Prepare the built-in O2 A reference case.                                                               |
+    // --------------------------------------------------------------------------------------------------------|
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+
+    if (resolved.prepared) |*prepared| prepared.deinit(allocator);
+
+    resolved.prepared = zdisamar.prepareO2A(allocator, zdisamar.defaultO2Case()) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
+}
+
+export fn zds_prepare_o2a_json(ctx: ?*Context, json_ptr: ?[*]const u8, json_len: usize) c_int {
+    // zds_prepare_o2a_json -----------------------------------------------------------------------------------|
+    // Reject JSON input until the typed parser is ported; do not silently substitute defaults.                |
+    // --------------------------------------------------------------------------------------------------------|
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+
+    if (json_ptr == null) {
+        resolved.setError("null input JSON");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+
+    if (json_len == 0) {
+        resolved.setError("empty input JSON");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+
+    resolved.setError("UnsupportedJsonInput");
+    return @intFromEnum(ZdsStatus.failure);
+}
+
+export fn zds_warm_o2a_session(ctx: ?*Context) c_int {
+    // zds_warm_o2a_session -----------------------------------------------------------------------------------|
+    // Build retained session rows for the prepared default/reference case.                                    |
+    // --------------------------------------------------------------------------------------------------------|
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+
+    const prepared = &(resolved.prepared orelse {
+        resolved.setError("not prepared");
+        return @intFromEnum(ZdsStatus.failure);
+    });
+
+    zdisamar.warmO2ASessionMemory(
+        allocator,
+        &resolved.session,
+        prepared,
+        zdisamar.referenceO2ASolveConfig(prepared.case),
+    ) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
+}
+
+export fn zds_warm_o2a_optimal_estimation(ctx: ?*Context, _: ?[*]const u8, _: usize) c_int {
+    // zds_warm_o2a_optimal_estimation ------------------------------------------------------------------------|
+    // Return a typed failure until retrieval/OE cache warming is ported.                                      |
+    // --------------------------------------------------------------------------------------------------------|
+    return unsupported(ctx, "UnsupportedOptimalEstimation");
+}
+
+export fn zds_default_o2a_input_json(ctx: ?*Context, _: ?[*]u8, _: usize, out_len: ?*usize) c_int {
+    // zds_default_o2a_input_json -----------------------------------------------------------------------------|
+    // Return a typed failure until JSON rendering is ported.                                                  |
+    // --------------------------------------------------------------------------------------------------------|
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+    if (out_len) |slot| slot.* = 0;
+    resolved.setError("UnsupportedJsonInput");
+    return @intFromEnum(ZdsStatus.failure);
+}
+
+export fn zds_run_spectrum(ctx: ?*Context, out: ?*ZdsSpectrum) c_int {
+    // zds_run_spectrum ---------------------------------------------------------------------------------------|
+    // Run the prepared case without returning Jacobian columns.                                               |
+    // --------------------------------------------------------------------------------------------------------|
+    return runSpectrum(ctx, out, null, 0, false);
+}
+
+export fn zds_run_spectrum_jacobian(ctx: ?*Context, out: ?*ZdsSpectrum) c_int {
+    // zds_run_spectrum_jacobian ------------------------------------------------------------------------------|
+    // Run the prepared case with all fixed Jacobian columns in public order.                                  |
+    // --------------------------------------------------------------------------------------------------------|
+    return runSpectrum(ctx, out, null, 0, true);
+}
+
+export fn zds_run_spectrum_jacobian_for_states(
+    ctx: ?*Context,
+    out: ?*ZdsSpectrum,
+    state_ids: ?[*]const u8,
+    state_count: usize,
+) c_int {
+    // zds_run_spectrum_jacobian_for_states -------------------------------------------------------------------|
+    // Run the prepared case with a caller-selected compact Jacobian column order.                             |
+    // --------------------------------------------------------------------------------------------------------|
+    return runSpectrum(ctx, out, state_ids, state_count, true);
+}
+
+export fn zds_spectrum_report(ctx: ?*Context, spectrum: ?*const ZdsSpectrum, out: ?*ZdsDiagnosticReport) c_int {
+    // zds_spectrum_report ------------------------------------------------------------------------------------|
+    // Summarize one live spectrum handle into scalar means.                                                   |
+    // --------------------------------------------------------------------------------------------------------|
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+
+    const raw = spectrum orelse {
+        resolved.setError("null spectrum");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+
+    const report = out orelse {
+        resolved.setError("null diagnostic report");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+
+    const handle = raw.result_handle orelse {
+        resolved.setError("spectrum is closed");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+
+    const result: *CResult = @ptrCast(@alignCast(handle));
+    if (!resolved.ownsResult(result)) {
+        resolved.setError("unknown spectrum result");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+
+    report.* = spectrumReport(result.native.spectrum);
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
+}
+
+export fn zds_atmospheric_budget(ctx: ?*Context, _: ?[*]const f64, _: usize, _: ?*anyopaque) c_int {
+    // zds_atmospheric_budget ---------------------------------------------------------------------------------|
+    // Return a typed failure until atmospheric diagnostic rows are ported.                                    |
+    // --------------------------------------------------------------------------------------------------------|
+    return unsupported(ctx, "UnsupportedAtmosphericBudget");
+}
+
+export fn zds_o2_line_contributions(ctx: ?*Context, _: ?[*]const f64, _: usize, _: usize, _: ?*anyopaque) c_int {
+    // zds_o2_line_contributions ------------------------------------------------------------------------------|
+    // Return a typed failure until O2 line contribution diagnostics are ported.                               |
+    // --------------------------------------------------------------------------------------------------------|
+    return unsupported(ctx, "UnsupportedO2LineContributions");
+}
+
+export fn zds_instrument_response_sampling(ctx: ?*Context, _: ?[*]const f64, _: usize, _: u32, _: ?*anyopaque) c_int {
+    // zds_instrument_response_sampling -----------------------------------------------------------------------|
+    // Return a typed failure until instrument-response diagnostic rows are ported.                            |
+    // --------------------------------------------------------------------------------------------------------|
+    return unsupported(ctx, "UnsupportedInstrumentResponse");
+}
+
+export fn zds_o2_o2_cia_diagnostics(ctx: ?*Context, _: ?[*]const f64, _: usize, _: ?*anyopaque) c_int {
+    // zds_o2_o2_cia_diagnostics ------------------------------------------------------------------------------|
+    // Return a typed failure until O2-O2 CIA diagnostic rows are ported.                                      |
+    // --------------------------------------------------------------------------------------------------------|
+    return unsupported(ctx, "UnsupportedO2O2CIADiagnostics");
+}
+
+export fn zds_run_o2a_optimal_estimation(ctx: ?*Context, _: ?*const anyopaque, _: ?*anyopaque) c_int {
+    // zds_run_o2a_optimal_estimation -------------------------------------------------------------------------|
+    // Return a typed failure until package 5 ports optimal estimation.                                        |
+    // --------------------------------------------------------------------------------------------------------|
+    return unsupported(ctx, "UnsupportedOptimalEstimation");
+}
+
+export fn zds_run_o2a_optimal_estimation_correction(ctx: ?*Context, _: ?*const anyopaque, _: ?*anyopaque) c_int {
+    // zds_run_o2a_optimal_estimation_correction --------------------------------------------------------------|
+    // Return a typed failure until package 5 ports correction runs.                                           |
+    // --------------------------------------------------------------------------------------------------------|
+    return unsupported(ctx, "UnsupportedOptimalEstimationCorrection");
+}
+
+export fn zds_run_o2a_optimal_estimation_batch(ctx: ?*Context, _: ?*const anyopaque, _: ?*anyopaque) c_int {
+    // zds_run_o2a_optimal_estimation_batch -------------------------------------------------------------------|
+    // Return a typed failure until package 5 ports batch retrieval.                                           |
+    // --------------------------------------------------------------------------------------------------------|
+    return unsupported(ctx, "UnsupportedOptimalEstimationBatch");
+}
+
+export fn zds_run_o2a_fastmode_optimal_estimation_batch(
+    ctx: ?*Context,
+    _: ?*anyopaque,
+    _: ?*const anyopaque,
+    _: ?*const anyopaque,
+    _: ?*anyopaque,
+) c_int {
+    // zds_run_o2a_fastmode_optimal_estimation_batch ----------------------------------------------------------|
+    // Return a typed failure until package 5 ports fastmode batch retrieval.                                  |
+    // --------------------------------------------------------------------------------------------------------|
+    return unsupported(ctx, "UnsupportedFastmodeOptimalEstimationBatch");
+}
+
+export fn zds_spectrum_free(ctx: ?*Context, out: ?*ZdsSpectrum) void {
+    // zds_spectrum_free --------------------------------------------------------------------------------------|
+    // Release one live spectrum handle returned by this context.                                              |
+    // --------------------------------------------------------------------------------------------------------|
+    const resolved = ctx orelse return;
+    const raw = out orelse return;
+
+    if (raw.result_handle) |handle| {
+        const result: *CResult = @ptrCast(@alignCast(handle));
+        destroyResult(resolved, result);
+    }
+
+    raw.* = .{};
+}
+
+export fn zds_optimal_estimation_result_free(_: ?*Context, _: ?*anyopaque) void {
+    // zds_optimal_estimation_result_free ---------------------------------------------------------------------|
+    // Placeholder free hook for the unimplemented optimal-estimation result route.                            |
+    // --------------------------------------------------------------------------------------------------------|
+}
+
+export fn zds_optimal_estimation_batch_result_free(_: ?*Context, _: ?*anyopaque) void {
+    // zds_optimal_estimation_batch_result_free ---------------------------------------------------------------|
+    // Placeholder free hook for the unimplemented batch optimal-estimation result route.                      |
+    // --------------------------------------------------------------------------------------------------------|
+}
+
+export fn zds_optimal_estimation_fastmode_batch_result_free(_: ?*Context, _: ?*anyopaque) void {
+    // zds_optimal_estimation_fastmode_batch_result_free ------------------------------------------------------|
+    // Placeholder free hook for the unimplemented fastmode batch result route.                                |
+    // --------------------------------------------------------------------------------------------------------|
+}
+
+export fn zds_atmospheric_budget_free(_: ?*Context, _: ?*anyopaque) void {
+    // zds_atmospheric_budget_free ----------------------------------------------------------------------------|
+    // Placeholder free hook for the unimplemented atmospheric budget route.                                   |
+    // --------------------------------------------------------------------------------------------------------|
+}
+
+export fn zds_o2_line_contributions_free(_: ?*Context, _: ?*anyopaque) void {
+    // zds_o2_line_contributions_free -------------------------------------------------------------------------|
+    // Placeholder free hook for the unimplemented O2 line diagnostics route.                                  |
+    // --------------------------------------------------------------------------------------------------------|
+}
+
+export fn zds_instrument_response_free(_: ?*Context, _: ?*anyopaque) void {
+    // zds_instrument_response_free ---------------------------------------------------------------------------|
+    // Placeholder free hook for the unimplemented instrument-response diagnostics route.                      |
+    // --------------------------------------------------------------------------------------------------------|
+}
+
+export fn zds_o2_o2_cia_diagnostics_free(_: ?*Context, _: ?*anyopaque) void {
+    // zds_o2_o2_cia_diagnostics_free -------------------------------------------------------------------------|
+    // Placeholder free hook for the unimplemented O2-O2 CIA diagnostics route.                                |
+    // --------------------------------------------------------------------------------------------------------|
+}
+
+export fn zds_last_error(ctx: ?*Context) [*:0]const u8 {
+    // zds_last_error -----------------------------------------------------------------------------------------|
+    // Return the context's last bounded nul-terminated error string.                                          |
+    // --------------------------------------------------------------------------------------------------------|
+    const resolved = ctx orelse return "null context";
+    return @ptrCast(&resolved.last_error);
+}
+
+fn runSpectrum(
+    ctx: ?*Context,
+    out: ?*ZdsSpectrum,
+    state_ids: ?[*]const u8,
+    requested_state_count: usize,
+    wants_jacobian: bool,
+) c_int {
+    // runSpectrum --------------------------------------------------------------------------------------------|
+    // Execute one forward spectrum and return a C view backed by a Context-owned result handle.               |
+    // --------------------------------------------------------------------------------------------------------|
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+
+    const output = out orelse {
+        resolved.setError("null spectrum output");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+
+    const prepared = &(resolved.prepared orelse {
+        resolved.setError("not prepared");
+        return @intFromEnum(ZdsStatus.failure);
+    });
+
+    const selection = jacobianSelection(state_ids, requested_state_count, wants_jacobian) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+
+    var solve_config = zdisamar.referenceO2ASolveConfig(prepared.case);
+    solve_config.derivative_state_mask = selection.mask;
+    solve_config.derivative_mode = if (wants_jacobian) .semi_analytical else .none;
+
+    const result = allocator.create(CResult) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    result.* = .{};
+    errdefer allocator.destroy(result);
+    result.native = zdisamar.runO2AWithSessionMemory(allocator, &resolved.session, prepared, solve_config) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    errdefer result.native.deinit(allocator);
+
+    if (selection.state_count != 0) {
+        const selected_ids = selection.ids[0..selection.state_count];
+        result.compact_jacobian = compactJacobian(result.native.spectrum.jacobian, selected_ids) catch |err| {
+            resolved.setError(@errorName(err));
+            return @intFromEnum(ZdsStatus.failure);
+        };
+        result.state_count = selection.state_count;
+    }
+    errdefer allocator.free(result.compact_jacobian);
+
+    resolved.results.append(allocator, result) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+
+    output.* = .{
+        .len = result.native.spectrum.sampleCount(),
+        .wavelength_nm = result.native.spectrum.wavelength_nm.ptr,
+        .radiance = result.native.spectrum.radiance.ptr,
+        .irradiance = result.native.spectrum.irradiance.ptr,
+        .reflectance = result.native.spectrum.reflectance.ptr,
+        .jacobian = if (result.compact_jacobian.len == 0) null else result.compact_jacobian.ptr,
+        .jacobian_state_count = result.state_count,
+        .result_handle = @ptrCast(result),
+    };
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
+}
+
+const JacobianSelection = struct {
+    ids: [zdisamar.jacobian_state_count]u8 = .{0} ** zdisamar.jacobian_state_count,
+    state_count: usize = 0,
+    mask: u8 = 0,
+};
+
+fn jacobianSelection(
+    state_ids: ?[*]const u8,
+    requested_state_count: usize,
+    wants_jacobian: bool,
+) !JacobianSelection {
+    // jacobianSelection --------------------------------------------------------------------------------------|
+    // Validate Python state ids and build the fixed root SolveConfig mask plus compact output order.          |
+    // --------------------------------------------------------------------------------------------------------|
+    if (!wants_jacobian) return .{};
+    if (requested_state_count > zdisamar.jacobian_state_count) return error.UnsupportedJacobianState;
+
+    var selection = JacobianSelection{};
+    if (requested_state_count == 0) {
+        for (0..zdisamar.jacobian_state_count) |index| {
+            selection.ids[index] = @intCast(index);
+            selection.mask |= @as(u8, 1) << @intCast(index);
+        }
+        selection.state_count = zdisamar.jacobian_state_count;
+        return selection;
+    }
+
+    const ids = state_ids orelse return error.UnsupportedJacobianState;
+
+    for (ids[0..requested_state_count]) |id| {
+        if (id >= zdisamar.jacobian_state_count) return error.UnsupportedJacobianState;
+
+        const bit = @as(u8, 1) << @intCast(id);
+        if ((selection.mask & bit) != 0) return error.UnsupportedJacobianState;
+
+        selection.ids[selection.state_count] = id;
+        selection.state_count += 1;
+        selection.mask |= bit;
+    }
+
+    return selection;
+}
+
+fn compactJacobian(jacobian: []const zdisamar.JacobianVector, state_ids: []const u8) ![]f64 {
+    // compactJacobian ----------------------------------------------------------------------------------------|
+    // Copy fixed native Jacobian vectors into Python's compact row-major active-state table.                  |
+    // --------------------------------------------------------------------------------------------------------|
+    const state_count = state_ids.len;
+    const compact = try allocator.alloc(f64, jacobian.len * state_count);
+    for (jacobian, 0..) |row, sample_index| {
+        for (state_ids, 0..) |state_id, compact_index| {
+            compact[sample_index * state_count + compact_index] = row[state_id];
+        }
+    }
+    return compact;
+}
+
+fn spectrumReport(spectrum: zdisamar.O2Spectrum) ZdsDiagnosticReport {
+    // spectrumReport -----------------------------------------------------------------------------------------|
+    // Reduce copied spectrum arrays into the scalar report expected by the Python output object.              |
+    // --------------------------------------------------------------------------------------------------------|
+    var report = ZdsDiagnosticReport{ .sample_count = @intCast(spectrum.sampleCount()) };
+    if (spectrum.sampleCount() == 0) return report;
+
+    report.wavelength_start_nm = spectrum.wavelength_nm[0];
+    report.wavelength_end_nm = spectrum.wavelength_nm[spectrum.wavelength_nm.len - 1];
+    for (spectrum.radiance, spectrum.irradiance, spectrum.reflectance) |radiance, irradiance, reflectance| {
+        report.mean_radiance += radiance;
+        report.mean_irradiance += irradiance;
+        report.mean_reflectance += reflectance;
+    }
+    const sample_count: f64 = @floatFromInt(spectrum.sampleCount());
+    report.mean_radiance /= sample_count;
+    report.mean_irradiance /= sample_count;
+    report.mean_reflectance /= sample_count;
+    return report;
+}
+
+fn destroyResult(ctx: *Context, result: *CResult) void {
+    // destroyResult ------------------------------------------------------------------------------------------|
+    // Remove and free one retained result handle if it belongs to this context.                               |
+    // --------------------------------------------------------------------------------------------------------|
+    for (ctx.results.items, 0..) |stored, index| {
+        if (stored == result) {
+            _ = ctx.results.swapRemove(index);
+            result.deinit();
+            allocator.destroy(result);
+            return;
+        }
+    }
+}
+
+fn unsupported(ctx: ?*Context, message: []const u8) c_int {
+    // unsupported --------------------------------------------------------------------------------------------|
+    // Return a typed API-boundary failure for routes that are not ported in this package slice.               |
+    // --------------------------------------------------------------------------------------------------------|
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+    resolved.setError(message);
+    return @intFromEnum(ZdsStatus.failure);
+}
+
+comptime {
+    std.debug.assert(@sizeOf(ZdsSpectrum) == 64);
+    std.debug.assert(@sizeOf(ZdsDiagnosticReport) == 48);
+    std.debug.assert(@sizeOf(CResult) == 184);
+}
