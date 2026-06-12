@@ -68,38 +68,44 @@ pub const PlmBasisCacheStatus = struct {
 // Allocation owner for one worker-local LABOS solve path.                                                     |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 3128 B (3.055 KiB), align: 8 B                                                                        |
+// size: 3192 B (3.117 KiB), align: 8 B                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
 // [   0..  15] attenuation_data                         : []f64                                               |
-// [  16..  31] attenuation_layer_transmittance          : []f64                                               |
-// [  32..  47] attenuation_top_to_level                 : []f64                                               |
-// [  48..  63] rt_layers                                : []LayerRT                                           |
-// [  64..  79] layer_phase_max_indices                  : []usize                                             |
-// [  80..  95] layer_effective_scattering_suffixes      : []f64                                               |
-// [  96.. 111] source_phase_max_indices                 : []usize                                             |
-// [ 112.. 127] order_ud                                 : []UDField                                           |
-// [ 128.. 143] order_ud_sum_local                       : []UDLocal                                           |
-// [ 144.. 159] order_ud_orde                            : []UDLocal                                           |
-// [ 160.. 175] order_ud_local                           : []UDLocal                                           |
-// [ 176.. 191] rt_active                                : []bool                                              |
-// [ 192.. 207] layer_phase_rows                         : []PhaseKernelRow                                    |
-// [ 208.. 223] layer_phase_row_valid                    : []bool                                              |
-// [ 224.. 239] plm_basis_cache                          : []FourierPlmBasis                                   |
-// [ 240.. 255] plm_basis_cache_valid                    : []bool                                              |
-// [ 256.. 271] previous_layer_phase_signatures          : []u64                                               |
-// [ 272.. 287] previous_layer_phase_signature_valid     : []bool                                              |
-// [ 288..3119] cached_geometry                          : GaussGeometry                                       |
-// [3120..3120] cached_geometry_valid                    : bool                                                |
-// [3121..3127] trailing padding                                                                               |
+// [  16..  31] attenuation_tangent_data                 : []f64                                               |
+// [  32..  47] attenuation_layer_transmittance          : []f64                                               |
+// [  48..  63] attenuation_top_to_level                 : []f64                                               |
+// [  64..  79] rt_layers                                : []LayerRT                                           |
+// [  80..  95] rt_layers_tangent                        : []LayerRT                                           |
+// [  96.. 111] layer_phase_max_indices                  : []usize                                             |
+// [ 112.. 127] layer_effective_scattering_suffixes      : []f64                                               |
+// [ 128.. 143] source_phase_max_indices                 : []usize                                             |
+// [ 144.. 159] order_ud                                 : []UDField                                           |
+// [ 160.. 175] order_ud_sum_local                       : []UDLocal                                           |
+// [ 176.. 191] order_ud_orde                            : []UDLocal                                           |
+// [ 192.. 207] order_ud_local                           : []UDLocal                                           |
+// [ 208.. 223] order_ud_tangent_orde                    : []UDLocal                                           |
+// [ 224.. 239] order_ud_tangent_local                   : []UDLocal                                           |
+// [ 240.. 255] rt_active                                : []bool                                              |
+// [ 256.. 271] layer_phase_rows                         : []PhaseKernelRow                                    |
+// [ 272.. 287] layer_phase_row_valid                    : []bool                                              |
+// [ 288.. 303] plm_basis_cache                          : []FourierPlmBasis                                   |
+// [ 304.. 319] plm_basis_cache_valid                    : []bool                                              |
+// [ 320.. 335] previous_layer_phase_signatures          : []u64                                               |
+// [ 336.. 351] previous_layer_phase_signature_valid     : []bool                                              |
+// [ 352..3183] cached_geometry                          : GaussGeometry                                       |
+// [3184..3184] cached_geometry_valid                    : bool                                                |
+// [3185..3191] trailing padding                                                                               |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Every slice owns heap storage and is released by deinit. Active prefixes are borrowed by transport code.  |
 pub const TransportWorkerMemory = struct {
     attenuation_data: []f64 = &.{},
+    attenuation_tangent_data: []f64 = &.{},
     attenuation_layer_transmittance: []f64 = &.{},
     attenuation_top_to_level: []f64 = &.{},
     rt_layers: []rows.LayerRT = &.{},
+    rt_layers_tangent: []rows.LayerRT = &.{},
     layer_phase_max_indices: []usize = &.{},
     layer_effective_scattering_suffixes: []f64 = &.{},
     source_phase_max_indices: []usize = &.{},
@@ -107,6 +113,8 @@ pub const TransportWorkerMemory = struct {
     order_ud_sum_local: []rows.UDLocal = &.{},
     order_ud_orde: []rows.UDLocal = &.{},
     order_ud_local: []rows.UDLocal = &.{},
+    order_ud_tangent_orde: []rows.UDLocal = &.{},
+    order_ud_tangent_local: []rows.UDLocal = &.{},
     rt_active: []bool = &.{},
     layer_phase_rows: []phase_basis.PhaseKernelRow = &.{},
     layer_phase_row_valid: []bool = &.{},
@@ -122,9 +130,11 @@ pub const TransportWorkerMemory = struct {
         // Release every worker-local transport buffer and invalidate cached geometry state.                   |
         // ----------------------------------------------------------------------------------------------------|
         allocator.free(self.attenuation_data);
+        allocator.free(self.attenuation_tangent_data);
         allocator.free(self.attenuation_layer_transmittance);
         allocator.free(self.attenuation_top_to_level);
         allocator.free(self.rt_layers);
+        allocator.free(self.rt_layers_tangent);
         allocator.free(self.layer_phase_max_indices);
         allocator.free(self.layer_effective_scattering_suffixes);
         allocator.free(self.source_phase_max_indices);
@@ -132,6 +142,8 @@ pub const TransportWorkerMemory = struct {
         allocator.free(self.order_ud_sum_local);
         allocator.free(self.order_ud_orde);
         allocator.free(self.order_ud_local);
+        allocator.free(self.order_ud_tangent_orde);
+        allocator.free(self.order_ud_tangent_local);
         allocator.free(self.rt_active);
         allocator.free(self.layer_phase_rows);
         allocator.free(self.layer_phase_row_valid);
@@ -166,9 +178,11 @@ pub const TransportWorkerMemory = struct {
         const top_to_level_count = attenuation.topToLevelRequiredLength(stream_count, layer_count);
 
         _ = try ensureSliceCapacity(f64, allocator, &self.attenuation_data, dynamic_attenuation_count);
+        _ = try ensureSliceCapacity(f64, allocator, &self.attenuation_tangent_data, dynamic_attenuation_count);
         _ = try ensureSliceCapacity(f64, allocator, &self.attenuation_layer_transmittance, layer_transmittance_count);
         _ = try ensureSliceCapacity(f64, allocator, &self.attenuation_top_to_level, top_to_level_count);
         _ = try ensureSliceCapacity(rows.LayerRT, allocator, &self.rt_layers, level_count);
+        _ = try ensureSliceCapacity(rows.LayerRT, allocator, &self.rt_layers_tangent, level_count);
         _ = try ensureSliceCapacity(usize, allocator, &self.layer_phase_max_indices, layer_count);
         _ = try ensureSliceCapacity(f64, allocator, &self.layer_effective_scattering_suffixes, phase_row_count);
         _ = try ensureSliceCapacity(usize, allocator, &self.source_phase_max_indices, level_count);
@@ -178,6 +192,8 @@ pub const TransportWorkerMemory = struct {
         }
         _ = try ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_orde, level_count);
         _ = try ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_local, level_count);
+        _ = try ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_tangent_orde, level_count);
+        _ = try ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_tangent_local, level_count);
         _ = try ensureSliceCapacity(bool, allocator, &self.rt_active, level_count);
         _ = try ensureSliceCapacity(phase_basis.PhaseKernelRow, allocator, &self.layer_phase_rows, level_count);
         _ = try ensureSliceCapacity(bool, allocator, &self.layer_phase_row_valid, level_count);
@@ -256,6 +272,19 @@ pub const TransportWorkerMemory = struct {
         return self.attenuation_data[0..required];
     }
 
+    pub fn dynamicAttenuationTangentBuffer(
+        self: *TransportWorkerMemory,
+        stream_count: usize,
+        layer_count: usize,
+    ) Error![]f64 {
+        // TransportWorkerMemory.dynamicAttenuationTangentBuffer --------------------------------------------- |
+        // Borrow full derivative attenuation storage for one active Jacobian state.                           |
+        // ----------------------------------------------------------------------------------------------------|
+        const required = attenuation.dynamicRequiredLength(stream_count, layer_count);
+        if (required > self.attenuation_tangent_data.len) return error.ShapeMismatch;
+        return self.attenuation_tangent_data[0..required];
+    }
+
     pub fn layerTransmittanceBuffer(
         self: *TransportWorkerMemory,
         stream_count: usize,
@@ -288,6 +317,14 @@ pub const TransportWorkerMemory = struct {
         // ----------------------------------------------------------------------------------------------------|
         if (level_count > self.rt_layers.len) return error.ShapeMismatch;
         return self.rt_layers[0..level_count];
+    }
+
+    pub fn layerRtTangent(self: *TransportWorkerMemory, level_count: usize) Error![]rows.LayerRT {
+        // TransportWorkerMemory.layerRtTangent -------------------------------------------------------------- |
+        // Borrow derivative reflection/transmission rows for one Jacobian state.                              |
+        // ----------------------------------------------------------------------------------------------------|
+        if (level_count > self.rt_layers_tangent.len) return error.ShapeMismatch;
+        return self.rt_layers_tangent[0..level_count];
     }
 
     pub fn layerPhaseMaxIndices(self: *TransportWorkerMemory, layer_count: usize) Error![]usize {
@@ -337,6 +374,8 @@ pub const TransportWorkerMemory = struct {
         if (level_count > self.order_ud.len or
             level_count > self.order_ud_orde.len or
             level_count > self.order_ud_local.len or
+            level_count > self.order_ud_tangent_orde.len or
+            level_count > self.order_ud_tangent_local.len or
             level_count > self.rt_active.len)
         {
             return error.ShapeMismatch;
@@ -355,6 +394,8 @@ pub const TransportWorkerMemory = struct {
             .ud_sum_local = ud_sum_local,
             .ud_orde = self.order_ud_orde[0..level_count],
             .ud_local = self.order_ud_local[0..level_count],
+            .ud_tangent_orde = self.order_ud_tangent_orde[0..level_count],
+            .ud_tangent_local = self.order_ud_tangent_local[0..level_count],
             .rt_active = self.rt_active[0..level_count],
         };
     }
@@ -375,8 +416,10 @@ pub const TransportWorkerMemory = struct {
         return .{
             .geometry = &self.cached_geometry,
             .dynamic_attenuation_data = try self.dynamicAttenuationBuffer(stream_count, layer_count),
+            .dynamic_attenuation_tangent_data = try self.dynamicAttenuationTangentBuffer(stream_count, layer_count),
             .layer_transmittance = try self.layerTransmittanceBuffer(stream_count, layer_count),
             .rt_layers = try self.layerRt(level_count),
+            .rt_layers_tangent = try self.layerRtTangent(level_count),
             .layer_phase_max_indices = try self.layerPhaseMaxIndices(layer_count),
             .effective_scattering_suffixes = self.layer_effective_scattering_suffixes,
             .orders = try self.ordersWorkArrays(level_count, false),
@@ -460,5 +503,5 @@ fn ensureSliceCapacity(
 comptime {
     std.debug.assert(@sizeOf(GeometryCacheStatus) == 16);
     std.debug.assert(@sizeOf(PlmBasisCacheStatus) == 16);
-    std.debug.assert(@sizeOf(TransportWorkerMemory) == 3128);
+    std.debug.assert(@sizeOf(TransportWorkerMemory) == 3192);
 }

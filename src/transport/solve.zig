@@ -13,6 +13,7 @@ const reflectance_helpers = @import("reflectance.zig");
 const rows = @import("rows.zig");
 const scattering_orders = @import("scattering_orders.zig");
 const source_levels = @import("../optics/source_levels.zig");
+const Perturbation = @import("../instrumentation/sensitivity.zig");
 
 const math = std.math;
 
@@ -82,22 +83,24 @@ pub const ReflectanceResult = struct {
 // Borrowed transport scratch passed to solveReflectance.                                                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// normal build: size 200 B (0.195 KiB), align 8                                                               |
-// trace build : size 208 B (0.203 KiB), align 8                                                               |
+// normal build: size 264 B (0.258 KiB), align 8                                                               |
+// trace build : size 272 B (0.266 KiB), align 8                                                               |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0..  7] geometry                     : *GaussGeometry                                                    |
 // [  8.. 23] dynamic_attenuation_data     : []f64                                                             |
-// [ 24.. 39] layer_transmittance          : []f64                                                             |
-// [ 40.. 55] rt_layers                    : []LayerRT                                                         |
-// [ 56.. 71] layer_phase_max_indices      : []usize                                                           |
-// [ 72.. 87] effective_scattering_suffixes: []f64                                                             |
-// [ 88..167] normal build: orders         : OrdersWorkArrays                                                  |
-// [168..183] normal build: plm_basis_cache: []FourierPlmBasis                                                 |
-// [184..199] normal build: valid flags    : []bool                                                            |
-// [168..175] trace build only: orders extra trace field                                                       |
-// [176..191] trace build : plm_basis_cache: []FourierPlmBasis                                                 |
-// [192..207] trace build : valid flags    : []bool                                                            |
+// [ 24.. 39] dynamic_attenuation_tangent_data: []f64                                                          |
+// [ 40.. 55] layer_transmittance          : []f64                                                             |
+// [ 56.. 71] rt_layers                    : []LayerRT                                                         |
+// [ 72.. 87] rt_layers_tangent            : []LayerRT                                                         |
+// [ 88..103] layer_phase_max_indices      : []usize                                                           |
+// [104..119] effective_scattering_suffixes: []f64                                                             |
+// [120..231] normal build: orders         : OrdersWorkArrays                                                  |
+// [232..247] normal build: plm_basis_cache: []FourierPlmBasis                                                 |
+// [248..263] normal build: valid flags    : []bool                                                            |
+// [232..239] trace build only: orders extra trace field                                                       |
+// [240..255] trace build : plm_basis_cache: []FourierPlmBasis                                                 |
+// [256..271] trace build : valid flags    : []bool                                                            |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Every slice borrows caller-owned memory, normally from TransportWorkerMemory.                             |
@@ -105,8 +108,10 @@ pub const ReflectanceResult = struct {
 pub const TransportWorkArrays = struct {
     geometry: *gauss_angles.GaussGeometry,
     dynamic_attenuation_data: []f64,
+    dynamic_attenuation_tangent_data: []f64,
     layer_transmittance: []f64,
     rt_layers: []rows.LayerRT,
+    rt_layers_tangent: []rows.LayerRT,
     layer_phase_max_indices: []usize,
     effective_scattering_suffixes: []f64,
     orders: scattering_orders.OrdersWorkArrays,
@@ -159,8 +164,7 @@ pub fn solveReflectance(
     if (config.controls.use_spherical_correction) return error.UnsupportedRadiativeTransferControls;
 
     if (config.derivative_mode != .none and
-        (jacobian_states.includes(config.derivative_state_mask, .aerosol_optical_depth) or
-            jacobian_states.includes(config.derivative_state_mask, .aerosol_layer_mid_pressure_hpa)))
+        jacobian_states.includes(config.derivative_state_mask, .aerosol_layer_mid_pressure_hpa))
     {
         return error.UnsupportedDerivativeMode;
     }
@@ -238,11 +242,11 @@ fn solveNonIntegratedScattering(
     //   1. build direction geometry and direct-beam attenuation                                               |
     //   2. prepare per-layer phase limits and layer-doubling suffix rows                                      |
     //   3. loop retained Fourier terms: PLM basis -> RT layers -> scattering orders -> rho_m                  |
-    //   4. add Fourier-weighted rho_m and optional zero-Fourier surface-albedo tangent                        |
+    //   4. add Fourier-weighted rho_m and requested non-integrated tangents                                   |
     //   5. stop at the old Fourier tail gate and clamp the public reflectance                                 |
     //                                                                                                         |
     // unsupported here                                                                                        |
-    //   Integrated source and aerosol derivatives are separate old routes and stay rejected by the caller.    |
+    //   Integrated source and pressure derivatives are separate old routes and stay rejected by the caller.   |
     // --------------------------------------------------------------------------------------------------------|
     if (layers.len == 0) return .{ .reflectance = 0.0 };
 
@@ -254,10 +258,13 @@ fn solveNonIntegratedScattering(
     const level_count = layer_count + 1;
 
     if (work.rt_layers.len < level_count or
+        work.rt_layers_tangent.len < level_count or
         work.layer_phase_max_indices.len < layer_count or
         work.orders.ud.len < level_count or
         work.orders.ud_orde.len < level_count or
         work.orders.ud_local.len < level_count or
+        work.orders.ud_tangent_orde.len < level_count or
+        work.orders.ud_tangent_local.len < level_count or
         work.orders.rt_active.len < level_count)
     {
         return error.InvalidShape;
@@ -300,9 +307,13 @@ fn solveNonIntegratedScattering(
     const wants_surface_albedo =
         config.derivative_mode != .none and
         jacobian_states.includes(config.derivative_state_mask, .surface_albedo);
+    const wants_aerosol_optical_depth =
+        config.derivative_mode != .none and
+        jacobian_states.includes(config.derivative_state_mask, .aerosol_optical_depth);
 
     var result_reflectance: f64 = 0.0;
     var surface_albedo_tangent: f64 = 0.0;
+    var aerosol_optical_depth_tangent: f64 = 0.0;
     for (0..fourier_max + 1) |fourier_index| {
         const plm_basis = try cachedPlmBasis(
             fourier_index,
@@ -354,12 +365,57 @@ fn solveNonIntegratedScattering(
         if (wants_surface_albedo and fourier_index == 0) {
             surface_albedo_tangent += reflectance_helpers.surfaceAlbedoWeighting(orders_view.ud, geometry);
         }
+        if (wants_aerosol_optical_depth) {
+            const tangent_attenuation = try attenuation.fillDynamicTangent(
+                work.dynamic_attenuation_tangent_data,
+                layers,
+                .aerosol_optical_depth,
+                geometry,
+            );
+            const rt_layers_tangent = work.rt_layers_tangent[0..level_count];
+            layer_reflect_transmit.fillLayerReflectTransmitTangentRowsWithBasis(
+                rt_layers_tangent,
+                layers,
+                .aerosol_optical_depth,
+                fourier_index,
+                geometry,
+                config.controls,
+                phase,
+                rayleigh_phase_coefficient2,
+                plm_basis,
+            );
+            const tangent_orders = scattering_orders.solveOrdersTangent(
+                &work.orders,
+                0,
+                layer_count,
+                geometry,
+                dynamic_attenuation,
+                tangent_attenuation,
+                rt_layers,
+                rt_layers_tangent,
+                config.controls,
+                order_count,
+            );
+            const tangent_rho_m =
+                reflectance_helpers.topReflectanceCoefficient(tangent_orders.ud, layer_count, geometry);
+            aerosol_optical_depth_tangent += Perturbation.scalar(
+                .aerosol_aod_tangent,
+                .{
+                    .fourier_index = @intCast(fourier_index),
+                    .state_index = @intCast(jacobian_states.stateIndex(.aerosol_optical_depth)),
+                },
+                contribution.weight * tangent_rho_m,
+            );
+        }
         if (contribution.tail_break) break;
     }
 
     var jacobian = jacobian_states.zero();
     if (wants_surface_albedo) {
         jacobian_states.set(&jacobian, .surface_albedo, surface_albedo_tangent);
+    }
+    if (wants_aerosol_optical_depth) {
+        jacobian_states.set(&jacobian, .aerosol_optical_depth, aerosol_optical_depth_tangent);
     }
     return .{
         .reflectance = reflectance_helpers.clampPublicReflectance(result_reflectance),
@@ -417,7 +473,7 @@ fn totalScatteringOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {
 }
 
 comptime {
-    const expected_work_size: usize = if (@sizeOf(scattering_orders.OrdersWorkArrays) == 88) 208 else 200;
+    const expected_work_size: usize = if (@sizeOf(scattering_orders.OrdersWorkArrays) == 120) 272 else 264;
     std.debug.assert(@sizeOf(ViewAngles) == 24);
     std.debug.assert(@sizeOf(ReflectanceResult) == 32);
     std.debug.assert(@sizeOf(TransportWorkArrays) == expected_work_size);

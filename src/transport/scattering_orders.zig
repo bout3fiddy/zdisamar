@@ -60,26 +60,30 @@ pub const OrdersView = struct {
 // Borrowed row storage for one LABOS scattering-order solve.                                                  |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// normal build: size 80 B (0.078 KiB), align 8                                                                |
-// trace build : size 88 B (0.086 KiB), align 8                                                                |
+// normal build: size 112 B (0.109 KiB), align 8                                                               |
+// trace build : size 120 B (0.117 KiB), align 8                                                               |
 //                                                                                                             |
 // memory                                                                                                      |
 // [ 0..15] ud           : []UDField                                                                           |
 // [16..31] ud_sum_local : []UDLocal                                                                           |
 // [32..47] ud_orde      : []UDLocal                                                                           |
 // [48..63] ud_local     : []UDLocal                                                                           |
-// [64..79] rt_active    : []bool                                                                              |
-// [80..87] trace build only: trace_phase : WorkspaceState                                                     |
+// [64..79] ud_tangent_orde  : []UDLocal                                                                       |
+// [80..95] ud_tangent_local : []UDLocal                                                                       |
+// [96..111] rt_active       : []bool                                                                          |
+// [112..119] trace build only: trace_phase : WorkspaceState                                                   |
 //                                                                                                             |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // referenced storage: all slices are borrowed from the transport worker memory owner                          |
 // cache span: 2 cache lines at 64 B per line                                                                  |
-// footprint: per instance = 88 B (0.086 KiB); referenced rows are caller-owned                                |
+// footprint: per instance = 120 B (0.117 KiB); referenced rows are caller-owned                               |
 pub const OrdersWorkArrays = struct {
     ud: []rows.UDField,
     ud_sum_local: []rows.UDLocal,
     ud_orde: []rows.UDLocal,
     ud_local: []rows.UDLocal,
+    ud_tangent_orde: []rows.UDLocal,
+    ud_tangent_local: []rows.UDLocal,
     rt_active: []bool,
     trace_phase: phase_timing.WorkspaceState = .{},
 
@@ -218,6 +222,148 @@ pub fn solveOrdersWithActiveLocalSum(
         transport_controls,
         num_orders_max,
     );
+}
+
+pub fn solveOrdersTangent(
+    work: *OrdersWorkArrays,
+    start_level: usize,
+    end_level: usize,
+    geometry: *const gauss_angles.GaussGeometry,
+    attenuation_base: anytype,
+    attenuation_tangent: anytype,
+    rt: []const rows.LayerRT,
+    rt_tangent: []const rows.LayerRT,
+    transport_controls: controls.TransportControls,
+    num_orders_max: usize,
+) OrdersView {
+    // solveOrdersTangent ------------------------------------------------------------------------------------ |
+    // Propagate non-integrated derivative order fields through the old LABOS scattering-order recurrence.     |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports main:`radiative_transfer/labos/orders.zig` `ordersScatTangent` without allocation.              |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   d(T * attenuation) = dT * attenuation + T * d attenuation                                             |
+    //   d(R * U) = dR * U + R * dU                                                                            |
+    //                                                                                                         |
+    // convergence                                                                                             |
+    //   The base current order controls the same first/multiple-order stop gates as the old route.            |
+    // --------------------------------------------------------------------------------------------------------|
+    const stream_count = geometry.stream_count;
+    const gaussian_count = geometry.n_gauss;
+    const level_count = end_level + 1;
+
+    std.debug.assert(work.ud.len >= level_count);
+    std.debug.assert(work.ud_orde.len >= level_count);
+    std.debug.assert(work.ud_local.len >= level_count);
+    std.debug.assert(work.ud_tangent_orde.len >= level_count);
+    std.debug.assert(work.ud_tangent_local.len >= level_count);
+    std.debug.assert(work.rt_active.len >= level_count);
+    std.debug.assert(rt.len >= level_count);
+    std.debug.assert(rt_tangent.len >= level_count);
+
+    const ud_tangent = work.ud[0..level_count];
+    const base_orde = work.ud_orde[0..level_count];
+    const base_local = work.ud_local[0..level_count];
+    const tangent_orde = work.ud_tangent_orde[0..level_count];
+    const tangent_local = work.ud_tangent_local[0..level_count];
+    const rt_active = work.rt_active[0..level_count];
+    initializeTangentOrderBuffers(ud_tangent, base_orde, base_local, tangent_orde, tangent_local, stream_count);
+    refreshActiveLayerMask(rt[0..level_count], rt_active, stream_count);
+
+    fillInitialTangentDirectAndLocalSources(
+        ud_tangent,
+        base_local,
+        tangent_local,
+        start_level,
+        end_level,
+        geometry,
+        attenuation_base,
+        attenuation_tangent,
+        rt,
+        rt_tangent,
+        rt_active,
+    );
+    transportToOtherLevels(start_level, end_level, stream_count, attenuation_base, base_local, base_orde);
+    transportToOtherLevelsTangent(
+        start_level,
+        end_level,
+        stream_count,
+        attenuation_base,
+        attenuation_tangent,
+        tangent_local,
+        base_orde,
+        tangent_orde,
+    );
+    copyTransportedOrderIntoOutput(ud_tangent, tangent_orde, start_level, end_level);
+
+    var max_value = maxOutgoingUpward(base_orde, end_level, gaussian_count, stream_count);
+    const first_order_converged =
+        max_value < transport_controls.performance_thresholds.threshold_conv_first;
+    if (transport_controls.scattering != .multiple or first_order_converged) {
+        return .{ .ud = ud_tangent, .ud_sum_local = &.{} };
+    }
+
+    var order_index: usize = 1;
+    while (true) {
+        order_index += 1;
+
+        fillDownwardLocalSourcesTangent(
+            start_level,
+            end_level,
+            geometry,
+            rt,
+            rt_tangent,
+            rt_active,
+            base_orde,
+            tangent_orde,
+            base_local,
+            tangent_local,
+        );
+        fillUpwardLocalSourcesTangent(
+            start_level,
+            end_level,
+            geometry,
+            rt,
+            rt_tangent,
+            rt_active,
+            base_orde,
+            tangent_orde,
+            base_local,
+            tangent_local,
+        );
+        transportToOtherLevels(start_level, end_level, stream_count, attenuation_base, base_local, base_orde);
+        transportToOtherLevelsTangent(
+            start_level,
+            end_level,
+            stream_count,
+            attenuation_base,
+            attenuation_tangent,
+            tangent_local,
+            base_orde,
+            tangent_orde,
+        );
+
+        max_value = maxOutgoingUpward(base_orde, end_level, gaussian_count, stream_count);
+        if (max_value < transport_controls.performance_thresholds.threshold_conv_mult or
+            order_index >= num_orders_max)
+        {
+            break;
+        }
+
+        accumulateOrderContribution(
+            false,
+            ud_tangent,
+            work.ud_sum_local[0..0],
+            tangent_orde,
+            tangent_local,
+            start_level,
+            end_level,
+            stream_count,
+        );
+    }
+
+    return .{ .ud = ud_tangent, .ud_sum_local = &.{} };
 }
 
 fn solveOrdersInternal(
@@ -567,6 +713,86 @@ fn fillInitialDirectAndLocalSources(
     }
 }
 
+fn fillInitialTangentDirectAndLocalSources(
+    ud_tangent: []rows.UDField,
+    base_local: []rows.UDLocal,
+    tangent_local: []rows.UDLocal,
+    start_level: usize,
+    end_level: usize,
+    geometry: *const gauss_angles.GaussGeometry,
+    attenuation_base: anytype,
+    attenuation_tangent: anytype,
+    rt: []const rows.LayerRT,
+    rt_tangent: []const rows.LayerRT,
+    rt_active: []const bool,
+) void {
+    // fillInitialTangentDirectAndLocalSources --------------------------------------------------------------- |
+    // Build base and derivative first-order local sources using the old non-integrated product rule.          |
+    // --------------------------------------------------------------------------------------------------------|
+    const stream_count = geometry.stream_count;
+    const gaussian_count = geometry.n_gauss;
+
+    for (start_level..end_level + 1) |level| {
+        for (0..stream_count) |stream_index| {
+            ud_tangent[level].E.data[stream_index] = 0.0;
+        }
+    }
+
+    for (start_level..end_level) |level| {
+        for (0..2) |extra_index| {
+            const local_d = &base_local[level].D.col[extra_index].data;
+            const tangent_d = &tangent_local[level].D.col[extra_index].data;
+            if (!rt_active[level + 1]) {
+                zeroPair(local_d, tangent_d, stream_count);
+                continue;
+            }
+
+            const col = gaussian_count + extra_index;
+            const attenuation_value = attenuation_base.get(col, end_level, level + 1);
+            const attenuation_derivative = attenuation_tangent.get(col, end_level, level + 1);
+            const rt_t = &rt[level + 1].T;
+            const rt_t_derivative = &rt_tangent[level + 1].T;
+            var rt_index = col;
+
+            for (0..stream_count) |stream_index| {
+                local_d[stream_index] = rt_t.data[rt_index] * attenuation_value;
+                tangent_d[stream_index] =
+                    rt_t_derivative.data[rt_index] * attenuation_value +
+                    rt_t.data[rt_index] * attenuation_derivative;
+                rt_index += rt_t.n;
+            }
+        }
+    }
+    base_local[end_level].D = rows.Vec2.zero(stream_count);
+    tangent_local[end_level].D = rows.Vec2.zero(stream_count);
+
+    for (start_level..end_level + 1) |level| {
+        for (0..2) |extra_index| {
+            const local_u = &base_local[level].U.col[extra_index].data;
+            const tangent_u = &tangent_local[level].U.col[extra_index].data;
+            if (!rt_active[level]) {
+                zeroPair(local_u, tangent_u, stream_count);
+                continue;
+            }
+
+            const col = gaussian_count + extra_index;
+            const attenuation_value = attenuation_base.get(col, end_level, level);
+            const attenuation_derivative = attenuation_tangent.get(col, end_level, level);
+            const rt_r = &rt[level].R;
+            const rt_r_derivative = &rt_tangent[level].R;
+            var rt_index = col;
+
+            for (0..stream_count) |stream_index| {
+                local_u[stream_index] = rt_r.data[rt_index] * attenuation_value;
+                tangent_u[stream_index] =
+                    rt_r_derivative.data[rt_index] * attenuation_value +
+                    rt_r.data[rt_index] * attenuation_derivative;
+                rt_index += rt_r.n;
+            }
+        }
+    }
+}
+
 fn fillDownwardLocalSources(
     start_level: usize,
     end_level: usize,
@@ -608,6 +834,65 @@ fn fillDownwardLocalSources(
         }
     }
     ud_local[end_level].D = rows.Vec2.zero(stream_count);
+}
+
+fn fillDownwardLocalSourcesTangent(
+    start_level: usize,
+    end_level: usize,
+    geometry: *const gauss_angles.GaussGeometry,
+    rt: []const rows.LayerRT,
+    rt_tangent: []const rows.LayerRT,
+    rt_active: []const bool,
+    base_orde: []const rows.UDLocal,
+    tangent_orde: []const rows.UDLocal,
+    base_local: []rows.UDLocal,
+    tangent_local: []rows.UDLocal,
+) void {
+    // fillDownwardLocalSourcesTangent ----------------------------------------------------------------------- |
+    // Build derivative downward local sources for one later scattering order.                                 |
+    // --------------------------------------------------------------------------------------------------------|
+    const stream_count = geometry.stream_count;
+    const gaussian_count = geometry.n_gauss;
+
+    for (start_level..end_level) |level| {
+        const local_d0 = &base_local[level].D.col[0].data;
+        const local_d1 = &base_local[level].D.col[1].data;
+        const tangent_d0 = &tangent_local[level].D.col[0].data;
+        const tangent_d1 = &tangent_local[level].D.col[1].data;
+
+        if (!rt_active[level + 1]) {
+            zeroQuad(local_d0, local_d1, tangent_d0, tangent_d1, stream_count);
+            continue;
+        }
+
+        const prev_u0 = &base_orde[level].U.col[0];
+        const prev_u1 = &base_orde[level].U.col[1];
+        const prev_d0 = &base_orde[level + 1].D.col[0];
+        const prev_d1 = &base_orde[level + 1].D.col[1];
+        const tangent_prev_u0 = &tangent_orde[level].U.col[0];
+        const tangent_prev_u1 = &tangent_orde[level].U.col[1];
+        const tangent_prev_d0 = &tangent_orde[level + 1].D.col[0];
+        const tangent_prev_d1 = &tangent_orde[level + 1].D.col[1];
+
+        for (0..stream_count) |stream_index| {
+            const r_dot_u = dotGaussPair(&rt[level + 1].R, stream_index, prev_u0, prev_u1, gaussian_count);
+            const t_dot_d = dotGaussPair(&rt[level + 1].T, stream_index, prev_d0, prev_d1, gaussian_count);
+            local_d0[stream_index] = r_dot_u.col0 + t_dot_d.col0;
+            local_d1[stream_index] = r_dot_u.col1 + t_dot_d.col1;
+
+            const dr_dot_u = dotGaussPair(&rt_tangent[level + 1].R, stream_index, prev_u0, prev_u1, gaussian_count);
+            const r_dot_du =
+                dotGaussPair(&rt[level + 1].R, stream_index, tangent_prev_u0, tangent_prev_u1, gaussian_count);
+            const dt_dot_d = dotGaussPair(&rt_tangent[level + 1].T, stream_index, prev_d0, prev_d1, gaussian_count);
+            const t_dot_dd =
+                dotGaussPair(&rt[level + 1].T, stream_index, tangent_prev_d0, tangent_prev_d1, gaussian_count);
+
+            tangent_d0[stream_index] = dr_dot_u.col0 + r_dot_du.col0 + dt_dot_d.col0 + t_dot_dd.col0;
+            tangent_d1[stream_index] = dr_dot_u.col1 + r_dot_du.col1 + dt_dot_d.col1 + t_dot_dd.col1;
+        }
+    }
+    base_local[end_level].D = rows.Vec2.zero(stream_count);
+    tangent_local[end_level].D = rows.Vec2.zero(stream_count);
 }
 
 fn fillUpwardLocalSources(
@@ -669,6 +954,94 @@ fn fillUpwardLocalSources(
 
             local_u0[stream_index] = r_dot_d.col0 + tst_dot_u.col0;
             local_u1[stream_index] = r_dot_d.col1 + tst_dot_u.col1;
+        }
+    }
+}
+
+fn fillUpwardLocalSourcesTangent(
+    start_level: usize,
+    end_level: usize,
+    geometry: *const gauss_angles.GaussGeometry,
+    rt: []const rows.LayerRT,
+    rt_tangent: []const rows.LayerRT,
+    rt_active: []const bool,
+    base_orde: []const rows.UDLocal,
+    tangent_orde: []const rows.UDLocal,
+    base_local: []rows.UDLocal,
+    tangent_local: []rows.UDLocal,
+) void {
+    // fillUpwardLocalSourcesTangent ------------------------------------------------------------------------- |
+    // Build derivative upward local sources for one later scattering order.                                   |
+    // --------------------------------------------------------------------------------------------------------|
+    const stream_count = geometry.stream_count;
+    const gaussian_count = geometry.n_gauss;
+    const local_u_start0 = &base_local[start_level].U.col[0].data;
+    const local_u_start1 = &base_local[start_level].U.col[1].data;
+    const tangent_u_start0 = &tangent_local[start_level].U.col[0].data;
+    const tangent_u_start1 = &tangent_local[start_level].U.col[1].data;
+    const prev_d_start0 = &base_orde[start_level].D.col[0];
+    const prev_d_start1 = &base_orde[start_level].D.col[1];
+    const tangent_prev_d_start0 = &tangent_orde[start_level].D.col[0];
+    const tangent_prev_d_start1 = &tangent_orde[start_level].D.col[1];
+
+    if (rt_active[start_level]) {
+        for (0..stream_count) |stream_index| {
+            const r_dot_d =
+                dotGaussPair(&rt[start_level].R, stream_index, prev_d_start0, prev_d_start1, gaussian_count);
+            local_u_start0[stream_index] = r_dot_d.col0;
+            local_u_start1[stream_index] = r_dot_d.col1;
+
+            const dr_dot_d =
+                dotGaussPair(&rt_tangent[start_level].R, stream_index, prev_d_start0, prev_d_start1, gaussian_count);
+            const r_dot_dd = dotGaussPair(
+                &rt[start_level].R,
+                stream_index,
+                tangent_prev_d_start0,
+                tangent_prev_d_start1,
+                gaussian_count,
+            );
+            tangent_u_start0[stream_index] = dr_dot_d.col0 + r_dot_dd.col0;
+            tangent_u_start1[stream_index] = dr_dot_d.col1 + r_dot_dd.col1;
+        }
+    } else {
+        zeroQuad(local_u_start0, local_u_start1, tangent_u_start0, tangent_u_start1, stream_count);
+    }
+
+    for (start_level + 1..end_level + 1) |level| {
+        const local_u0 = &base_local[level].U.col[0].data;
+        const local_u1 = &base_local[level].U.col[1].data;
+        const tangent_u0 = &tangent_local[level].U.col[0].data;
+        const tangent_u1 = &tangent_local[level].U.col[1].data;
+
+        if (!rt_active[level]) {
+            zeroQuad(local_u0, local_u1, tangent_u0, tangent_u1, stream_count);
+            continue;
+        }
+
+        const prev_d0 = &base_orde[level].D.col[0];
+        const prev_d1 = &base_orde[level].D.col[1];
+        const prev_u0 = &base_orde[level - 1].U.col[0];
+        const prev_u1 = &base_orde[level - 1].U.col[1];
+        const tangent_prev_d0 = &tangent_orde[level].D.col[0];
+        const tangent_prev_d1 = &tangent_orde[level].D.col[1];
+        const tangent_prev_u0 = &tangent_orde[level - 1].U.col[0];
+        const tangent_prev_u1 = &tangent_orde[level - 1].U.col[1];
+
+        for (0..stream_count) |stream_index| {
+            const r_dot_d = dotGaussPair(&rt[level].R, stream_index, prev_d0, prev_d1, gaussian_count);
+            const t_dot_u = dotGaussPair(&rt[level].T, stream_index, prev_u0, prev_u1, gaussian_count);
+            local_u0[stream_index] = r_dot_d.col0 + t_dot_u.col0;
+            local_u1[stream_index] = r_dot_d.col1 + t_dot_u.col1;
+
+            const dr_dot_d = dotGaussPair(&rt_tangent[level].R, stream_index, prev_d0, prev_d1, gaussian_count);
+            const r_dot_dd =
+                dotGaussPair(&rt[level].R, stream_index, tangent_prev_d0, tangent_prev_d1, gaussian_count);
+            const dt_dot_u = dotGaussPair(&rt_tangent[level].T, stream_index, prev_u0, prev_u1, gaussian_count);
+            const t_dot_du =
+                dotGaussPair(&rt[level].T, stream_index, tangent_prev_u0, tangent_prev_u1, gaussian_count);
+
+            tangent_u0[stream_index] = dr_dot_d.col0 + r_dot_dd.col0 + dt_dot_u.col0 + t_dot_du.col0;
+            tangent_u1[stream_index] = dr_dot_d.col1 + r_dot_dd.col1 + dt_dot_u.col1 + t_dot_du.col1;
         }
     }
 }
@@ -771,6 +1144,76 @@ fn transportToOtherLevels12(
     }
 }
 
+fn transportToOtherLevelsTangent(
+    start_level: usize,
+    end_level: usize,
+    stream_count: usize,
+    attenuation_base: anytype,
+    attenuation_tangent: anytype,
+    ud_local_tangent: []const rows.UDLocal,
+    ud_orde_base: []const rows.UDLocal,
+    ud_orde_tangent: []rows.UDLocal,
+) void {
+    // transportToOtherLevelsTangent ------------------------------------------------------------------------- |
+    // Transport derivative U/D fields through the same level grid as the base current order.                  |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   d(T * U) = dT * U + T * dU                                                                            |
+    // --------------------------------------------------------------------------------------------------------|
+    ud_orde_tangent[start_level].U = ud_local_tangent[start_level].U;
+    for (start_level + 1..end_level + 1) |level| {
+        const local_du0 = ud_local_tangent[level].U.col[0].data;
+        const local_du1 = ud_local_tangent[level].U.col[1].data;
+        const prev_u0 = ud_orde_base[level - 1].U.col[0].data;
+        const prev_u1 = ud_orde_base[level - 1].U.col[1].data;
+        const prev_du0 = ud_orde_tangent[level - 1].U.col[0].data;
+        const prev_du1 = ud_orde_tangent[level - 1].U.col[1].data;
+        const out_u0 = &ud_orde_tangent[level].U.col[0].data;
+        const out_u1 = &ud_orde_tangent[level].U.col[1].data;
+
+        for (0..stream_count) |stream_index| {
+            const attenuation_value = attenuation_base.get(stream_index, level - 1, level);
+            const attenuation_derivative = attenuation_tangent.get(stream_index, level - 1, level);
+            out_u0[stream_index] =
+                local_du0[stream_index] +
+                attenuation_derivative * prev_u0[stream_index] +
+                attenuation_value * prev_du0[stream_index];
+            out_u1[stream_index] =
+                local_du1[stream_index] +
+                attenuation_derivative * prev_u1[stream_index] +
+                attenuation_value * prev_du1[stream_index];
+        }
+    }
+
+    ud_orde_tangent[end_level].D = rows.Vec2.zero(stream_count);
+    var level = end_level;
+    while (level > start_level) {
+        level -= 1;
+
+        const local_dd0 = ud_local_tangent[level].D.col[0].data;
+        const local_dd1 = ud_local_tangent[level].D.col[1].data;
+        const prev_d0 = ud_orde_base[level + 1].D.col[0].data;
+        const prev_d1 = ud_orde_base[level + 1].D.col[1].data;
+        const prev_dd0 = ud_orde_tangent[level + 1].D.col[0].data;
+        const prev_dd1 = ud_orde_tangent[level + 1].D.col[1].data;
+        const out_d0 = &ud_orde_tangent[level].D.col[0].data;
+        const out_d1 = &ud_orde_tangent[level].D.col[1].data;
+
+        for (0..stream_count) |stream_index| {
+            const attenuation_value = attenuation_base.get(stream_index, level + 1, level);
+            const attenuation_derivative = attenuation_tangent.get(stream_index, level + 1, level);
+            out_d0[stream_index] =
+                local_dd0[stream_index] +
+                attenuation_derivative * prev_d0[stream_index] +
+                attenuation_value * prev_dd0[stream_index];
+            out_d1[stream_index] =
+                local_dd1[stream_index] +
+                attenuation_derivative * prev_d1[stream_index] +
+                attenuation_value * prev_dd1[stream_index];
+        }
+    }
+}
+
 fn initializeOrderBuffers(
     comptime track_sum_local: bool,
     ud: []rows.UDField,
@@ -791,6 +1234,42 @@ fn initializeOrderBuffers(
         ud_orde[index] = undefined;
         ud_local[index].U = rows.Vec2.zero(stream_count);
         ud_local[index].D = rows.Vec2.zero(stream_count);
+    }
+}
+
+fn initializeTangentOrderBuffers(
+    ud_tangent: []rows.UDField,
+    base_orde: []rows.UDLocal,
+    base_local: []rows.UDLocal,
+    tangent_orde: []rows.UDLocal,
+    tangent_local: []rows.UDLocal,
+    stream_count: usize,
+) void {
+    // initializeTangentOrderBuffers ------------------------------------------------------------------------- |
+    // Reset base and derivative rows needed by one non-integrated tangent order solve.                        |
+    // --------------------------------------------------------------------------------------------------------|
+    for (0..ud_tangent.len) |index| {
+        ud_tangent[index] = .{
+            .E = rows.Vec.zero(stream_count),
+            .U = rows.Vec2.zero(stream_count),
+            .D = rows.Vec2.zero(stream_count),
+        };
+        base_orde[index] = .{
+            .U = rows.Vec2.zero(stream_count),
+            .D = rows.Vec2.zero(stream_count),
+        };
+        base_local[index] = .{
+            .U = rows.Vec2.zero(stream_count),
+            .D = rows.Vec2.zero(stream_count),
+        };
+        tangent_orde[index] = .{
+            .U = rows.Vec2.zero(stream_count),
+            .D = rows.Vec2.zero(stream_count),
+        };
+        tangent_local[index] = .{
+            .U = rows.Vec2.zero(stream_count),
+            .D = rows.Vec2.zero(stream_count),
+        };
     }
 }
 
@@ -951,6 +1430,34 @@ fn rtLayerHasSignal(rt: *const rows.LayerRT, stream_count: usize) bool {
     }
 
     return false;
+}
+
+fn zeroPair(a: *[rows.max_stream_count]f64, b: *[rows.max_stream_count]f64, stream_count: usize) void {
+    // zeroPair ---------------------------------------------------------------------------------------------- |
+    // Clear two active stream rows without touching inactive fixed-capacity storage.                          |
+    // --------------------------------------------------------------------------------------------------------|
+    for (0..stream_count) |stream_index| {
+        a[stream_index] = 0.0;
+        b[stream_index] = 0.0;
+    }
+}
+
+fn zeroQuad(
+    a: *[rows.max_stream_count]f64,
+    b: *[rows.max_stream_count]f64,
+    c: *[rows.max_stream_count]f64,
+    d: *[rows.max_stream_count]f64,
+    stream_count: usize,
+) void {
+    // zeroQuad ---------------------------------------------------------------------------------------------- |
+    // Clear four active stream rows used by base/tangent local source pairs.                                  |
+    // --------------------------------------------------------------------------------------------------------|
+    for (0..stream_count) |stream_index| {
+        a[stream_index] = 0.0;
+        b[stream_index] = 0.0;
+        c[stream_index] = 0.0;
+        d[stream_index] = 0.0;
+    }
 }
 
 pub fn dotGauss(

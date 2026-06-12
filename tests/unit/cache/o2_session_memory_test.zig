@@ -25,7 +25,7 @@ test "O2SessionMemory groups named reusable memory owners only" {
 }
 
 test "O2SessionMemory layout matches named owner composition" {
-    const expected_size: usize = if (builtin.mode == .Debug) 3384 else 3376;
+    const expected_size: usize = if (builtin.mode == .Debug) 3448 else 3440;
     try std.testing.expectEqual(expected_size, @sizeOf(o2_session_memory.O2SessionMemory));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(o2_session_memory.O2SessionMemory));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(o2_session_memory.O2SessionMemory, "spectrum"));
