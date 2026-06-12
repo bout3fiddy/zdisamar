@@ -152,6 +152,7 @@ pub const optics = struct {
 // footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
 pub const output = struct {
     pub const atmospheric_budget = @import("output/atmospheric_budget.zig");
+    pub const instrument_response = @import("output/instrument_response.zig");
     pub const o2_o2_cia = @import("output/o2_o2_cia.zig");
     pub const spectrum = @import("output/spectrum.zig");
 };

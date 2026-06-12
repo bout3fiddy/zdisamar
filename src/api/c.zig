@@ -88,6 +88,22 @@ pub const ZdsAtmosphericBudget = extern struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
+// ZdsInstrumentResponse --------------------------------------------------------------------------------------|
+// Borrowed instrument-response rows returned by zds_instrument_response_sampling. rows owns a Context-free    |
+// allocation.                                                                                                 |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0.. 7] len : usize                                                                                         |
+// [8..15] rows: ?[*]const InstrumentResponseRow                                                               |
+pub const ZdsInstrumentResponse = extern struct {
+    len: usize = 0,
+    rows: ?[*]const zdisamar.InstrumentResponseRow = null,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
 // ZdsO2O2CIADiagnostics --------------------------------------------------------------------------------------|
 // Borrowed O2-O2 CIA rows returned by zds_o2_o2_cia_diagnostics. rows owns a Context-free allocation.         |
 //                                                                                                             |
@@ -452,11 +468,55 @@ export fn zds_o2_line_contributions(ctx: ?*Context, _: ?[*]const f64, _: usize, 
     return unsupported(ctx, "UnsupportedO2LineContributions");
 }
 
-export fn zds_instrument_response_sampling(ctx: ?*Context, _: ?[*]const f64, _: usize, _: u32, _: ?*anyopaque) c_int {
+export fn zds_instrument_response_sampling(
+    ctx: ?*Context,
+    wavelengths: ?[*]const f64,
+    wavelength_count: usize,
+    channel_mask: u32,
+    out: ?*ZdsInstrumentResponse,
+) c_int {
     // zds_instrument_response_sampling -----------------------------------------------------------------------|
-    // Return a typed failure until instrument-response diagnostic rows are ported.                            |
+    // Build instrument-response support rows for caller-selected wavelengths and channel mask.                |
     // --------------------------------------------------------------------------------------------------------|
-    return unsupported(ctx, "UnsupportedInstrumentResponse");
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+    const prepared = &(resolved.prepared orelse {
+        resolved.setError("not prepared");
+        return @intFromEnum(ZdsStatus.failure);
+    });
+
+    const wavelengths_ptr = wavelengths orelse {
+        resolved.setError("null wavelength input");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    if (wavelength_count == 0) {
+        resolved.setError("empty wavelength input");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+
+    const output = out orelse {
+        resolved.setError("null instrument response output");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    output.* = .{};
+
+    var response = zdisamar.buildInstrumentResponse(
+        allocator,
+        prepared,
+        wavelengths_ptr[0..wavelength_count],
+        channel_mask,
+    ) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    errdefer response.deinit(allocator);
+
+    output.* = .{
+        .len = response.rows.len,
+        .rows = if (response.rows.len == 0) null else response.rows.ptr,
+    };
+    response.rows = &.{};
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
 }
 
 export fn zds_o2_o2_cia_diagnostics(
@@ -592,10 +652,15 @@ export fn zds_o2_line_contributions_free(_: ?*Context, _: ?*anyopaque) void {
     // --------------------------------------------------------------------------------------------------------|
 }
 
-export fn zds_instrument_response_free(_: ?*Context, _: ?*anyopaque) void {
+export fn zds_instrument_response_free(_: ?*Context, raw: ?*ZdsInstrumentResponse) void {
     // zds_instrument_response_free ---------------------------------------------------------------------------|
-    // Placeholder free hook for the unimplemented instrument-response diagnostics route.                      |
+    // Release instrument-response rows returned by zds_instrument_response_sampling.                          |
     // --------------------------------------------------------------------------------------------------------|
+    const response = raw orelse return;
+    if (response.rows) |rows| {
+        allocator.free(rows[0..response.len]);
+    }
+    response.* = .{};
 }
 
 export fn zds_o2_o2_cia_diagnostics_free(_: ?*Context, raw: ?*ZdsO2O2CIADiagnostics) void {
@@ -794,6 +859,7 @@ comptime {
     std.debug.assert(@sizeOf(ZdsSpectrum) == 64);
     std.debug.assert(@sizeOf(ZdsDiagnosticReport) == 48);
     std.debug.assert(@sizeOf(ZdsAtmosphericBudget) == 16);
+    std.debug.assert(@sizeOf(ZdsInstrumentResponse) == 16);
     std.debug.assert(@sizeOf(ZdsO2O2CIADiagnostics) == 16);
     std.debug.assert(@sizeOf(CResult) == 184);
 }

@@ -9,6 +9,7 @@ const layer_depths = @import("optics/layer_depths.zig");
 const o2_case = @import("input/o2_case.zig");
 const o2_session_memory = @import("cache/o2_session_memory.zig");
 const atmospheric_budget = @import("output/atmospheric_budget.zig");
+const instrument_response = @import("output/instrument_response.zig");
 const o2_o2_cia = @import("output/o2_o2_cia.zig");
 const o2_spectrum = @import("output/spectrum.zig");
 const radiance_results = @import("spectrum/radiance_results.zig");
@@ -41,6 +42,8 @@ pub const ProfileLineValues = profile_lines.ProfileLineValues;
 pub const O2SessionMemory = o2_session_memory.O2SessionMemory;
 pub const AtmosphericBudget = atmospheric_budget.AtmosphericBudget;
 pub const AtmosphericBudgetRow = atmospheric_budget.AtmosphericBudgetRow;
+pub const InstrumentResponse = instrument_response.InstrumentResponse;
+pub const InstrumentResponseRow = instrument_response.InstrumentResponseRow;
 pub const O2O2CIADiagnostics = o2_o2_cia.O2O2CIADiagnostics;
 pub const O2O2CIARow = o2_o2_cia.O2O2CIARow;
 pub const O2Spectrum = o2_spectrum.O2Spectrum;
@@ -252,6 +255,24 @@ pub fn buildO2O2CIADiagnostics(
     var budget = try buildAtmosphericBudget(allocator, prepared, wavelengths_nm);
     defer budget.deinit(allocator);
     return o2_o2_cia.build(allocator, budget);
+}
+
+pub fn buildInstrumentResponse(
+    allocator: Allocator,
+    prepared: *const PreparedO2A,
+    wavelengths_nm: []const f64,
+    channel_mask: u32,
+) !InstrumentResponse {
+    // buildInstrumentResponse --------------------------------------------------------------------------------|
+    // Build public instrument-response support rows for caller-selected wavelengths and channels.             |
+    // --------------------------------------------------------------------------------------------------------|
+    return instrument_response.build(
+        allocator,
+        prepared.case,
+        &prepared.tables,
+        wavelengths_nm,
+        channel_mask,
+    );
 }
 
 pub fn o2aSolveConfig(case: O2Case) SolveConfig {

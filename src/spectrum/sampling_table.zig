@@ -455,14 +455,48 @@ pub fn buildO2SpectrumSamplingTable(
     //   raw_w_j   = flat_top_n4(lambda_j - nominal_i) * interval_width * Gauss weight                         |
     //   w_j       = raw_w_j / sum_k raw_w_k after duplicate wavelengths are merged                            |
     // --------------------------------------------------------------------------------------------------------|
-    if (case.spectral_grid.sample_count == 0) return errors.Error.InvalidControl;
+    return buildO2SpectrumSamplingTableWithNominals(allocator, case, instrument, lines, null);
+}
+
+pub fn buildO2SpectrumSamplingTableForWavelengths(
+    allocator: Allocator,
+    case: o2_case.O2Case,
+    instrument: instrument_tables.InstrumentTable,
+    lines: line_tables.O2LineTable,
+    nominal_wavelengths_nm: []const f64,
+) !OwnedSpectrumSamplingTable {
+    // buildO2SpectrumSamplingTableForWavelengths -------------------------------------------------------------|
+    // Build compact integration kernels at caller-provided nominal wavelengths.                               |
+    // --------------------------------------------------------------------------------------------------------|
+    if (nominal_wavelengths_nm.len == 0) return errors.Error.InvalidControl;
+    return buildO2SpectrumSamplingTableWithNominals(
+        allocator,
+        case,
+        instrument,
+        lines,
+        nominal_wavelengths_nm,
+    );
+}
+
+fn buildO2SpectrumSamplingTableWithNominals(
+    allocator: Allocator,
+    case: o2_case.O2Case,
+    instrument: instrument_tables.InstrumentTable,
+    lines: line_tables.O2LineTable,
+    explicit_nominals: ?[]const f64,
+) !OwnedSpectrumSamplingTable {
+    // buildO2SpectrumSamplingTableWithNominals ---------------------------------------------------------------|
+    // Share the adaptive-plan builder between product-grid sampling and diagnostic wavelength probes.         |
+    // --------------------------------------------------------------------------------------------------------|
+    const row_count = if (explicit_nominals) |nominals| nominals.len else case.spectral_grid.sample_count;
+    if (row_count == 0) return errors.Error.InvalidControl;
 
     var plan: AdaptiveIntervalPlan = .{};
     if (!buildAdaptiveIntervalPlan(case.spectral_grid, instrument, lines, &plan)) {
         return errors.Error.InvalidControl;
     }
 
-    const rows = try allocator.alloc(SpectrumSamplingRow, case.spectral_grid.sample_count);
+    const rows = try allocator.alloc(SpectrumSamplingRow, row_count);
     errdefer allocator.free(rows);
 
     var side_offsets = std.ArrayList(f64).empty;
@@ -474,7 +508,11 @@ pub fn buildO2SpectrumSamplingTable(
     var irradiance_kernel: IntegrationKernelScratch = .{};
 
     for (rows, 0..) |*row, index| {
-        const nominal_wavelength_nm = nominalWavelengthNm(case.spectral_grid, index);
+        const nominal_wavelength_nm = if (explicit_nominals) |nominals|
+            nominals[index]
+        else
+            nominalWavelengthNm(case.spectral_grid, index);
+
         if (!buildAdaptiveIntegrationKernelFromPlan(
             &plan,
             instrument,
@@ -482,6 +520,7 @@ pub fn buildO2SpectrumSamplingTable(
             false,
             &radiance_kernel,
         )) return errors.Error.InvalidControl;
+
         if (!buildAdaptiveIntegrationKernelFromPlan(
             &plan,
             instrument,
