@@ -10,6 +10,7 @@ const o2_case = @import("input/o2_case.zig");
 const o2_session_memory = @import("cache/o2_session_memory.zig");
 const atmospheric_budget = @import("output/atmospheric_budget.zig");
 const instrument_response = @import("output/instrument_response.zig");
+const o2_line_contributions = @import("output/o2_line_contributions.zig");
 const o2_o2_cia = @import("output/o2_o2_cia.zig");
 const o2_spectrum = @import("output/spectrum.zig");
 const radiance_results = @import("spectrum/radiance_results.zig");
@@ -44,6 +45,8 @@ pub const AtmosphericBudget = atmospheric_budget.AtmosphericBudget;
 pub const AtmosphericBudgetRow = atmospheric_budget.AtmosphericBudgetRow;
 pub const InstrumentResponse = instrument_response.InstrumentResponse;
 pub const InstrumentResponseRow = instrument_response.InstrumentResponseRow;
+pub const O2LineContributions = o2_line_contributions.O2LineContributions;
+pub const O2LineContributionRow = o2_line_contributions.O2LineContributionRow;
 pub const O2O2CIADiagnostics = o2_o2_cia.O2O2CIADiagnostics;
 pub const O2O2CIARow = o2_o2_cia.O2O2CIARow;
 pub const O2Spectrum = o2_spectrum.O2Spectrum;
@@ -255,6 +258,18 @@ pub fn buildO2O2CIADiagnostics(
     var budget = try buildAtmosphericBudget(allocator, prepared, wavelengths_nm);
     defer budget.deinit(allocator);
     return o2_o2_cia.build(allocator, budget);
+}
+
+pub fn buildO2LineContributions(
+    allocator: Allocator,
+    prepared: *const PreparedO2A,
+    wavelengths_nm: []const f64,
+    max_rows: usize,
+) !O2LineContributions {
+    // buildO2LineContributions -------------------------------------------------------------------------------|
+    // Build public O2 line-by-line diagnostic rows for caller-selected wavelengths.                           |
+    // --------------------------------------------------------------------------------------------------------|
+    return o2_line_contributions.build(allocator, &prepared.tables, wavelengths_nm, max_rows);
 }
 
 pub fn buildInstrumentResponse(

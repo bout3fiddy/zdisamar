@@ -42,6 +42,7 @@ test {
     _ = @import("spectrum/spectrum_run_test.zig");
     _ = @import("output/atmospheric_budget_test.zig");
     _ = @import("output/instrument_response_test.zig");
+    _ = @import("output/o2_line_contributions_test.zig");
     _ = @import("output/o2_o2_cia_test.zig");
     _ = @import("validation/o2a_band_metrics_test.zig");
     _ = @import("instrumentation/facades_test.zig");
@@ -58,6 +59,8 @@ test "public root exposes setup session and spectrum surface" {
     try std.testing.expect(@hasDecl(zdisamar, "AtmosphericBudgetRow"));
     try std.testing.expect(@hasDecl(zdisamar, "InstrumentResponse"));
     try std.testing.expect(@hasDecl(zdisamar, "InstrumentResponseRow"));
+    try std.testing.expect(@hasDecl(zdisamar, "O2LineContributions"));
+    try std.testing.expect(@hasDecl(zdisamar, "O2LineContributionRow"));
     try std.testing.expect(@hasDecl(zdisamar, "O2O2CIADiagnostics"));
     try std.testing.expect(@hasDecl(zdisamar, "O2O2CIARow"));
     try std.testing.expect(@hasDecl(zdisamar, "O2Spectrum"));
@@ -72,6 +75,7 @@ test "public root exposes setup session and spectrum surface" {
     try std.testing.expect(@hasDecl(zdisamar, "buildO2ProfileLineValues"));
     try std.testing.expect(@hasDecl(zdisamar, "buildAtmosphericBudget"));
     try std.testing.expect(@hasDecl(zdisamar, "buildInstrumentResponse"));
+    try std.testing.expect(@hasDecl(zdisamar, "buildO2LineContributions"));
     try std.testing.expect(@hasDecl(zdisamar, "buildO2O2CIADiagnostics"));
 
     try std.testing.expect(!@hasDecl(zdisamar, "Scene"));

@@ -153,6 +153,7 @@ pub const optics = struct {
 pub const output = struct {
     pub const atmospheric_budget = @import("output/atmospheric_budget.zig");
     pub const instrument_response = @import("output/instrument_response.zig");
+    pub const o2_line_contributions = @import("output/o2_line_contributions.zig");
     pub const o2_o2_cia = @import("output/o2_o2_cia.zig");
     pub const spectrum = @import("output/spectrum.zig");
 };
