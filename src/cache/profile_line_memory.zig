@@ -272,7 +272,13 @@ pub fn buildO2ProfileLineValuesForWavelengths(
     // buildO2ProfileLineValuesForWavelengths -----------------------------------------------------------------|
     // Build retained line values with the scalar weak-line cutoff fallback used by setup/profile parity tests.|
     // --------------------------------------------------------------------------------------------------------|
-    return buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(allocator, case, wavelengths_nm, &.{});
+    return buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
+        allocator,
+        case,
+        wavelengths_nm,
+        &.{},
+        true,
+    );
 }
 
 pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
@@ -280,6 +286,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
     case: o2_case.O2Case,
     wavelengths_nm: []const f64,
     cutoff_grid_wavelengths_nm: []const f64,
+    include_temperature_derivatives: bool,
 ) !ProfileLineValues {
     // buildO2ProfileLineValuesForWavelengthsWithCutoffGrid ---------------------------------------------------|
     // Build retained line values over a caller-provided exact wavelength list.                                |
@@ -336,25 +343,33 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
     );
     defer deinitWeakLineStates(allocator, weak_states);
 
-    // The old-route temperature derivative is a centered finite difference at T +/- 0.5 K. Preparing those
-    // two thermodynamic rows once per layer keeps HITRAN partition interpolation out of the dense
-    // wavelength/profile loop while preserving the scalar multiplication order in weakLinePreparedContribution.
-    const upper_weak_states = try prepareLayerWeakLineStates(
-        allocator,
-        active_lines,
-        layers.layer_temperatures_k,
-        layers.layer_pressures_hpa,
-        0.5,
-    );
-    defer deinitWeakLineStates(allocator, upper_weak_states);
-    const lower_weak_states = try prepareLayerWeakLineStates(
-        allocator,
-        active_lines,
-        layers.layer_temperatures_k,
-        layers.layer_pressures_hpa,
-        -0.5,
-    );
-    defer deinitWeakLineStates(allocator, lower_weak_states);
+    // The old-route temperature derivative is a centered finite difference at T +/- 0.5 K. Non-Jacobian
+    // spectrum runs never read d_sigma/dT, so the public no-Jacobian path skips these two full weak-line
+    // state families and records that choice in the reuse stamp. Jacobian runs request the derivative rows
+    // explicitly and rebuild if the session currently holds a non-derivative profile-line cache.
+    var upper_weak_states: []WeakLinePreparedState = &.{};
+    var lower_weak_states: []WeakLinePreparedState = &.{};
+    if (include_temperature_derivatives) {
+        upper_weak_states = try prepareLayerWeakLineStates(
+            allocator,
+            active_lines,
+            layers.layer_temperatures_k,
+            layers.layer_pressures_hpa,
+            0.5,
+        );
+        errdefer deinitWeakLineStates(allocator, upper_weak_states);
+        lower_weak_states = try prepareLayerWeakLineStates(
+            allocator,
+            active_lines,
+            layers.layer_temperatures_k,
+            layers.layer_pressures_hpa,
+            -0.5,
+        );
+    }
+    defer if (include_temperature_derivatives) {
+        deinitWeakLineStates(allocator, lower_weak_states);
+        deinitWeakLineStates(allocator, upper_weak_states);
+    };
     const total_weak_states = try prepareLayerWeakLineStates(
         allocator,
         total_lines,
@@ -401,18 +416,24 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
                 wavelength_nm,
                 runtime,
             );
-            const upper_sigma = weakLineSigmaAtPreparedFiniteDifference(
-                active_lines,
-                &upper_weak_states[profile_node_index],
-                wavelength_nm,
-                runtime,
-            );
-            const lower_sigma = weakLineSigmaAtPreparedFiniteDifference(
-                active_lines,
-                &lower_weak_states[profile_node_index],
-                wavelength_nm,
-                runtime,
-            );
+
+            var d_sigma_d_temperature: f64 = 0.0;
+            if (include_temperature_derivatives) {
+                const upper_sigma = weakLineSigmaAtPreparedFiniteDifference(
+                    active_lines,
+                    &upper_weak_states[profile_node_index],
+                    wavelength_nm,
+                    runtime,
+                );
+                const lower_sigma = weakLineSigmaAtPreparedFiniteDifference(
+                    active_lines,
+                    &lower_weak_states[profile_node_index],
+                    wavelength_nm,
+                    runtime,
+                );
+                d_sigma_d_temperature = (upper_sigma - lower_sigma) / 1.0;
+            }
+
             const total = totalSpectroscopyAt(
                 total_lines,
                 lines.strong_lines,
@@ -436,7 +457,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
                 .line_sigma_cm2_per_molecule = total.line_sigma_cm2_per_molecule,
                 .line_mixing_sigma_cm2_per_molecule = total.line_mixing_sigma_cm2_per_molecule,
                 .total_sigma_cm2_per_molecule = total.total_sigma_cm2_per_molecule,
-                .d_sigma_d_temperature_cm2_per_molecule_per_k = (upper_sigma - lower_sigma) / 1.0,
+                .d_sigma_d_temperature_cm2_per_molecule_per_k = d_sigma_d_temperature,
             };
         }
 
@@ -473,17 +494,23 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
         .wavelength_count = wavelength_count,
         .profile_node_count = profile_node_count,
         .support_profile_node_count = support_profile_node_count,
-        .reuse_stamp = profileLineReuseStamp(case.id, wavelengths_nm),
+        .reuse_stamp = profileLineReuseStamp(case.id, wavelengths_nm, include_temperature_derivatives),
     };
 }
 
-fn profileLineReuseStamp(case_id: []const u8, wavelengths_nm: []const f64) hashing.ReuseStamp {
+fn profileLineReuseStamp(
+    case_id: []const u8,
+    wavelengths_nm: []const f64,
+    include_temperature_derivatives: bool,
+) hashing.ReuseStamp {
     // profileLineReuseStamp ----------------------------------------------------------------------------------|
-    // Include exact wavelength bits in the retained line-value stamp.                                         |
+    // Include exact wavelength bits and derivative-row presence in the retained line-value stamp.             |
     // --------------------------------------------------------------------------------------------------------|
     var hasher = std.hash.Wyhash.init(0);
     hasher.update(case_id);
     hasher.update(std.mem.sliceAsBytes(wavelengths_nm));
+    const derivative_byte = [_]u8{if (include_temperature_derivatives) 1 else 0};
+    hasher.update(&derivative_byte);
     return .{ .value = hasher.final() };
 }
 

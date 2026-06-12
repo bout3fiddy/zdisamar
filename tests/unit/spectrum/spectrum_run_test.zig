@@ -558,6 +558,7 @@ test "runO2ASpectrumSingleWorker matches old-route Stage 3 full spectrum" {
             case,
             exact_wavelengths_nm,
             exact_wavelengths_nm,
+            true,
         );
     defer profile_lines.deinit(allocator);
 

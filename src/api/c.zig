@@ -327,11 +327,15 @@ export fn zds_warm_o2a_session(ctx: ?*Context) c_int {
         return @intFromEnum(ZdsStatus.failure);
     });
 
+    var solve_config = zdisamar.o2aSolveConfig(prepared.case);
+    solve_config.derivative_state_mask = 0;
+    solve_config.derivative_mode = .none;
+
     zdisamar.warmO2ASessionMemory(
         allocator,
         &resolved.session,
         prepared,
-        zdisamar.o2aSolveConfig(prepared.case),
+        solve_config,
     ) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);

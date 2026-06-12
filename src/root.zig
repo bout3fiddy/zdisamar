@@ -342,7 +342,12 @@ fn prepareSessionRows(
     for (owned_wavelengths.wavelengths, exact_wavelengths) |row, *wavelength_nm| {
         wavelength_nm.* = row.wavelength_nm;
     }
-    const profile_stamp = profileLineReuseStamp(prepared.case.id, exact_wavelengths);
+    const needs_temperature_derivatives = solve_config.derivative_mode != .none;
+    const profile_stamp = profileLineReuseStamp(
+        prepared.case.id,
+        exact_wavelengths,
+        needs_temperature_derivatives,
+    );
 
     session.radiance.takeWavelengthList(allocator, &owned_wavelengths);
     try session.radiance.ensureResultCapacity(allocator, dense_count);
@@ -357,6 +362,7 @@ fn prepareSessionRows(
                 prepared.case,
                 exact_wavelengths,
                 exact_wavelengths,
+                needs_temperature_derivatives,
             );
     }
 
@@ -374,13 +380,19 @@ fn prepareSessionRows(
     return .{ .table = table };
 }
 
-fn profileLineReuseStamp(case_id: []const u8, wavelengths_nm: []const f64) hashing.ReuseStamp {
+fn profileLineReuseStamp(
+    case_id: []const u8,
+    wavelengths_nm: []const f64,
+    include_temperature_derivatives: bool,
+) hashing.ReuseStamp {
     // profileLineReuseStamp ----------------------------------------------------------------------------------|
     // Match the profile-line builder's retained-cache identity for one exact radiance wavelength list.        |
     // --------------------------------------------------------------------------------------------------------|
     var hasher = std.hash.Wyhash.init(0);
     hasher.update(case_id);
     hasher.update(std.mem.sliceAsBytes(wavelengths_nm));
+    const derivative_byte = [_]u8{if (include_temperature_derivatives) 1 else 0};
+    hasher.update(&derivative_byte);
     return .{ .value = hasher.final() };
 }
 
