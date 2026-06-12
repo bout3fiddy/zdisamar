@@ -9,6 +9,7 @@ const layer_depths = @import("optics/layer_depths.zig");
 const o2_case = @import("input/o2_case.zig");
 const o2_session_memory = @import("cache/o2_session_memory.zig");
 const atmospheric_budget = @import("output/atmospheric_budget.zig");
+const o2_o2_cia = @import("output/o2_o2_cia.zig");
 const o2_spectrum = @import("output/spectrum.zig");
 const radiance_results = @import("spectrum/radiance_results.zig");
 const radiance_wavelengths = @import("spectrum/radiance_wavelengths.zig");
@@ -40,6 +41,8 @@ pub const ProfileLineValues = profile_lines.ProfileLineValues;
 pub const O2SessionMemory = o2_session_memory.O2SessionMemory;
 pub const AtmosphericBudget = atmospheric_budget.AtmosphericBudget;
 pub const AtmosphericBudgetRow = atmospheric_budget.AtmosphericBudgetRow;
+pub const O2O2CIADiagnostics = o2_o2_cia.O2O2CIADiagnostics;
+pub const O2O2CIARow = o2_o2_cia.O2O2CIARow;
 pub const O2Spectrum = o2_spectrum.O2Spectrum;
 pub const O2SpectrumRunResult = o2_spectrum.O2SpectrumRunResult;
 pub const O2SpectrumRunSummary = o2_spectrum.O2SpectrumRunSummary;
@@ -236,6 +239,19 @@ pub fn buildAtmosphericBudget(
     // Build public atmospheric support-row diagnostic rows for the prepared O2 A case.                        |
     // --------------------------------------------------------------------------------------------------------|
     return atmospheric_budget.build(allocator, prepared.case, &prepared.tables, wavelengths_nm);
+}
+
+pub fn buildO2O2CIADiagnostics(
+    allocator: Allocator,
+    prepared: *const PreparedO2A,
+    wavelengths_nm: []const f64,
+) !O2O2CIADiagnostics {
+    // buildO2O2CIADiagnostics --------------------------------------------------------------------------------|
+    // Build public O2-O2 CIA diagnostic rows from atmospheric-budget support rows.                            |
+    // --------------------------------------------------------------------------------------------------------|
+    var budget = try buildAtmosphericBudget(allocator, prepared, wavelengths_nm);
+    defer budget.deinit(allocator);
+    return o2_o2_cia.build(allocator, budget);
 }
 
 pub fn o2aSolveConfig(case: O2Case) SolveConfig {

@@ -88,6 +88,21 @@ pub const ZdsAtmosphericBudget = extern struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
+// ZdsO2O2CIADiagnostics --------------------------------------------------------------------------------------|
+// Borrowed O2-O2 CIA rows returned by zds_o2_o2_cia_diagnostics. rows owns a Context-free allocation.         |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0.. 7] len : usize                                                                                         |
+// [8..15] rows: ?[*]const O2O2CIARow                                                                          |
+pub const ZdsO2O2CIADiagnostics = extern struct {
+    len: usize = 0,
+    rows: ?[*]const zdisamar.O2O2CIARow = null,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
 // CResult ----------------------------------------------------------------------------------------------------|
 // Context-owned native spectrum plus optional compact C-facing Jacobian rows.                                 |
 //                                                                                                             |
@@ -444,11 +459,53 @@ export fn zds_instrument_response_sampling(ctx: ?*Context, _: ?[*]const f64, _: 
     return unsupported(ctx, "UnsupportedInstrumentResponse");
 }
 
-export fn zds_o2_o2_cia_diagnostics(ctx: ?*Context, _: ?[*]const f64, _: usize, _: ?*anyopaque) c_int {
+export fn zds_o2_o2_cia_diagnostics(
+    ctx: ?*Context,
+    wavelengths: ?[*]const f64,
+    wavelength_count: usize,
+    out: ?*ZdsO2O2CIADiagnostics,
+) c_int {
     // zds_o2_o2_cia_diagnostics ------------------------------------------------------------------------------|
-    // Return a typed failure until O2-O2 CIA diagnostic rows are ported.                                      |
+    // Build O2-O2 CIA diagnostic rows for caller-selected wavelengths.                                        |
     // --------------------------------------------------------------------------------------------------------|
-    return unsupported(ctx, "UnsupportedO2O2CIADiagnostics");
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+    const prepared = &(resolved.prepared orelse {
+        resolved.setError("not prepared");
+        return @intFromEnum(ZdsStatus.failure);
+    });
+
+    const wavelengths_ptr = wavelengths orelse {
+        resolved.setError("null wavelength input");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    if (wavelength_count == 0) {
+        resolved.setError("empty wavelength input");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+
+    const output = out orelse {
+        resolved.setError("null O2-O2 CIA output");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    output.* = .{};
+
+    var diagnostics = zdisamar.buildO2O2CIADiagnostics(
+        allocator,
+        prepared,
+        wavelengths_ptr[0..wavelength_count],
+    ) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    errdefer diagnostics.deinit(allocator);
+
+    output.* = .{
+        .len = diagnostics.rows.len,
+        .rows = if (diagnostics.rows.len == 0) null else diagnostics.rows.ptr,
+    };
+    diagnostics.rows = &.{};
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
 }
 
 export fn zds_run_o2a_optimal_estimation(ctx: ?*Context, _: ?*const anyopaque, _: ?*anyopaque) c_int {
@@ -541,10 +598,15 @@ export fn zds_instrument_response_free(_: ?*Context, _: ?*anyopaque) void {
     // --------------------------------------------------------------------------------------------------------|
 }
 
-export fn zds_o2_o2_cia_diagnostics_free(_: ?*Context, _: ?*anyopaque) void {
+export fn zds_o2_o2_cia_diagnostics_free(_: ?*Context, raw: ?*ZdsO2O2CIADiagnostics) void {
     // zds_o2_o2_cia_diagnostics_free -------------------------------------------------------------------------|
-    // Placeholder free hook for the unimplemented O2-O2 CIA diagnostics route.                                |
+    // Release O2-O2 CIA rows returned by zds_o2_o2_cia_diagnostics.                                           |
     // --------------------------------------------------------------------------------------------------------|
+    const diagnostics = raw orelse return;
+    if (diagnostics.rows) |rows| {
+        allocator.free(rows[0..diagnostics.len]);
+    }
+    diagnostics.* = .{};
 }
 
 export fn zds_last_error(ctx: ?*Context) [*:0]const u8 {
@@ -732,5 +794,6 @@ comptime {
     std.debug.assert(@sizeOf(ZdsSpectrum) == 64);
     std.debug.assert(@sizeOf(ZdsDiagnosticReport) == 48);
     std.debug.assert(@sizeOf(ZdsAtmosphericBudget) == 16);
+    std.debug.assert(@sizeOf(ZdsO2O2CIADiagnostics) == 16);
     std.debug.assert(@sizeOf(CResult) == 184);
 }
