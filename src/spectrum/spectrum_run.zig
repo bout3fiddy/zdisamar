@@ -22,6 +22,7 @@ const source_levels = @import("../optics/source_levels.zig");
 const transport_worker_memory = @import("../cache/transport_worker_memory.zig");
 const controls = @import("../transport/controls.zig");
 const Trace = @import("../instrumentation/trace.zig");
+const Telemetry = @import("../instrumentation/telemetry.zig");
 
 pub const Error = error{
     ShapeMismatch,
@@ -52,6 +53,45 @@ pub const Error = error{
 pub const min_parallel_radiance_count: usize = 32;
 pub const radiance_prefetch_chunk_size: usize = 8;
 pub const radiance_prefetch_pooled_chunk_size: usize = 8;
+
+const RadiancePrefetchErrorState = worker_partition.FirstWorkerErrorState(anyerror);
+
+// RadiancePrefetchWorker ------------------------------------------------------------------------------------  |
+// Site-local worker row for dense O2 A radiance prefetch.                                                      |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// The row is intentionally not size-pinned because Telemetry.Context is sink-selected: zero-size in normal     |
+// builds and larger in calculation-telemetry harness builds. All stored rows are borrowed; no field owns       |
+// heap storage, physics controls, or cache validity stamps.                                                    |
+//                                                                                                              |
+// memory groups                                                                                                |
+//   inputs     : wavelengths, angles, surface albedo, layer grid, profile lines, CIA, aerosol, phase, solar    |
+//   controls   : solve_config                                                                                  |
+//   outputs    : out_dense_radiance[index] for each claimed exact wavelength                                   |
+//   scheduling : static range or pooled ChunkQueue, worker index, first-error state                            |
+//   scratch    : one worker-local TransportWorkerMemory with optics and LABOS rows                             |
+//   telemetry  : base context copied before per-sample sample_index/wavelength fields are overlaid             |
+const RadiancePrefetchWorker = struct {
+    wavelengths: radiance_wavelengths.RadianceWavelengthList,
+    angles: solve.ViewAngles,
+    surface_albedo: f64,
+    layer_grid: atmosphere_layers.LayerGrid,
+    profile_lines: profile_line_memory.ProfileLineValues,
+    cia: cia_table.O2CiaTable,
+    aerosol: aerosol_tables.AerosolLayerTable,
+    phase: phase_table.PhaseTable,
+    solar: solar_table.SolarTable,
+    solve_config: controls.SolveConfig,
+    out_dense_radiance: []radiance_results.RadianceResult,
+    error_state: *RadiancePrefetchErrorState,
+    start_index: usize,
+    end_index: usize,
+    queue: ?*worker_partition.ChunkQueue = null,
+    worker_index: usize = 0,
+    transport_memory: *transport_worker_memory.TransportWorkerMemory,
+    telemetry_context: Telemetry.Context,
+};
+// ------------------------------------------------------------------------------------------------------------ |
 
 pub fn radianceAtWavelength(
     wavelength_nm: f64,
@@ -213,7 +253,7 @@ pub fn radianceAtWavelength(
     );
 }
 
-pub fn prefetchO2ARadianceRowsSingleWorker(
+fn prefetchO2ARadianceRows(
     wavelengths: radiance_wavelengths.RadianceWavelengthList,
     angles: solve.ViewAngles,
     surface_albedo: f64,
@@ -224,46 +264,51 @@ pub fn prefetchO2ARadianceRowsSingleWorker(
     phase: phase_table.PhaseTable,
     solar: solar_table.SolarTable,
     solve_config: controls.SolveConfig,
+    pool: ?*std.Thread.Pool,
+    worker_count: usize,
     out_dense_radiance: []radiance_results.RadianceResult,
-    out_line_sigma_cm2_per_molecule: []f64,
-    out_support: []layer_depths.SupportOptics,
-    out_layers: []layer_depths.LayerOptics,
-    out_source_levels: []source_levels.SourceLevel,
-    out_curved_samples: []curved_sun_path.CurvedSunPathSample,
-    out_curved_level_starts: []usize,
-    out_curved_level_altitudes_km: []f64,
-    worker_memory: *transport_worker_memory.TransportWorkerMemory,
+    transport_workers: []transport_worker_memory.TransportWorkerMemory,
 ) !void {
-    // prefetchO2ARadianceRowsSingleWorker -------------------------------------------------------------------- |
-    // Fill dense high-resolution radiance rows from the explicit O2 A optics and transport route.              |
+    // prefetchO2ARadianceRows -------------------------------------------------------------------------------- |
+    // Fill dense high-resolution radiance rows through the old worker-count and pool/raw scheduling route.     |
     //                                                                                                          |
     // provenance                                                                                               |
-    //   Ports the old single-worker dense prefetch order from main:                                            |
-    //   `grid_calculation/spectral_forward.zig` `prefetchForwardSamples` and                                   |
-    //   `computeForwardSampleAtWavelengthWithScratch`. The per-wavelength physics remains in                   |
-    //   `radianceAtWavelength`; this wrapper owns only exact-list iteration, solar lookup, and row writes.     |
+    //   Ports main:`src/forward_model/instrument_grid/grid_calculation/spectral_forward.zig`                   |
+    //   `prefetchForwardSamples`, `ForwardPrefetchWorker`, and `prefetchForwardWorkerMain`. The                |
+    //   per-wavelength physics remains in `radianceAtWavelength`; this wrapper owns only scheduling, solar     |
+    //   lookup, telemetry context, and dense row writes.                                                       |
+    //                                                                                                          |
+    // scheduling                                                                                               |
+    //   pool != null : workers share a ChunkQueue with chunk size 8, matching the old pooled forward route     |
+    //   pool == null : workers keep deterministic static ranges and drain chunk size 8 within each range       |
     //                                                                                                          |
     // row contract                                                                                             |
     //   out_dense_radiance[index] corresponds to wavelengths.wavelengths[index]. ProfileLineValues must be     |
     //   built over the same exact list so the dense index is also the spectroscopy wavelength index.           |
     //                                                                                                          |
     // memory                                                                                                   |
-    //   Every support/layer/source/curved row is caller-owned scratch reused for each wavelength. Scattering   |
-    //   callers reserve TransportWorkerMemory before entry; direct-route callers do not need worker buffers.   |
+    //   Each worker borrows its own TransportWorkerMemory optics and LABOS arrays. No worker writes another    |
+    //   worker's scratch, and dense radiance output ranges are disjoint.                                       |
     // ---------------------------------------------------------------------------------------------------------|
+    if (worker_count == 0 or worker_count > transport_workers.len) return error.ShapeMismatch;
+
+    if (out_dense_radiance.len != wavelengths.wavelengths.len) return error.ShapeMismatch;
+
     const support_count = layer_grid.support_mid_altitudes_km.len;
     const layer_count = layer_grid.layer_pressures_hpa.len;
-    const shape_matches = out_dense_radiance.len == wavelengths.wavelengths.len and
-        out_support.len == support_count and
-        out_line_sigma_cm2_per_molecule.len == support_count and
-        out_layers.len == layer_count and
-        out_source_levels.len == layer_count + 1 and
-        out_curved_samples.len >= support_count and
-        out_curved_level_starts.len == layer_count + 1 and
-        out_curved_level_altitudes_km.len == layer_count + 1;
-    if (!shape_matches) return error.ShapeMismatch;
+    for (transport_workers[0..worker_count]) |*worker_memory| {
+        if (!transportWorkerShapeMatches(worker_memory, support_count, layer_count)) {
+            return error.ShapeMismatch;
+        }
+    }
 
     if (wavelengths.wavelengths.len == 0) return;
+
+    // instrumentation: trace counter: forward worker count --------------------------------------------------- |
+    // captures: selected O2 A dense-prefetch worker count                                                      |
+    // why: ties dense-prefetch wall time to the concurrency shape selected by root/session code.               |
+    Trace.plotU("forward_worker_count", @intCast(worker_count));
+    // end instrumentation: trace counter: forward worker count ----------------------------------------------- |
 
     // instrumentation: trace counter: high-resolution radiance rows ------------------------------------------ |
     // captures: unique exact radiance wavelengths evaluated by this O2 A prefetch pass                         |
@@ -271,50 +316,160 @@ pub fn prefetchO2ARadianceRowsSingleWorker(
     Trace.plotU("high_resolution_misses", @intCast(wavelengths.wavelengths.len));
     // end instrumentation: trace counter: high-resolution radiance rows -------------------------------------- |
 
-    var start_index: usize = 0;
-    while (worker_partition.nextStaticChunk(
-        &start_index,
-        wavelengths.wavelengths.len,
-        radiance_prefetch_chunk_size,
-    )) |chunk| {
+    const telemetry_context = Telemetry.currentContext();
+    var error_state = RadiancePrefetchErrorState{};
+    var queue_storage: worker_partition.ChunkQueue = undefined;
+    const use_pooled_queue = pool != null and worker_count > 1;
+    if (use_pooled_queue) {
+        queue_storage = worker_partition.ChunkQueue.init(
+            wavelengths.wavelengths.len,
+            radiance_prefetch_pooled_chunk_size,
+        );
+    }
+
+    var worker_storage: [worker_partition.max_workers]RadiancePrefetchWorker = undefined;
+    for (0..worker_count) |worker_index| {
+        const range = worker_partition.staticRange(wavelengths.wavelengths.len, worker_count, worker_index);
+        const queue = queue: {
+            if (use_pooled_queue) break :queue &queue_storage;
+            break :queue null;
+        };
+
+        worker_storage[worker_index] = .{
+            .wavelengths = wavelengths,
+            .angles = angles,
+            .surface_albedo = surface_albedo,
+            .layer_grid = layer_grid,
+            .profile_lines = profile_lines,
+            .cia = cia,
+            .aerosol = aerosol,
+            .phase = phase,
+            .solar = solar,
+            .solve_config = solve_config,
+            .out_dense_radiance = out_dense_radiance,
+            .error_state = &error_state,
+            .start_index = range.start,
+            .end_index = range.end,
+            .queue = queue,
+            .worker_index = worker_index,
+            .transport_memory = &transport_workers[worker_index],
+            .telemetry_context = telemetry_context,
+        };
+    }
+
+    worker_partition.runWorkers(pool, worker_storage[0..worker_count], radiancePrefetchWorkerMain);
+    if (error_state.err) |err| return err;
+}
+
+fn transportWorkerShapeMatches(
+    worker_memory: *const transport_worker_memory.TransportWorkerMemory,
+    support_count: usize,
+    layer_count: usize,
+) bool {
+    // transportWorkerShapeMatches ---------------------------------------------------------------------------  |
+    // Validate the worker-local rows that one dense radiance worker borrows for optics and LABOS transport.    |
+    // -------------------------------------------------------------------------------------------------------- |
+    return worker_memory.line_sigma_cm2_per_molecule.len == support_count and
+        worker_memory.support_optics.len == support_count and
+        worker_memory.layer_optics.len == layer_count and
+        worker_memory.source_level_rows.len == layer_count + 1 and
+        worker_memory.curved_samples.len >= support_count and
+        worker_memory.curved_level_starts.len == layer_count + 1 and
+        worker_memory.curved_level_altitudes_km.len == layer_count + 1;
+}
+
+fn radiancePrefetchWorkerMain(worker: *RadiancePrefetchWorker) void {
+    // radiancePrefetchWorkerMain ----------------------------------------------------------------------------- |
+    // Worker loop for dense O2 A radiance rows. Each worker drains either a static range or the pooled queue,  |
+    // writes disjoint dense rows, and stores the first error for the joined caller to return.                  |
+    // -------------------------------------------------------------------------------------------------------- |
+    var thread_name_buffer: [64]u8 = undefined;
+    const thread_name = std.fmt.bufPrintZ(
+        &thread_name_buffer,
+        "zdisamar-forward-{d}",
+        .{worker.worker_index},
+    ) catch "zdisamar-forward-worker";
+
+    // instrumentation: trace thread label: forward prefetch worker ------------------------------------------  |
+    // captures: dense radiance prefetch worker identity                                                        |
+    // why: makes parallel exact-wavelength batches separable in timeline traces.                               |
+    Trace.setThreadName(thread_name);
+    // end instrumentation: trace thread label: forward prefetch worker --------------------------------------  |
+
+    // instrumentation: trace zone: forward prefetch worker --------------------------------------------------  |
+    // captures: dense radiance prefetch worker wall time                                                       |
+    // why: exposes load balance across exact-wavelength chunks.                                                |
+    const worker_zone = Trace.staticZone(@src(), "forward_prefetch.worker");
+    worker_zone.value(@intCast(worker.worker_index));
+    defer worker_zone.end();
+    // end instrumentation: trace zone: forward prefetch worker ----------------------------------------------  |
+
+    while (nextRadiancePrefetchChunk(worker)) |chunk| {
 
         // instrumentation: trace zone: O2 A radiance prefetch chunk ------------------------------------------ |
-        // captures: one single-worker O2 A prefetch chunk size and wall time                                   |
+        // captures: one O2 A prefetch chunk size and wall time                                                 |
         // why: preserves the old chunk boundary while keeping per-wavelength optics visible separately.        |
-        const chunk_zone = Trace.deepStaticZone(@src(), "radiance_prefetch.o2a_chunk");
+        const chunk_zone = Trace.deepStaticZone(@src(), "forward_prefetch.chunk");
         chunk_zone.value(@intCast(chunk.len()));
         defer chunk_zone.end();
         // end instrumentation: trace zone: O2 A radiance prefetch chunk -------------------------------------- |
 
         for (chunk.start..chunk.end) |index| {
-            const wavelength = wavelengths.wavelengths[index];
-            const solar_irradiance = try solar_lookup.irradianceAtWavelength(solar, wavelength.wavelength_nm);
-            out_dense_radiance[index] = try radianceAtWavelength(
+            const wavelength = worker.wavelengths.wavelengths[index];
+            const solar_irradiance = solar_lookup.irradianceAtWavelength(
+                worker.solar,
+                wavelength.wavelength_nm,
+            ) catch |err| {
+                worker.error_state.store(err);
+                return;
+            };
+
+            const previous_context = Telemetry.currentContext();
+            if (comptime Telemetry.enabled) {
+                var context = worker.telemetry_context;
+                context.sample_index = std.math.cast(i64, index + 1) orelse std.math.maxInt(i64);
+                context.wavelength_nm = wavelength.wavelength_nm;
+                Telemetry.setContext(context);
+            }
+            defer if (comptime Telemetry.enabled) Telemetry.setContext(previous_context);
+
+            worker.out_dense_radiance[index] = radianceAtWavelength(
                 wavelength.wavelength_nm,
                 index,
-                angles,
-                surface_albedo,
-                layer_grid,
-                profile_lines,
-                cia,
-                aerosol,
-                phase,
+                worker.angles,
+                worker.surface_albedo,
+                worker.layer_grid,
+                worker.profile_lines,
+                worker.cia,
+                worker.aerosol,
+                worker.phase,
                 solar_irradiance,
-                solve_config,
-                out_line_sigma_cm2_per_molecule,
-                out_support,
-                out_layers,
-                out_source_levels,
-                out_curved_samples,
-                out_curved_level_starts,
-                out_curved_level_altitudes_km,
-                worker_memory,
-            );
+                worker.solve_config,
+                worker.transport_memory.line_sigma_cm2_per_molecule,
+                worker.transport_memory.support_optics,
+                worker.transport_memory.layer_optics,
+                worker.transport_memory.source_level_rows,
+                worker.transport_memory.curved_samples,
+                worker.transport_memory.curved_level_starts,
+                worker.transport_memory.curved_level_altitudes_km,
+                worker.transport_memory,
+            ) catch |err| {
+                worker.error_state.store(err);
+                return;
+            };
         }
     }
 }
 
-pub fn runO2ASpectrumSingleWorker(
+fn nextRadiancePrefetchChunk(worker: *RadiancePrefetchWorker) ?worker_partition.Range {
+    // nextRadiancePrefetchChunk ------------------------------------------------------------------------------ |
+    // Return the next exact-wavelength range. Pooled workers share a queue; raw workers drain static ranges.   |
+    // -------------------------------------------------------------------------------------------------------- |
+    if (worker.queue) |queue| return queue.next();
+    return worker_partition.nextStaticChunk(&worker.start_index, worker.end_index, radiance_prefetch_chunk_size);
+}
+
+pub fn runO2ASpectrum(
     table: sampling_table.SpectrumSamplingTable,
     wavelengths: radiance_wavelengths.RadianceWavelengthList,
     angles: solve.ViewAngles,
@@ -332,6 +487,8 @@ pub fn runO2ASpectrumSingleWorker(
     irradiance_calibration: instrument_average.Calibration,
     radiance_slit_kernel: []const f64,
     irradiance_slit_kernel: []const f64,
+    pool: ?*std.Thread.Pool,
+    worker_count: usize,
     out_dense_radiance: []radiance_results.RadianceResult,
     out_wavelengths_nm: []f64,
     out_raw_radiance: []radiance_results.RadianceResult,
@@ -340,18 +497,11 @@ pub fn runO2ASpectrumSingleWorker(
     out_irradiance: []f64,
     out_reflectance: []f64,
     out_jacobian: []jacobian_states.Vector,
-    out_line_sigma_cm2_per_molecule: []f64,
-    out_support: []layer_depths.SupportOptics,
-    out_layers: []layer_depths.LayerOptics,
-    out_source_levels: []source_levels.SourceLevel,
-    out_curved_samples: []curved_sun_path.CurvedSunPathSample,
-    out_curved_level_starts: []usize,
-    out_curved_level_altitudes_km: []f64,
-    worker_memory: *transport_worker_memory.TransportWorkerMemory,
+    transport_workers: []transport_worker_memory.TransportWorkerMemory,
     solar_memory: *solar_irradiance_memory.SolarIrradianceMemory,
 ) !instrument_average.ReflectanceAssemblySummary {
-    // runO2ASpectrumSingleWorker ----------------------------------------------------------------------------- |
-    // Run the explicit single-worker spectrum path from exact radiance wavelengths to product reflectance.     |
+    // runO2ASpectrum ----------------------------------------------------------------------------------------- |
+    // Run the explicit O2 A spectrum path from exact radiance wavelengths to product reflectance.              |
     //                                                                                                          |
     // provenance                                                                                               |
     //   Ports the old orchestration order from main:                                                           |
@@ -365,7 +515,7 @@ pub fn runO2ASpectrumSingleWorker(
     //                                                                                                          |
     // memory                                                                                                   |
     //   Every dense/product/optics row is caller-owned. The wrapper allocates nothing and stores no scene,     |
-    //   request, product, output, or cache owner.                                                              |
+    //   request, product, output, or cache owner. Worker-local optics rows come from transport_workers.        |
     // ---------------------------------------------------------------------------------------------------------|
     const row_count = table.rows.len;
     const product_shapes_match = wavelengths.rows.len == row_count and
@@ -377,15 +527,15 @@ pub fn runO2ASpectrumSingleWorker(
         out_reflectance.len == row_count;
     if (!product_shapes_match) return error.ShapeMismatch;
 
-    // instrumentation: trace zone: single-worker spectrum run ------------------------------------------------ |
+    // instrumentation: trace zone: O2 A spectrum run --------------------------------------------------------- |
     // captures: dense prefetch, product gather, channel postprocess, and reflectance assembly wall time        |
     // why: gives WP4 a same-boundary phase around the full explicit spectrum path.                             |
-    const run_zone = Trace.staticZone(@src(), "spectrum.o2a_single_worker");
+    const run_zone = Trace.staticZone(@src(), "spectrum.o2a_run");
     run_zone.value(@intCast(row_count));
     defer run_zone.end();
-    // end instrumentation: trace zone: single-worker spectrum run -------------------------------------------- |
+    // end instrumentation: trace zone: O2 A spectrum run ----------------------------------------------------- |
 
-    try prefetchO2ARadianceRowsSingleWorker(
+    try prefetchO2ARadianceRows(
         wavelengths,
         angles,
         surface_albedo,
@@ -396,15 +546,10 @@ pub fn runO2ASpectrumSingleWorker(
         phase,
         solar,
         solve_config,
+        pool,
+        worker_count,
         out_dense_radiance,
-        out_line_sigma_cm2_per_molecule,
-        out_support,
-        out_layers,
-        out_source_levels,
-        out_curved_samples,
-        out_curved_level_starts,
-        out_curved_level_altitudes_km,
-        worker_memory,
+        transport_workers,
     );
 
     try gatherProductRows(
@@ -444,102 +589,6 @@ fn totalOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {
     var total: f64 = 0.0;
     for (layers) |layer| total += layer.total_optical_depth;
     return total;
-}
-
-pub fn prefetchRadianceRowsSingleWorker(
-    comptime ComputeState: type,
-    comptime ComputeError: type,
-    wavelengths: radiance_wavelengths.RadianceWavelengthList,
-    results: []radiance_results.RadianceResult,
-    worker_memory: *transport_worker_memory.TransportWorkerMemory,
-    compute_state: *ComputeState,
-    comptime compute: fn (
-        *ComputeState,
-        f64,
-        usize,
-        *transport_worker_memory.TransportWorkerMemory,
-    ) ComputeError!radiance_results.RadianceResult,
-) (Error || ComputeError)!void {
-    // prefetchRadianceRowsSingleWorker -------------------------------------------------------------------     |
-    // Fill dense high-resolution radiance rows for one worker-local memory owner.                              |
-    //                                                                                                          |
-    // provenance                                                                                               |
-    //   Ports the single-worker loop shape from main:                                                          |
-    //   `src/forward_model/instrument_grid/grid_calculation/spectral_forward.zig`                              |
-    //   `prefetchForwardSamples` and `computeForwardSampleAtWavelengthWithScratch`.                            |
-    //                                                                                                          |
-    // row contract                                                                                             |
-    //   results[index] corresponds to wavelengths.wavelengths[index]. Later nominal gathers read these rows    |
-    //   through RadianceSampleIndexRef/sample_indices, so this function must not reorder the dense array.      |
-    //                                                                                                          |
-    // memory                                                                                                   |
-    //   The worker memory is caller-owned and reusable. The compute callback receives explicit wavelength      |
-    //   and memory inputs; no scene, request, or generic cache is stored here.                                 |
-    // ---------------------------------------------------------------------------------------------------------|
-    if (results.len != wavelengths.wavelengths.len) return error.ShapeMismatch;
-    if (wavelengths.wavelengths.len == 0) return;
-
-    // instrumentation: trace counter: high-resolution radiance rows ------------------------------------------ |
-    // captures: unique exact radiance wavelengths evaluated by this prefetch pass                              |
-    // why: distinguishes fewer transport solves from cheaper work per solve.                                   |
-    Trace.plotU("high_resolution_misses", @intCast(wavelengths.wavelengths.len));
-    // end instrumentation: trace counter: high-resolution radiance rows -------------------------------------- |
-
-    var start_index: usize = 0;
-    while (worker_partition.nextStaticChunk(
-        &start_index,
-        wavelengths.wavelengths.len,
-        radiance_prefetch_chunk_size,
-    )) |chunk| {
-        try prefetchRadianceChunk(
-            ComputeState,
-            ComputeError,
-            wavelengths.wavelengths,
-            results,
-            chunk,
-            worker_memory,
-            compute_state,
-            compute,
-        );
-    }
-}
-
-fn prefetchRadianceChunk(
-    comptime ComputeState: type,
-    comptime ComputeError: type,
-    wavelengths: []const radiance_wavelengths.RadianceWavelength,
-    results: []radiance_results.RadianceResult,
-    chunk: worker_partition.Range,
-    worker_memory: *transport_worker_memory.TransportWorkerMemory,
-    compute_state: *ComputeState,
-    comptime compute: fn (
-        *ComputeState,
-        f64,
-        usize,
-        *transport_worker_memory.TransportWorkerMemory,
-    ) ComputeError!radiance_results.RadianceResult,
-) ComputeError!void {
-    // prefetchRadianceChunk --------------------------------------------------------------------------------   |
-    // Compute one contiguous chunk from the dense exact-wavelength list.                                       |
-    // ---------------------------------------------------------------------------------------------------------|
-    const worker_index: usize = 0;
-
-    // instrumentation: trace zone: radiance prefetch chunk --------------------------------------------------- |
-    // captures: one single-worker prefetch chunk size and wall time                                            |
-    // why: keeps dense radiance prefetch work visible separately from nominal gather loops.                    |
-    const chunk_zone = Trace.deepStaticZone(@src(), "radiance_prefetch.chunk");
-    chunk_zone.value(@intCast(chunk.len()));
-    defer chunk_zone.end();
-    // end instrumentation: trace zone: radiance prefetch chunk ----------------------------------------------- |
-
-    for (chunk.start..chunk.end) |index| {
-        results[index] = try compute(
-            compute_state,
-            wavelengths[index].wavelength_nm,
-            worker_index,
-            worker_memory,
-        );
-    }
 }
 
 pub fn gatherProductRows(

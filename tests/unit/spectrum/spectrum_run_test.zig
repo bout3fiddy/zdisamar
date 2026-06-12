@@ -26,77 +26,6 @@ test "preferred radiance worker count keeps small batches single-threaded" {
     );
 }
 
-test "prefetchRadianceRowsSingleWorker fills dense rows in exact wavelength order" {
-    var wavelengths = [_]radiance_wavelengths.RadianceWavelength{
-        .{ .key = radiance_wavelengths.keyFor(758.0), .wavelength_nm = 758.0 },
-        .{ .key = radiance_wavelengths.keyFor(760.0), .wavelength_nm = 760.0 },
-        .{ .key = radiance_wavelengths.keyFor(765.0), .wavelength_nm = 765.0 },
-    };
-    var results: [3]radiance_results.RadianceResult = undefined;
-    var memory = internal.cache.transport_worker_memory.TransportWorkerMemory{};
-    var context = TestRadianceComputeContext{};
-
-    try spectrum_run.prefetchRadianceRowsSingleWorker(
-        TestRadianceComputeContext,
-        TestRadianceComputeError,
-        .{ .wavelengths = &wavelengths },
-        &results,
-        &memory,
-        &context,
-        testRadianceCompute,
-    );
-
-    try std.testing.expectEqual(@as(usize, 3), context.call_count);
-    try std.testing.expectEqual(@as(usize, 0), context.worker_index_sum);
-    try std.testing.expect(context.memory_seen == &memory);
-    try std.testing.expectApproxEqAbs(758.0, context.seen_wavelengths[0], 0.0);
-    try std.testing.expectApproxEqAbs(760.0, context.seen_wavelengths[1], 0.0);
-    try std.testing.expectApproxEqAbs(765.0, context.seen_wavelengths[2], 0.0);
-    try std.testing.expectApproxEqAbs(7.58, results[0].radiance, 1.0e-15);
-    try std.testing.expectApproxEqAbs(7.60, results[1].radiance, 1.0e-15);
-    try std.testing.expectApproxEqAbs(7.65, results[2].radiance, 1.0e-15);
-    try std.testing.expectEqual([3]f64{ 760.0, 0.0, 1.0 }, results[1].jacobian);
-}
-
-test "prefetchRadianceRowsSingleWorker checks result shape and propagates compute errors" {
-    var wavelengths = [_]radiance_wavelengths.RadianceWavelength{
-        .{ .key = radiance_wavelengths.keyFor(758.0), .wavelength_nm = 758.0 },
-        .{ .key = radiance_wavelengths.keyFor(760.0), .wavelength_nm = 760.0 },
-    };
-    var short_results: [1]radiance_results.RadianceResult = undefined;
-    var results: [2]radiance_results.RadianceResult = undefined;
-    var memory = internal.cache.transport_worker_memory.TransportWorkerMemory{};
-    var context = TestRadianceComputeContext{ .fail_at_call = 1 };
-
-    try std.testing.expectError(
-        error.ShapeMismatch,
-        spectrum_run.prefetchRadianceRowsSingleWorker(
-            TestRadianceComputeContext,
-            TestRadianceComputeError,
-            .{ .wavelengths = &wavelengths },
-            &short_results,
-            &memory,
-            &context,
-            testRadianceCompute,
-        ),
-    );
-    try std.testing.expectEqual(@as(usize, 0), context.call_count);
-
-    try std.testing.expectError(
-        error.InjectedFailure,
-        spectrum_run.prefetchRadianceRowsSingleWorker(
-            TestRadianceComputeContext,
-            TestRadianceComputeError,
-            .{ .wavelengths = &wavelengths },
-            &results,
-            &memory,
-            &context,
-            testRadianceCompute,
-        ),
-    );
-    try std.testing.expectEqual(@as(usize, 2), context.call_count);
-}
-
 test "radianceAtWavelength wires optics direct transport and radiance scaling" {
     const allocator = std.testing.allocator;
     var tables = try internal.setup.o2_run_tables.buildO2RunTables(
@@ -417,7 +346,7 @@ test "radianceAtWavelength matches old-route Stage 2 transport probes" {
     }
 }
 
-test "runO2ASpectrumSingleWorker matches old-route Stage 3 full spectrum" {
+test "runO2ASpectrum matches old-route Stage 3 full spectrum" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
     if (!std.process.hasEnvVarConstant("ZDISAMAR_RUN_STAGE3_PARITY")) return error.SkipZigTest;
 
@@ -507,23 +436,6 @@ test "runO2ASpectrumSingleWorker matches old-route Stage 3 full spectrum" {
     defer allocator.free(reflectance);
     const jacobian = try allocator.alloc(jacobian_states.Vector, product_count);
     defer allocator.free(jacobian);
-    const line_sigma = try allocator.alloc(f64, support_count);
-    defer allocator.free(line_sigma);
-    const support = try allocator.alloc(layer_depths.SupportOptics, support_count);
-    defer allocator.free(support);
-    const layers = try allocator.alloc(layer_depths.LayerOptics, layer_count);
-    defer allocator.free(layers);
-    const source_levels = try allocator.alloc(internal.optics.source_levels.SourceLevel, layer_count + 1);
-    defer allocator.free(source_levels);
-    const curved_samples = try allocator.alloc(internal.optics.curved_sun_path.CurvedSunPathSample, support_count);
-    defer allocator.free(curved_samples);
-    const curved_level_starts = try allocator.alloc(usize, layer_count + 1);
-    defer allocator.free(curved_level_starts);
-    const curved_level_altitudes = try allocator.alloc(f64, layer_count + 1);
-    defer allocator.free(curved_level_altitudes);
-
-    var transport_memory = internal.cache.transport_worker_memory.TransportWorkerMemory{};
-    defer transport_memory.deinit(allocator);
     var solar_memory = internal.cache.solar_irradiance_memory.SolarIrradianceMemory.init(allocator);
     defer solar_memory.deinit();
 
@@ -549,16 +461,21 @@ test "runO2ASpectrumSingleWorker matches old-route Stage 3 full spectrum" {
             .renorm_phase_function = true,
         },
     };
-    try transport_memory.ensureCapacity(
+    const worker_count = spectrum_run.preferredRadianceWorkerCount(dense_count);
+    var transport_workers = try prepareTransportWorkers(
         allocator,
+        worker_count,
+        support_count,
+        layer_count,
         layer_count + 1,
         case.rtm.stream_count,
         40,
         40,
         true,
     );
+    defer transport_workers.deinit(allocator);
 
-    const summary = try spectrum_run.runO2ASpectrumSingleWorker(
+    const summary = try spectrum_run.runO2ASpectrum(
         table,
         wavelengths.view(),
         angles,
@@ -576,6 +493,8 @@ test "runO2ASpectrumSingleWorker matches old-route Stage 3 full spectrum" {
         .{},
         &.{},
         &.{},
+        null,
+        worker_count,
         dense,
         product_wavelengths,
         raw_radiance,
@@ -584,14 +503,7 @@ test "runO2ASpectrumSingleWorker matches old-route Stage 3 full spectrum" {
         product_irradiance,
         reflectance,
         jacobian,
-        line_sigma,
-        support,
-        layers,
-        source_levels,
-        curved_samples,
-        curved_level_starts,
-        curved_level_altitudes,
-        &transport_memory,
+        transport_workers.workers,
         &solar_memory,
     );
 
@@ -656,7 +568,7 @@ test "runO2ASpectrumSingleWorker matches old-route Stage 3 full spectrum" {
     }
 }
 
-test "prefetchO2ARadianceRowsSingleWorker fills dense direct-route rows" {
+test "runO2ASpectrum assembles direct-route product reflectance across workers" {
     const allocator = std.testing.allocator;
     var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         allocator,
@@ -695,159 +607,12 @@ test "prefetchO2ARadianceRowsSingleWorker fills dense direct-route rows" {
 
     const support_count = tables.layers.support_mid_altitudes_km.len;
     const layer_count = tables.layers.layer_pressures_hpa.len;
-    const line_sigma = try allocator.alloc(f64, support_count);
-    defer allocator.free(line_sigma);
     const expected_line_sigma = try allocator.alloc(f64, support_count);
     defer allocator.free(expected_line_sigma);
-    const support = try allocator.alloc(layer_depths.SupportOptics, support_count);
-    defer allocator.free(support);
     const expected_support = try allocator.alloc(layer_depths.SupportOptics, support_count);
     defer allocator.free(expected_support);
-    const layers = try allocator.alloc(layer_depths.LayerOptics, layer_count);
-    defer allocator.free(layers);
     const expected_layers = try allocator.alloc(layer_depths.LayerOptics, layer_count);
     defer allocator.free(expected_layers);
-    const source_levels = try allocator.alloc(internal.optics.source_levels.SourceLevel, layer_count + 1);
-    defer allocator.free(source_levels);
-    const curved_samples = try allocator.alloc(internal.optics.curved_sun_path.CurvedSunPathSample, support_count);
-    defer allocator.free(curved_samples);
-    const curved_level_starts = try allocator.alloc(usize, layer_count + 1);
-    defer allocator.free(curved_level_starts);
-    const curved_level_altitudes = try allocator.alloc(f64, layer_count + 1);
-    defer allocator.free(curved_level_altitudes);
-
-    var dense: [2]radiance_results.RadianceResult = undefined;
-    var memory = internal.cache.transport_worker_memory.TransportWorkerMemory{};
-    defer memory.deinit(allocator);
-
-    const angles = solve.ViewAngles{ .solar_mu = 0.62, .view_mu = 0.48 };
-    const surface_albedo = 0.35;
-    const solve_config = controls.SolveConfig{
-        .derivative_mode = .semi_analytical,
-        .derivative_state_mask = jacobian_states.stateMask(.surface_albedo),
-        .controls = .{ .scattering = .none, .integrate_source_function = false },
-    };
-
-    try spectrum_run.prefetchO2ARadianceRowsSingleWorker(
-        wavelengths.view(),
-        angles,
-        surface_albedo,
-        tables.layers,
-        profile_lines,
-        tables.cia,
-        tables.aerosol,
-        tables.phase,
-        tables.solar,
-        solve_config,
-        dense[0..],
-        line_sigma,
-        support,
-        layers,
-        source_levels,
-        curved_samples,
-        curved_level_starts,
-        curved_level_altitudes,
-        &memory,
-    );
-
-    for (exact_wavelengths_nm, 0..) |wavelength_nm, wavelength_index| {
-        try profile_lines.fillSupportLineSigmaAtWavelengthIndex(
-            tables.layers,
-            wavelength_index,
-            expected_line_sigma,
-        );
-        try layer_depths.fillSupportOpticsAtWavelength(
-            wavelength_nm,
-            tables.layers,
-            expected_line_sigma,
-            tables.cia,
-            tables.aerosol,
-            expected_support,
-        );
-        try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, expected_support, expected_layers);
-        layer_depths.fillLayerAerosolJacobians(tables.aerosol, solve_config.derivative_state_mask, expected_layers);
-
-        const reflectance = solve.directSurfaceOnly(
-            angles,
-            surface_albedo,
-            testTotalOpticalDepth(expected_layers),
-            solve_config.derivative_mode,
-            solve_config.derivative_state_mask,
-        );
-        const solar_irradiance = try solar_lookup.irradianceAtWavelength(tables.solar, wavelength_nm);
-        const expected = radiance_results.scaleReflectanceToRadiance(
-            solve_config,
-            reflectance,
-            angles.solar_mu,
-            solar_irradiance,
-        );
-
-        try std.testing.expectApproxEqAbs(expected.radiance, dense[wavelength_index].radiance, 1.0e-14);
-        try std.testing.expectApproxEqAbs(expected.jacobian[0], dense[wavelength_index].jacobian[0], 1.0e-14);
-        try std.testing.expectApproxEqAbs(0.0, dense[wavelength_index].jacobian[1], 0.0);
-        try std.testing.expectApproxEqAbs(0.0, dense[wavelength_index].jacobian[2], 0.0);
-    }
-}
-
-test "runO2ASpectrumSingleWorker assembles direct-route product reflectance" {
-    const allocator = std.testing.allocator;
-    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
-        allocator,
-        internal.input.defaults.referenceCase(),
-    );
-    defer tables.deinit(allocator);
-
-    var sampling_rows = [_]sampling_table.SpectrumSamplingRow{
-        .{
-            .nominal_wavelength_nm = 758.0,
-            .radiance_wavelength_nm = 758.0,
-            .irradiance_wavelength_nm = 758.0,
-            .radiance_integration = sampling_table.IntegrationKernelRef.disabled(),
-            .irradiance_integration = sampling_table.IntegrationKernelRef.disabled(),
-        },
-        .{
-            .nominal_wavelength_nm = 760.0,
-            .radiance_wavelength_nm = 760.0,
-            .irradiance_wavelength_nm = 760.0,
-            .radiance_integration = sampling_table.IntegrationKernelRef.disabled(),
-            .irradiance_integration = sampling_table.IntegrationKernelRef.disabled(),
-        },
-    };
-    const table = sampling_table.SpectrumSamplingTable{ .rows = sampling_rows[0..] };
-    var wavelengths = try radiance_wavelengths.buildRadianceWavelengthList(allocator, table);
-    defer wavelengths.deinit(allocator);
-
-    const exact_wavelengths_nm = [_]f64{ 758.0, 760.0 };
-    const case = internal.input.defaults.referenceCase();
-    var profile_lines = try internal.cache.profile_line_memory.buildO2ProfileLineValuesForWavelengths(
-        allocator,
-        case,
-        exact_wavelengths_nm[0..],
-    );
-    defer profile_lines.deinit(allocator);
-
-    const support_count = tables.layers.support_mid_altitudes_km.len;
-    const layer_count = tables.layers.layer_pressures_hpa.len;
-    const line_sigma = try allocator.alloc(f64, support_count);
-    defer allocator.free(line_sigma);
-    const expected_line_sigma = try allocator.alloc(f64, support_count);
-    defer allocator.free(expected_line_sigma);
-    const support = try allocator.alloc(layer_depths.SupportOptics, support_count);
-    defer allocator.free(support);
-    const expected_support = try allocator.alloc(layer_depths.SupportOptics, support_count);
-    defer allocator.free(expected_support);
-    const layers = try allocator.alloc(layer_depths.LayerOptics, layer_count);
-    defer allocator.free(layers);
-    const expected_layers = try allocator.alloc(layer_depths.LayerOptics, layer_count);
-    defer allocator.free(expected_layers);
-    const source_levels = try allocator.alloc(internal.optics.source_levels.SourceLevel, layer_count + 1);
-    defer allocator.free(source_levels);
-    const curved_samples = try allocator.alloc(internal.optics.curved_sun_path.CurvedSunPathSample, support_count);
-    defer allocator.free(curved_samples);
-    const curved_level_starts = try allocator.alloc(usize, layer_count + 1);
-    defer allocator.free(curved_level_starts);
-    const curved_level_altitudes = try allocator.alloc(f64, layer_count + 1);
-    defer allocator.free(curved_level_altitudes);
 
     var dense: [2]radiance_results.RadianceResult = undefined;
     var product_wavelengths: [2]f64 = undefined;
@@ -857,8 +622,18 @@ test "runO2ASpectrumSingleWorker assembles direct-route product reflectance" {
     var product_irradiance: [2]f64 = undefined;
     var reflectance: [2]f64 = undefined;
     var jacobian: [2]jacobian_states.Vector = undefined;
-    var transport_memory = internal.cache.transport_worker_memory.TransportWorkerMemory{};
-    defer transport_memory.deinit(allocator);
+    var transport_workers = try prepareTransportWorkers(
+        allocator,
+        2,
+        support_count,
+        layer_count,
+        0,
+        0,
+        0,
+        0,
+        false,
+    );
+    defer transport_workers.deinit(allocator);
     var solar_memory = internal.cache.solar_irradiance_memory.SolarIrradianceMemory.init(allocator);
     defer solar_memory.deinit();
 
@@ -870,7 +645,7 @@ test "runO2ASpectrumSingleWorker assembles direct-route product reflectance" {
         .controls = .{ .scattering = .none, .integrate_source_function = false },
     };
 
-    const summary = try spectrum_run.runO2ASpectrumSingleWorker(
+    const summary = try spectrum_run.runO2ASpectrum(
         table,
         wavelengths.view(),
         angles,
@@ -888,6 +663,8 @@ test "runO2ASpectrumSingleWorker assembles direct-route product reflectance" {
         .{},
         &.{},
         &.{},
+        null,
+        2,
         dense[0..],
         product_wavelengths[0..],
         raw_radiance[0..],
@@ -896,14 +673,7 @@ test "runO2ASpectrumSingleWorker assembles direct-route product reflectance" {
         product_irradiance[0..],
         reflectance[0..],
         jacobian[0..],
-        line_sigma,
-        support,
-        layers,
-        source_levels,
-        curved_samples,
-        curved_level_starts,
-        curved_level_altitudes,
-        &transport_memory,
+        transport_workers.workers,
         &solar_memory,
     );
 
@@ -1454,40 +1224,39 @@ const Stage3ReflectanceJacobianEvidence = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-const TestRadianceComputeError = error{
-    InjectedFailure,
-};
-
-const TestRadianceComputeContext = struct {
-    call_count: usize = 0,
-    fail_at_call: ?usize = null,
-    worker_index_sum: usize = 0,
-    memory_seen: ?*internal.cache.transport_worker_memory.TransportWorkerMemory = null,
-    seen_wavelengths: [8]f64 = [_]f64{0.0} ** 8,
-};
-
-fn testRadianceCompute(
-    context: *TestRadianceComputeContext,
-    wavelength_nm: f64,
-    worker_index: usize,
-    memory: *internal.cache.transport_worker_memory.TransportWorkerMemory,
-) TestRadianceComputeError!radiance_results.RadianceResult {
-    // testRadianceCompute ------------------------------------------------------------------------------------|
-    // Test-local deterministic dense-row calculator for spectrum-run prefetch coverage.                       |
+fn prepareTransportWorkers(
+    allocator: std.mem.Allocator,
+    worker_count: usize,
+    support_count: usize,
+    layer_count: usize,
+    level_count: usize,
+    stream_count: usize,
+    phase_stride: usize,
+    fourier_basis_count: usize,
+    needs_local_sum: bool,
+) !internal.cache.transport_worker_memory.TransportWorkerMemoryCollection {
+    // prepareTransportWorkers ------------------------------------------------------------------------------- |
+    // Allocate the same worker-local optics and LABOS rows that root reserves before spectrum prefetch.       |
     // --------------------------------------------------------------------------------------------------------|
-    const call_index = context.call_count;
-    context.call_count += 1;
-    context.worker_index_sum += worker_index;
-    context.memory_seen = memory;
-    context.seen_wavelengths[call_index] = wavelength_nm;
-    if (context.fail_at_call) |fail_at_call| {
-        if (call_index == fail_at_call) return error.InjectedFailure;
+    var collection = internal.cache.transport_worker_memory.TransportWorkerMemoryCollection{};
+    errdefer collection.deinit(allocator);
+
+    try collection.ensureWorkerCount(allocator, worker_count);
+    for (collection.workers[0..worker_count]) |*worker_memory| {
+        try worker_memory.ensureOpticsCapacity(allocator, support_count, layer_count);
+        if (stream_count != 0) {
+            try worker_memory.ensureCapacity(
+                allocator,
+                level_count,
+                stream_count,
+                phase_stride,
+                fourier_basis_count,
+                needs_local_sum,
+            );
+        }
     }
 
-    return .{
-        .radiance = wavelength_nm * 0.01,
-        .jacobian = .{ wavelength_nm, @floatFromInt(worker_index), @floatFromInt(call_index) },
-    };
+    return collection;
 }
 
 fn testTotalOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {

@@ -13,7 +13,6 @@ PUB_FN_RE = re.compile(r"^\s*pub\s+(?:inline\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b
 
 
 ALLOWLIST: dict[tuple[str, str], str] = {
-    ("src/cache/forward_worker_pool.zig", "poolForWorkerCount"): "wp4.5-staged session pool selector; dense prefetch runner must wire in slice 3",
     ("src/cache/profile_line_memory.zig", "supportProfileRow"): "wp4-staged profile-line inspection helper; session runner must wire or demote before WP4 close",
     ("src/cache/solar_irradiance_memory.zig", "put"): "wp4-staged solar cache mutation surface; session runner must wire before WP4 close",
     ("src/cache/transport_worker_memory.zig", "resetValidity"): "wp4-staged worker-memory lifecycle; session runner must wire before WP4 close",
@@ -34,10 +33,7 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     ("src/cache/weak_line_cutoff_memory.zig", "replaceFromSupport"): "wp4-staged cutoff cache mutation surface; session runner must wire before WP4 close",
     ("src/common/hashing.zig", "fromBytes"): "wp4-staged exact-f64 key helper; session runner dedup path must wire before WP4 close",
     ("src/common/math/gauss_legendre.zig", "fillDisamarDivPointsInterval"): "wp4-staged sampling quadrature helper; sampling-table runner must wire before WP4 close",
-    ("src/common/worker_partition.zig", "FirstWorkerErrorState"): "wp4.5-staged worker kit; multi-worker phases must wire before WP4.5 close",
-    ("src/common/worker_partition.zig", "staticRange"): "wp4.5-staged worker kit; dense prefetch worker ranges must wire before WP4.5 close",
     ("src/common/worker_partition.zig", "preferredWorkerCountForCpuCount"): "worker-count oracle for preferredWorkerCount tests; production uses preferredWorkerCount",
-    ("src/common/worker_partition.zig", "runWorkers"): "wp4.5-staged worker orchestration; multi-worker phases must wire before WP4.5 close",
     ("src/optics/cia_absorption.zig", "interpolateCoefficients"): "wp4-staged optical helper; production optics runner must wire before WP4 close",
     ("src/optics/rayleigh.zig", "refractiveIndexDryAir"): "wp4-staged optical helper; production optics runner must wire before WP4 close",
     ("src/optics/rayleigh.zig", "depolarizationFactorAir"): "wp4-staged optical helper; production optics runner must wire before WP4 close",
@@ -58,11 +54,8 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     ("src/spectrum/solar_lookup.zig", "irradianceSampleCount"): "wp4-staged solar lookup helper; session runner must wire before WP4 close",
     ("src/spectrum/solar_lookup.zig", "interpolateWithinBounds"): "wp4-staged solar lookup helper; session runner must wire before WP4 close",
     ("src/spectrum/spectrum_run.zig", "radianceAtWavelength"): "wp4-staged spectrum runner helper; production runner must wire before WP4 close",
-    ("src/spectrum/spectrum_run.zig", "prefetchO2ARadianceRowsSingleWorker"): "wp4-staged prefetch loop; collapse with generic production loop before WP4 close",
-    ("src/spectrum/spectrum_run.zig", "prefetchRadianceRowsSingleWorker"): "wp4-staged production prefetch loop; runner must wire before WP4 close",
     ("src/spectrum/spectrum_run.zig", "gatherProductRows"): "wp4-staged spectrum stage helper; production runner must wire before WP4 close",
     ("src/spectrum/spectrum_run.zig", "postprocessAndAssembleProductRows"): "wp4-staged spectrum stage helper; production runner must wire before WP4 close",
-    ("src/spectrum/spectrum_run.zig", "preferredRadianceWorkerCount"): "wp4-staged worker kit; production runner must wire before WP4 close",
     ("src/transport/attenuation.zig", "isValidFor"): "wp4-staged transport precondition helper; runner must wire before WP4 close",
     ("src/transport/controls.zig", "supermatrixSize"): "wp4-staged transport shape helper; runner must wire before WP4 close",
     ("src/transport/gauss_angles.zig", "pairIndex"): "transport test oracle for paired Gaussian layout",

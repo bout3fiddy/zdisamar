@@ -141,7 +141,9 @@ pub fn runO2AWithSessionMemory(
     const table = prepared_rows.table;
     const wavelengths = session.radiance.wavelengthList();
     const product_count = table.rows.len;
-    const worker_memory = session.transport_workers.worker(0);
+    const worker_count = prepared_rows.worker_count;
+    const worker_pool = session.worker_pool.poolForWorkerCount(allocator, worker_count);
+    const transport_workers = session.transport_workers.workers[0..worker_count];
 
     var result = O2SpectrumRunResult{
         .spectrum = .{
@@ -165,7 +167,7 @@ pub fn runO2AWithSessionMemory(
     const product_radiance = try allocator.alloc(radiance_results.RadianceResult, product_count);
     defer allocator.free(product_radiance);
 
-    const summary = try spectrum_run.runO2ASpectrumSingleWorker(
+    const summary = try spectrum_run.runO2ASpectrum(
         table,
         wavelengths,
         viewAngles(prepared.case),
@@ -183,6 +185,8 @@ pub fn runO2AWithSessionMemory(
         .{},
         &.{},
         &.{},
+        worker_pool,
+        worker_count,
         session.radiance.resultRows(),
         result.spectrum.wavelength_nm,
         raw_radiance,
@@ -191,14 +195,7 @@ pub fn runO2AWithSessionMemory(
         result.spectrum.irradiance,
         result.spectrum.reflectance,
         result.spectrum.jacobian,
-        worker_memory.line_sigma_cm2_per_molecule,
-        worker_memory.support_optics,
-        worker_memory.layer_optics,
-        worker_memory.source_level_rows,
-        worker_memory.curved_samples,
-        worker_memory.curved_level_starts,
-        worker_memory.curved_level_altitudes_km,
-        worker_memory,
+        transport_workers,
         &session.solar_irradiance,
     );
 
@@ -293,6 +290,7 @@ pub fn o2aSolveConfig(case: O2Case) SolveConfig {
 
 const PreparedSessionRows = struct {
     table: sampling_table.SpectrumSamplingTable,
+    worker_count: usize,
 };
 
 fn prepareSessionRows(
@@ -352,18 +350,23 @@ fn prepareSessionRows(
     const support_count = prepared.tables.layers.support_mid_altitudes_km.len;
     const phase_max_index = @max(prepared.tables.phase.aerosol_phase_max_index, @as(usize, 2));
     const fourier_max_index = solve_config.controls.performance_thresholds.cappedFourierMax(phase_max_index);
-    try session.transport_workers.ensureWorkerCount(allocator, 1);
-    const worker_memory = session.transport_workers.worker(0);
-    try worker_memory.ensureOpticsCapacity(allocator, support_count, layer_count);
-    try worker_memory.ensureCapacity(
-        allocator,
-        layer_count + 1,
-        solve_config.controls.n_streams,
-        @min(phase_max_index, fourier_max_index) + 1,
-        fourier_max_index + 1,
-        true,
-    );
-    return .{ .table = table };
+    const worker_count = spectrum_run.preferredRadianceWorkerCount(dense_count);
+    try session.transport_workers.ensureWorkerCount(allocator, worker_count);
+    for (session.transport_workers.workers[0..worker_count]) |*worker_memory| {
+        try worker_memory.ensureOpticsCapacity(allocator, support_count, layer_count);
+        try worker_memory.ensureCapacity(
+            allocator,
+            layer_count + 1,
+            solve_config.controls.n_streams,
+            @min(phase_max_index, fourier_max_index) + 1,
+            fourier_max_index + 1,
+            true,
+        );
+    }
+    return .{
+        .table = table,
+        .worker_count = worker_count,
+    };
 }
 
 fn profileLineReuseStamp(
