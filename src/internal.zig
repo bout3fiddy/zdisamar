@@ -20,6 +20,7 @@ pub const public = @import("root.zig");
 pub const common = struct {
     pub const errors = @import("common/errors.zig");
     pub const hashing = @import("common/hashing.zig");
+    pub const memory = @import("common/memory.zig");
 
     // math ---------------------------------------------------------------------------------------------------|
     // Namespace-only test import wrapper for shared math helpers.                                             |

@@ -98,7 +98,7 @@ test "phase kernel matches scalar m0 outer products" {
     var coefficients = phase_table.zeroPhaseCoefficients();
     coefficients[2] = 0.37;
 
-    const kernel = phase_basis.fillZplusZminFromBasis(0, &coefficients, &geometry, &basis);
+    const kernel = phase_basis.fillZplusZminFromBasisLimited(0, &coefficients, 2, &geometry, &basis);
 
     for (0..geometry.stream_count) |row| {
         for (0..geometry.stream_count) |col| {

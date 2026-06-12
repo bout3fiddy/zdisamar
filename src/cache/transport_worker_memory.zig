@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const memory = @import("../common/memory.zig");
 const attenuation = @import("../transport/attenuation.zig");
 const gauss_angles = @import("../transport/gauss_angles.zig");
 const phase_basis = @import("../transport/phase_basis.zig");
@@ -177,34 +178,39 @@ pub const TransportWorkerMemory = struct {
         const layer_transmittance_count = attenuation.layerTransmittanceRequiredLength(stream_count, layer_count);
         const top_to_level_count = attenuation.topToLevelRequiredLength(stream_count, layer_count);
 
-        _ = try ensureSliceCapacity(f64, allocator, &self.attenuation_data, dynamic_attenuation_count);
-        _ = try ensureSliceCapacity(f64, allocator, &self.attenuation_tangent_data, dynamic_attenuation_count);
-        _ = try ensureSliceCapacity(f64, allocator, &self.attenuation_layer_transmittance, layer_transmittance_count);
-        _ = try ensureSliceCapacity(f64, allocator, &self.attenuation_top_to_level, top_to_level_count);
-        _ = try ensureSliceCapacity(rows.LayerRT, allocator, &self.rt_layers, level_count);
-        _ = try ensureSliceCapacity(rows.LayerRT, allocator, &self.rt_layers_tangent, level_count);
-        _ = try ensureSliceCapacity(usize, allocator, &self.layer_phase_max_indices, layer_count);
-        _ = try ensureSliceCapacity(f64, allocator, &self.layer_effective_scattering_suffixes, phase_row_count);
-        _ = try ensureSliceCapacity(usize, allocator, &self.source_phase_max_indices, level_count);
-        _ = try ensureSliceCapacity(rows.UDField, allocator, &self.order_ud, level_count);
+        _ = try memory.ensureSliceCapacity(f64, allocator, &self.attenuation_data, dynamic_attenuation_count);
+        _ = try memory.ensureSliceCapacity(f64, allocator, &self.attenuation_tangent_data, dynamic_attenuation_count);
+        _ = try memory.ensureSliceCapacity(
+            f64,
+            allocator,
+            &self.attenuation_layer_transmittance,
+            layer_transmittance_count,
+        );
+        _ = try memory.ensureSliceCapacity(f64, allocator, &self.attenuation_top_to_level, top_to_level_count);
+        _ = try memory.ensureSliceCapacity(rows.LayerRT, allocator, &self.rt_layers, level_count);
+        _ = try memory.ensureSliceCapacity(rows.LayerRT, allocator, &self.rt_layers_tangent, level_count);
+        _ = try memory.ensureSliceCapacity(usize, allocator, &self.layer_phase_max_indices, layer_count);
+        _ = try memory.ensureSliceCapacity(f64, allocator, &self.layer_effective_scattering_suffixes, phase_row_count);
+        _ = try memory.ensureSliceCapacity(usize, allocator, &self.source_phase_max_indices, level_count);
+        _ = try memory.ensureSliceCapacity(rows.UDField, allocator, &self.order_ud, level_count);
         if (needs_local_sum) {
-            _ = try ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_sum_local, level_count);
+            _ = try memory.ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_sum_local, level_count);
         }
-        _ = try ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_orde, level_count);
-        _ = try ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_local, level_count);
-        _ = try ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_tangent_orde, level_count);
-        _ = try ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_tangent_local, level_count);
-        _ = try ensureSliceCapacity(bool, allocator, &self.rt_active, level_count);
-        _ = try ensureSliceCapacity(phase_basis.PhaseKernelRow, allocator, &self.layer_phase_rows, level_count);
-        _ = try ensureSliceCapacity(bool, allocator, &self.layer_phase_row_valid, level_count);
+        _ = try memory.ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_orde, level_count);
+        _ = try memory.ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_local, level_count);
+        _ = try memory.ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_tangent_orde, level_count);
+        _ = try memory.ensureSliceCapacity(rows.UDLocal, allocator, &self.order_ud_tangent_local, level_count);
+        _ = try memory.ensureSliceCapacity(bool, allocator, &self.rt_active, level_count);
+        _ = try memory.ensureSliceCapacity(phase_basis.PhaseKernelRow, allocator, &self.layer_phase_rows, level_count);
+        _ = try memory.ensureSliceCapacity(bool, allocator, &self.layer_phase_row_valid, level_count);
 
-        const plm_replaced = try ensureSliceCapacity(
+        const plm_replaced = try memory.ensureSliceCapacity(
             phase_basis.FourierPlmBasis,
             allocator,
             &self.plm_basis_cache,
             fourier_basis_count,
         );
-        const plm_valid_replaced = try ensureSliceCapacity(
+        const plm_valid_replaced = try memory.ensureSliceCapacity(
             bool,
             allocator,
             &self.plm_basis_cache_valid,
@@ -212,8 +218,8 @@ pub const TransportWorkerMemory = struct {
         );
         if (plm_replaced or plm_valid_replaced) @memset(self.plm_basis_cache_valid, false);
 
-        _ = try ensureSliceCapacity(u64, allocator, &self.previous_layer_phase_signatures, layer_count);
-        const signatures_replaced = try ensureSliceCapacity(
+        _ = try memory.ensureSliceCapacity(u64, allocator, &self.previous_layer_phase_signatures, layer_count);
+        const signatures_replaced = try memory.ensureSliceCapacity(
             bool,
             allocator,
             &self.previous_layer_phase_signature_valid,
@@ -489,23 +495,6 @@ pub const TransportWorkerMemory = struct {
     }
 };
 // ------------------------------------------------------------------------------------------------------------|
-
-fn ensureSliceCapacity(
-    comptime T: type,
-    allocator: Allocator,
-    slice: *[]T,
-    required_len: usize,
-) Allocator.Error!bool {
-    // ensureSliceCapacity ----------------------------------------------------------------------------------- |
-    // Replace backing storage when the retained slice is too small; old values are intentionally discarded.   |
-    // --------------------------------------------------------------------------------------------------------|
-    if (slice.len >= required_len) return false;
-
-    const new_slice = try allocator.alloc(T, required_len);
-    allocator.free(slice.*);
-    slice.* = new_slice;
-    return true;
-}
 
 comptime {
     std.debug.assert(@sizeOf(GeometryCacheStatus) == 16);

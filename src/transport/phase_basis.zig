@@ -274,37 +274,6 @@ fn computePlm(
     return .{ .plus = plm_plus };
 }
 
-pub fn fillZplusZminFromBasis(
-    fourier_index: usize,
-    phase_coefficients: *const [phase_table.coefficient_count]f64,
-    geometry: *const gauss_angles.GaussGeometry,
-    plm_basis: *const FourierPlmBasis,
-) PhaseKernel {
-    // fillZplusZminFromBasis -------------------------------------------------------------------------------- |
-    // Infer the active phase ceiling and build dense Z+/Z- matrices from a cached PLM basis.                  |
-    // --------------------------------------------------------------------------------------------------------|
-    return fillZplusZminFromBasisLimited(
-        fourier_index,
-        phase_coefficients,
-        phase_table.maxPhaseCoefficientIndex(phase_coefficients),
-        geometry,
-        plm_basis,
-    );
-}
-
-pub fn fillZplusZmin(
-    fourier_index: usize,
-    phase_coefficients: *const [phase_table.coefficient_count]f64,
-    geometry: *const gauss_angles.GaussGeometry,
-) PhaseKernel {
-    // fillZplusZmin ----------------------------------------------------------------------------------------- |
-    // Build a one-off PLM basis and dense Z+/Z- matrices for callers without a cached basis row.              |
-    // --------------------------------------------------------------------------------------------------------|
-    const max_phase_index = phase_table.maxPhaseCoefficientIndex(phase_coefficients);
-    const plm_basis = FourierPlmBasis.init(fourier_index, max_phase_index, geometry);
-    return fillZplusZminFromBasis(fourier_index, phase_coefficients, geometry, &plm_basis);
-}
-
 pub fn fillZplusZminFromBasisLimited(
     fourier_index: usize,
     phase_coefficients: *const [phase_table.coefficient_count]f64,

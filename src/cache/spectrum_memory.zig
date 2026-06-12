@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const memory = @import("../common/memory.zig");
 const sampling_table = @import("../spectrum/sampling_table.zig");
 
 const Allocator = std.mem.Allocator;
@@ -60,21 +61,14 @@ pub const SpectrumMemory = struct {
         // Ensure backing arrays are large enough for the next sampling-table build. Existing values are not   |
         // preserved across growth because callers refill the full active prefix after sizing.                 |
         // ----------------------------------------------------------------------------------------------------|
-        if (self.rows.len < row_count) {
-            const rows = try allocator.alloc(sampling_table.SpectrumSamplingRow, row_count);
-            allocator.free(self.rows);
-            self.rows = rows;
-        }
-        if (self.kernel_offsets_nm.len < side_sample_count) {
-            const offsets = try allocator.alloc(f64, side_sample_count);
-            allocator.free(self.kernel_offsets_nm);
-            self.kernel_offsets_nm = offsets;
-        }
-        if (self.kernel_weights.len < side_sample_count) {
-            const weights = try allocator.alloc(f64, side_sample_count);
-            allocator.free(self.kernel_weights);
-            self.kernel_weights = weights;
-        }
+        _ = try memory.ensureSliceCapacity(
+            sampling_table.SpectrumSamplingRow,
+            allocator,
+            &self.rows,
+            row_count,
+        );
+        _ = try memory.ensureSliceCapacity(f64, allocator, &self.kernel_offsets_nm, side_sample_count);
+        _ = try memory.ensureSliceCapacity(f64, allocator, &self.kernel_weights, side_sample_count);
     }
 
     pub fn table(

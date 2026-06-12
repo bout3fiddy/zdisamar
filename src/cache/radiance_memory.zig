@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const memory = @import("../common/memory.zig");
 const radiance_results = @import("../spectrum/radiance_results.zig");
 const radiance_wavelengths = @import("../spectrum/radiance_wavelengths.zig");
 
@@ -84,11 +85,12 @@ pub const RadianceMemory = struct {
         // Ensure dense radiance result storage is large enough. Existing values are not preserved across      |
         // growth because prefetch fills every active result row before nominal gathers read it.               |
         // ----------------------------------------------------------------------------------------------------|
-        if (self.results.len < result_count) {
-            const results = try allocator.alloc(radiance_results.RadianceResult, result_count);
-            allocator.free(self.results);
-            self.results = results;
-        }
+        _ = try memory.ensureSliceCapacity(
+            radiance_results.RadianceResult,
+            allocator,
+            &self.results,
+            result_count,
+        );
         self.active.result_count = result_count;
     }
 

@@ -544,6 +544,12 @@ const CutoffGrid = struct {
     wavenumbers_cm1: []f64 = &.{},
 
     fn deinit(self: *const CutoffGrid, allocator: Allocator) void {
+        // CutoffGrid.deinit --------------------------------------------------------------------------------- |
+        // Release the paired weak-line cutoff grid arrays.                                                    |
+        //                                                                                                     |
+        // ownership                                                                                           |
+        //   Both slices are owned by CutoffGrid and are never borrowed after the parent setup object exits.   |
+        // ----------------------------------------------------------------------------------------------------|
         allocator.free(self.wavenumbers_cm1);
         allocator.free(self.wavelengths_nm);
     }
@@ -639,6 +645,12 @@ const WeakLinePreparedState = struct {
     lines: []WeakLinePreparedLineState,
 
     fn deinit(self: *WeakLinePreparedState, allocator: Allocator) void {
+        // WeakLinePreparedState.deinit ---------------------------------------------------------------------- |
+        // Release per-line weak-lane constants prepared for one temperature/pressure profile node.            |
+        //                                                                                                     |
+        // ownership                                                                                           |
+        //   `lines` owns heap storage; scalar thermodynamic fields are copied values and need no teardown.    |
+        // ----------------------------------------------------------------------------------------------------|
         allocator.free(self.lines);
         self.* = undefined;
     }
