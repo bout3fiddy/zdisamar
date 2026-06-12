@@ -97,7 +97,7 @@ test "SpectrumSamplingTable summary matches WP1 aggregate sampling evidence shap
     try std.testing.expectEqual(@as(usize, 3874), sampling_evidence.forward_miss_count);
 }
 
-test "reference SpectrumSamplingTable builder matches WP1 aggregate and exact-key evidence" {
+test "O2 SpectrumSamplingTable builder matches WP1 aggregate and exact-key evidence" {
     var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         std.testing.allocator,
         internal.input.defaults.referenceCase(),

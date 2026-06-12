@@ -225,7 +225,7 @@ pub const SpectrumSamplingTable = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // OwnedSpectrumSamplingTable -------------------------------------------------------------------------------- |
-// Owned sampling rows and side-array kernels returned by the reference builder.                               |
+// Owned sampling rows and side-array kernels returned by the O2 A sampling builder.                           |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 48 B (0.047 KiB), align: 8 B                                                                          |

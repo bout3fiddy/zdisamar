@@ -25,7 +25,7 @@ const curved_sun_path = @import("optics/curved_sun_path.zig");
 const Allocator = std.mem.Allocator;
 
 // root.zig ---------------------------------------------------------------------------------------------------|
-// Public explicit-dataflow surface for the O2 A reference forward model.                                      |
+// Public explicit-dataflow surface for the O2 A forward model.                                                |
 //                                                                                                             |
 // public flow                                                                                                 |
 //   defaultO2Case -> prepareO2A -> warmO2ASessionMemory -> runO2AWithSessionMemory                            |
