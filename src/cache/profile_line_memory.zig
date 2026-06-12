@@ -16,6 +16,7 @@ const hitran_gas_constant_j_per_mol_k = 8.3144621;
 const hitran_speed_of_light_m_per_s = 2.99792458e8;
 const hitran_pi = 3.1415926536;
 const min_spectroscopy_pressure_atm = 1.0e-12;
+const max_strong_line_sidecars: usize = 128;
 
 // min_hitran_temperature_k -----------------------------------------------------------------------------------|
 // Old provenance: main:`src/input/reference/spectroscopy/physics_core.zig` clamps weak-line temperatures to   |
@@ -48,10 +49,10 @@ const vendor_cutoff_prewindow_margin_cm1 = 0.25;
 // ------------------------------------------------------------------------------------------------------------|
 
 // ProfileLineValue -------------------------------------------------------------------------------------------|
-// One weak-line value at a single exact wavelength and layer profile node.                                    |
+// One line-spectroscopy value at a single exact wavelength and layer profile node.                            |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 48 B (0.047 KiB), align: 8 B                                                                          |
+// size: 80 B (0.078 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
 // [ 0.. 7] wavelength_nm                     : f64                                                            |
@@ -60,7 +61,11 @@ const vendor_cutoff_prewindow_margin_cm1 = 0.25;
 // [16..23] pressure_hpa                      : f64                                                            |
 // [24..31] temperature_k                     : f64                                                            |
 // [32..39] weak_line_sigma_cm2_per_molecule  : f64                                                            |
-// [40..47] d_sigma_d_temperature_cm2_per_molecule_per_k : f64                                                 |
+// [40..47] strong_line_sigma_cm2_per_molecule: f64                                                            |
+// [48..55] line_sigma_cm2_per_molecule       : f64                                                            |
+// [56..63] line_mixing_sigma_cm2_per_molecule: f64                                                            |
+// [64..71] total_sigma_cm2_per_molecule      : f64                                                            |
+// [72..79] d_sigma_d_temperature_cm2_per_molecule_per_k : f64                                                 |
 pub const ProfileLineValue = struct {
     wavelength_nm: f64,
     layer_index: u32,
@@ -68,6 +73,10 @@ pub const ProfileLineValue = struct {
     pressure_hpa: f64,
     temperature_k: f64,
     weak_line_sigma_cm2_per_molecule: f64,
+    strong_line_sigma_cm2_per_molecule: f64,
+    line_sigma_cm2_per_molecule: f64,
+    line_mixing_sigma_cm2_per_molecule: f64,
+    total_sigma_cm2_per_molecule: f64,
     d_sigma_d_temperature_cm2_per_molecule_per_k: f64,
 };
 // ------------------------------------------------------------------------------------------------------------|
@@ -131,6 +140,7 @@ pub fn buildReferenceProfileLineValues(
 
     const runtime = RuntimeControls{
         .cutoff_cm1 = lines.cutoff_sim_cm1,
+        .line_mixing_factor = lines.line_mixing_factor,
     };
     const line_strength_threshold = thresholdStrength(lines.rows, lines.threshold_line_sim);
     const active_lines = try collectActiveLines(
@@ -140,6 +150,18 @@ pub fn buildReferenceProfileLineValues(
         line_strength_threshold,
     );
     defer allocator.free(active_lines);
+    const total_lines = try collectRuntimeLines(allocator, lines.rows, lines.isotopes_sim);
+    defer allocator.free(total_lines);
+    const strong_states = try allocator.alloc(StrongLinePreparedState, profile_node_count);
+    defer allocator.free(strong_states);
+    for (0..profile_node_count) |profile_node_index| {
+        strong_states[profile_node_index] = prepareStrongLineState(
+            lines.strong_lines,
+            lines.relaxation_matrix,
+            layers.layer_temperatures_k[profile_node_index],
+            @max(layers.layer_pressures_hpa[profile_node_index] / 1013.25, min_spectroscopy_pressure_atm),
+        );
+    }
 
     const step_nm = if (wavelength_count > 1)
         (case.spectral_grid.end_nm - case.spectral_grid.start_nm) / @as(f64, @floatFromInt(wavelength_count - 1))
@@ -173,6 +195,16 @@ pub fn buildReferenceProfileLineValues(
                 pressure_hpa,
                 runtime,
             );
+            const total = totalSpectroscopyAt(
+                total_lines,
+                lines.strong_lines,
+                lines.relaxation_matrix,
+                wavelength_nm,
+                temperature_k,
+                pressure_hpa,
+                runtime,
+                &strong_states[profile_node_index],
+            );
 
             values[row_index] = .{
                 .wavelength_nm = wavelength_nm,
@@ -181,6 +213,10 @@ pub fn buildReferenceProfileLineValues(
                 .pressure_hpa = pressure_hpa,
                 .temperature_k = temperature_k,
                 .weak_line_sigma_cm2_per_molecule = sigma,
+                .strong_line_sigma_cm2_per_molecule = total.strong_line_sigma_cm2_per_molecule,
+                .line_sigma_cm2_per_molecule = total.line_sigma_cm2_per_molecule,
+                .line_mixing_sigma_cm2_per_molecule = total.line_mixing_sigma_cm2_per_molecule,
+                .total_sigma_cm2_per_molecule = total.total_sigma_cm2_per_molecule,
                 .d_sigma_d_temperature_cm2_per_molecule_per_k = (upper_sigma - lower_sigma) / 1.0,
             };
         }
@@ -198,12 +234,60 @@ pub fn buildReferenceProfileLineValues(
 // Borrowed line-list controls needed by weak-line setup evaluation.                                           |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 8 B (0.008 KiB), align: 8 B                                                                           |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [0..7] cutoff_cm1 : f64                                                                                     |
+// [ 0.. 7] cutoff_cm1         : f64                                                                           |
+// [ 8..15] line_mixing_factor : f64                                                                           |
 const RuntimeControls = struct {
     cutoff_cm1: f64,
+    line_mixing_factor: f64,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// SpectroscopyComponents -------------------------------------------------------------------------------------|
+// Split line-spectroscopy result for one thermodynamic point and wavelength.                                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] weak_line_sigma_cm2_per_molecule   : f64                                                           |
+// [ 8..15] strong_line_sigma_cm2_per_molecule : f64                                                           |
+// [16..23] line_sigma_cm2_per_molecule        : f64                                                           |
+// [24..31] line_mixing_sigma_cm2_per_molecule : f64                                                           |
+// [32..39] total_sigma_cm2_per_molecule       : f64                                                           |
+const SpectroscopyComponents = struct {
+    weak_line_sigma_cm2_per_molecule: f64 = 0.0,
+    strong_line_sigma_cm2_per_molecule: f64 = 0.0,
+    line_sigma_cm2_per_molecule: f64 = 0.0,
+    line_mixing_sigma_cm2_per_molecule: f64 = 0.0,
+    total_sigma_cm2_per_molecule: f64 = 0.0,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// StrongLinePreparedState ------------------------------------------------------------------------------------|
+// Fixed-capacity O2 strong-line ConvTP state prepared for one profile-node thermodynamic point.               |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 5136 B (5.016 KiB), align: 8 B                                                                        |
+//                                                                                                             |
+// memory                                                                                                      |
+// [   0..   7] line_count               : usize                                                               |
+// [   8..  15] sig_moy_cm1              : f64                                                                 |
+// [  16..1039] population_t             : [128]f64                                                            |
+// [1040..2063] dipole_t                 : [128]f64                                                            |
+// [2064..3087] mod_sig_cm1              : [128]f64                                                            |
+// [3088..4111] half_width_cm1_at_t      : [128]f64                                                            |
+// [4112..5135] line_mixing_coefficients : [128]f64                                                            |
+const StrongLinePreparedState = struct {
+    line_count: usize = 0,
+    sig_moy_cm1: f64 = 0.0,
+    population_t: [max_strong_line_sidecars]f64 = [_]f64{0.0} ** max_strong_line_sidecars,
+    dipole_t: [max_strong_line_sidecars]f64 = [_]f64{0.0} ** max_strong_line_sidecars,
+    mod_sig_cm1: [max_strong_line_sidecars]f64 = [_]f64{0.0} ** max_strong_line_sidecars,
+    half_width_cm1_at_t: [max_strong_line_sidecars]f64 = [_]f64{0.0} ** max_strong_line_sidecars,
+    line_mixing_coefficients: [max_strong_line_sidecars]f64 = [_]f64{0.0} ** max_strong_line_sidecars,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -261,11 +345,93 @@ fn collectActiveLines(
     return active_lines;
 }
 
+fn collectRuntimeLines(
+    allocator: Allocator,
+    lines: []const readers.O2LineAssetRow,
+    active_isotopes: []const u8,
+) ![]readers.O2LineAssetRow {
+    // collectRuntimeLines ------------------------------------------------------------------------------------|
+    // Copy O2 rows that participate in old total-sigma evaluation, without applying the weak-line threshold.  |
+    // --------------------------------------------------------------------------------------------------------|
+    var active_count: usize = 0;
+    for (lines) |line| {
+        if (runtimeLine(line, active_isotopes)) active_count += 1;
+    }
+
+    const active_lines = try allocator.alloc(readers.O2LineAssetRow, active_count);
+    errdefer allocator.free(active_lines);
+
+    var active_index: usize = 0;
+    for (lines) |line| {
+        if (!runtimeLine(line, active_isotopes)) continue;
+        active_lines[active_index] = line;
+        active_index += 1;
+    }
+
+    std.mem.sort(readers.O2LineAssetRow, active_lines, {}, lessByCenterWavelength);
+    return active_lines;
+}
+
 fn lessByCenterWavelength(_: void, lhs: readers.O2LineAssetRow, rhs: readers.O2LineAssetRow) bool {
     // lessByCenterWavelength ---------------------------------------------------------------------------------|
     // Order line rows by center wavelength so binary searches can isolate a local HITRAN cutoff window.       |
     // --------------------------------------------------------------------------------------------------------|
     return lhs.center_wavelength_nm < rhs.center_wavelength_nm;
+}
+
+fn totalSpectroscopyAt(
+    runtime_lines: []const readers.O2LineAssetRow,
+    strong_lines: []const readers.O2StrongLineAssetRow,
+    relaxation_matrix: readers.O2RelaxationMatrixAsset,
+    wavelength_nm: f64,
+    temperature_k: f64,
+    pressure_hpa: f64,
+    runtime: RuntimeControls,
+    strong_state: *const StrongLinePreparedState,
+) SpectroscopyComponents {
+    // totalSpectroscopyAt ------------------------------------------------------------------------------------|
+    // Sum old-route weak, strong-line, and line-mixing sigma for one profile-node row.                        |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports main:`src/input/reference/spectroscopy/line_list.zig` totalSigmaWithPreparedStrongLineState*    |
+    //   and main:`src/input/reference/spectroscopy/strong_lines.zig` strongLineContributionPrepared.          |
+    // --------------------------------------------------------------------------------------------------------|
+    if (runtime_lines.len == 0) return .{};
+
+    const safe_temperature = @max(temperature_k, min_hitran_temperature_k);
+    const pressure_atm = @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm);
+    const window = relevantLineWindow(runtime_lines, wavelength_nm, runtime.cutoff_cm1);
+    const vendor_partition = usesVendorStrongLinePartition(runtime_lines, strong_lines);
+
+    var weak_line_sigma: f64 = 0.0;
+    for (window, 0..) |line, line_index| {
+        if (shouldExcludeWeakLine(line, line_index, window, strong_lines, vendor_partition)) continue;
+        weak_line_sigma += weakLineContribution(wavelength_nm, line, safe_temperature, pressure_atm, runtime);
+    }
+
+    var strong_line_sigma: f64 = 0.0;
+    var line_mixing_sigma: f64 = 0.0;
+    const strong_count = @min(@min(strong_lines.len, relaxation_matrix.line_count), strong_state.line_count);
+    for (0..strong_count) |strong_index| {
+        const contribution = strongLineContribution(
+            wavelength_nm,
+            strong_index,
+            strong_state,
+            safe_temperature,
+            pressure_atm,
+        );
+        strong_line_sigma += contribution.strong_line_sigma_cm2_per_molecule;
+        line_mixing_sigma += contribution.line_mixing_sigma_cm2_per_molecule * runtime.line_mixing_factor;
+    }
+
+    const line_sigma = weak_line_sigma + strong_line_sigma;
+    return .{
+        .weak_line_sigma_cm2_per_molecule = weak_line_sigma,
+        .strong_line_sigma_cm2_per_molecule = strong_line_sigma,
+        .line_sigma_cm2_per_molecule = line_sigma,
+        .line_mixing_sigma_cm2_per_molecule = line_mixing_sigma,
+        .total_sigma_cm2_per_molecule = @max(line_sigma + line_mixing_sigma, 0.0),
+    };
 }
 
 fn weakLineSigmaAt(
@@ -348,6 +514,120 @@ fn activeLine(
     return false;
 }
 
+fn runtimeLine(line: readers.O2LineAssetRow, active_isotopes: []const u8) bool {
+    // runtimeLine --------------------------------------------------------------------------------------------|
+    // Apply the old total-sigma gas/isotope controls without the weak-line threshold filter.                  |
+    // --------------------------------------------------------------------------------------------------------|
+    if (line.gas_index != 7) return false;
+
+    if (active_isotopes.len == 0) return true;
+
+    for (active_isotopes) |isotope_number| {
+        if (line.isotope_number == isotope_number) return true;
+    }
+
+    return false;
+}
+
+fn usesVendorStrongLinePartition(
+    lines: []const readers.O2LineAssetRow,
+    strong_lines: []const readers.O2StrongLineAssetRow,
+) bool {
+    // usesVendorStrongLinePartition --------------------------------------------------------------------------|
+    // Detect the old O2 A sidecar partition from retained HITRAN branch metadata.                             |
+    // --------------------------------------------------------------------------------------------------------|
+    if (strong_lines.len == 0) return false;
+
+    for (lines) |line| {
+        const has_old_branch_metadata =
+            line.branch_ic1 != null and
+            line.branch_ic2 != null and
+            line.rotational_nf != null;
+
+        if (line.gas_index == 7 and has_old_branch_metadata) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+fn shouldExcludeWeakLine(
+    line: readers.O2LineAssetRow,
+    line_index: usize,
+    window: []const readers.O2LineAssetRow,
+    strong_lines: []const readers.O2StrongLineAssetRow,
+    vendor_partition: bool,
+) bool {
+    // shouldExcludeWeakLine ----------------------------------------------------------------------------------|
+    // Keep lines covered by old O2 strong-line sidecars out of the total weak-line contribution.              |
+    // --------------------------------------------------------------------------------------------------------|
+    if (vendor_partition) {
+        if (!isVendorO2AStrongCandidateFromSource(line)) return false;
+        return findStrongLineMatch(strong_lines, line.center_wavelength_nm) != null;
+    }
+
+    const strong_index = findStrongLineMatch(strong_lines, line.center_wavelength_nm) orelse return false;
+    return strongestWindowAnchorForSidecar(window, strong_lines[strong_index]) == line_index;
+}
+
+fn strongestWindowAnchorForSidecar(
+    window: []const readers.O2LineAssetRow,
+    strong_line: readers.O2StrongLineAssetRow,
+) usize {
+    // strongestWindowAnchorForSidecar ------------------------------------------------------------------------|
+    // Select the old generic sidecar anchor: closest line center, then strongest line on an equal delta.      |
+    // --------------------------------------------------------------------------------------------------------|
+    var best_index: usize = 0;
+    var best_delta = std.math.inf(f64);
+    var best_strength: f64 = -std.math.inf(f64);
+    for (window, 0..) |line, line_index| {
+        const delta = @abs(strong_line.center_wavelength_nm - line.center_wavelength_nm);
+        const tolerance_nm = @max(0.01, strong_line.air_half_width_nm * 4.0);
+        if (delta > tolerance_nm) continue;
+
+        if (delta > best_delta) continue;
+
+        if (delta == best_delta and line.line_strength_cm2_per_molecule < best_strength) continue;
+
+        best_index = line_index;
+        best_delta = delta;
+        best_strength = line.line_strength_cm2_per_molecule;
+    }
+    return best_index;
+}
+
+fn findStrongLineMatch(strong_lines: []const readers.O2StrongLineAssetRow, wavelength_nm: f64) ?usize {
+    // findStrongLineMatch ------------------------------------------------------------------------------------|
+    // Return the closest LISA sidecar center within the old tolerance rule.                                   |
+    // --------------------------------------------------------------------------------------------------------|
+    var best_index: ?usize = null;
+    var best_delta = std.math.inf(f64);
+    for (strong_lines, 0..) |strong_line, strong_index| {
+        const delta = @abs(strong_line.center_wavelength_nm - wavelength_nm);
+        const tolerance_nm = @max(0.01, strong_line.air_half_width_nm * 4.0);
+        if (delta > tolerance_nm or delta >= best_delta) continue;
+        best_index = strong_index;
+        best_delta = delta;
+    }
+    return best_index;
+}
+
+fn isVendorO2AStrongCandidateFromSource(line: readers.O2LineAssetRow) bool {
+    // isVendorO2AStrongCandidateFromSource -------------------------------------------------------------------|
+    // Match old support.zig: only source-marked O2 isotope-1 P-branch rows participate in vendor partition.   |
+    // --------------------------------------------------------------------------------------------------------|
+    return line.vendor_filter_metadata_from_source and
+        line.gas_index == 7 and
+        line.isotope_number == 1 and
+        line.branch_ic1 != null and
+        line.branch_ic2 != null and
+        line.rotational_nf != null and
+        line.branch_ic1.? == 5 and
+        line.branch_ic2.? == 1 and
+        line.rotational_nf.? <= 35;
+}
+
 fn weakLineContribution(
     wavelength_nm: f64,
     line: readers.O2LineAssetRow,
@@ -427,6 +707,243 @@ fn weakLineContribution(
         1013.25;
 
     return @max(prefactor * cpf.wr, 0.0);
+}
+
+fn prepareStrongLineState(
+    strong_lines: []const readers.O2StrongLineAssetRow,
+    relaxation_matrix: readers.O2RelaxationMatrixAsset,
+    temperature_k: f64,
+    pressure_atm: f64,
+) StrongLinePreparedState {
+    // prepareStrongLineState ---------------------------------------------------------------------------------|
+    // Prepare old O2 ConvTP line-mixing state for one profile-node temperature and pressure.                  |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports main:`src/input/reference/spectroscopy/strong_lines.zig` prepareStrongLineConvTPStateWithScratch|
+    //   and fillStrongLineState over the new setup row names.                                                 |
+    // --------------------------------------------------------------------------------------------------------|
+    const safe_temperature = @max(temperature_k, min_hitran_temperature_k);
+    const temperature_ratio = hitran_reference_temperature_k / safe_temperature;
+    const partition_ratio = hitran_partition_tables.ratioT0OverT(
+        66,
+        safe_temperature,
+        hitran_reference_temperature_k,
+    ) orelse temperature_ratio;
+    const line_count = @min(@min(strong_lines.len, relaxation_matrix.line_count), max_strong_line_sidecars);
+    var state = StrongLinePreparedState{ .line_count = line_count };
+    if (line_count == 0) return state;
+
+    var relaxation_weights: [max_strong_line_sidecars * max_strong_line_sidecars]f64 = undefined;
+    const relaxation_weight_count: usize = @as(usize, line_count) * @as(usize, line_count);
+    fillStrongLineState(
+        &state,
+        relaxation_weights[0..relaxation_weight_count],
+        strong_lines,
+        relaxation_matrix,
+        line_count,
+        safe_temperature,
+        temperature_ratio,
+        partition_ratio,
+        pressure_atm,
+    );
+    return state;
+}
+
+fn fillStrongLineState(
+    state: *StrongLinePreparedState,
+    relaxation_weights: []f64,
+    strong_lines: []const readers.O2StrongLineAssetRow,
+    relaxation_matrix: readers.O2RelaxationMatrixAsset,
+    line_count: usize,
+    safe_temperature: f64,
+    temperature_ratio: f64,
+    partition_ratio: f64,
+    pressure_atm: f64,
+) void {
+    // fillStrongLineState ------------------------------------------------------------------------------------|
+    // Fill old DISAMAR O2 line-mixing relaxation state for all retained strong-line sidecars.                 |
+    // --------------------------------------------------------------------------------------------------------|
+    for (0..line_count) |row_index| {
+        const strong_line = strong_lines[row_index];
+        const inverse_temperature_delta =
+            (1.0 / hitran_reference_temperature_k) - (1.0 / safe_temperature);
+        const population_energy_scale = 1.43877696 *
+            strong_line.lower_state_energy_cm1 *
+            inverse_temperature_delta;
+        state.population_t[row_index] = strong_line.population_t0 *
+            partition_ratio *
+            @exp(population_energy_scale);
+        state.dipole_t[row_index] = strong_line.dipole_t0 * @sqrt(temperature_ratio);
+        state.mod_sig_cm1[row_index] =
+            strong_line.center_wavenumber_cm1 + pressure_atm * strong_line.pressure_shift_cm1;
+        state.half_width_cm1_at_t[row_index] = strong_line.air_half_width_cm1 *
+            std.math.pow(f64, temperature_ratio, strong_line.temperature_exponent);
+
+        for (0..line_count) |column_index| {
+            setRelaxationWeight(
+                relaxation_weights,
+                line_count,
+                row_index,
+                column_index,
+                relaxation_matrix.weightAt(row_index, column_index) *
+                    std.math.pow(
+                        f64,
+                        temperature_ratio,
+                        relaxation_matrix.temperatureExponentAt(row_index, column_index),
+                    ),
+            );
+        }
+    }
+
+    for (0..line_count) |row_index| {
+        for (0..line_count) |column_index| {
+            const column_energy_cm1 = strong_lines[column_index].lower_state_energy_cm1;
+            const row_energy_cm1 = strong_lines[row_index].lower_state_energy_cm1;
+            if (column_energy_cm1 < row_energy_cm1) continue;
+
+            setRelaxationWeight(
+                relaxation_weights,
+                line_count,
+                column_index,
+                row_index,
+                relaxationWeightAt(relaxation_weights, line_count, row_index, column_index) *
+                    state.population_t[column_index] /
+                    @max(state.population_t[row_index], 1.0e-24),
+            );
+        }
+    }
+
+    for (0..line_count) |index| {
+        setRelaxationWeight(relaxation_weights, line_count, index, index, state.half_width_cm1_at_t[index]);
+    }
+
+    var weighted_center_sum: f64 = 0.0;
+    var weighted_center_norm: f64 = 0.0;
+    for (0..line_count) |line_index| {
+        const weight = state.population_t[line_index] * state.dipole_t[line_index] * state.dipole_t[line_index];
+        weighted_center_sum += state.mod_sig_cm1[line_index] * weight;
+        weighted_center_norm += weight;
+    }
+
+    state.sig_moy_cm1 = if (weighted_center_norm > 0.0)
+        weighted_center_sum / weighted_center_norm
+    else
+        state.mod_sig_cm1[0];
+
+    for (0..line_count) |column_index| {
+        var upper_sum: f64 = 0.0;
+        var lower_sum: f64 = 0.0;
+        for (0..line_count) |row_index| {
+            if (row_index <= column_index) {
+                upper_sum += strong_lines[row_index].dipole_ratio *
+                    relaxationWeightAt(relaxation_weights, line_count, row_index, column_index);
+            } else {
+                lower_sum += strong_lines[row_index].dipole_ratio *
+                    relaxationWeightAt(relaxation_weights, line_count, row_index, column_index);
+            }
+        }
+        const rotational_gate = 1.0 -
+            @abs(@as(f64, @floatFromInt(strong_lines[column_index].rotational_index_m1))) / 36.0;
+        const renormalization_anchor = strong_lines[column_index].dipole_ratio *
+            rotational_gate *
+            rotational_gate *
+            0.04;
+
+        for (0..line_count) |row_index| {
+            if (row_index <= column_index) continue;
+            const renormalized = -relaxationWeightAt(relaxation_weights, line_count, row_index, column_index) *
+                (upper_sum - renormalization_anchor) /
+                lower_sum;
+            setRelaxationWeight(relaxation_weights, line_count, row_index, column_index, renormalized);
+            setRelaxationWeight(
+                relaxation_weights,
+                line_count,
+                column_index,
+                row_index,
+                renormalized * state.population_t[column_index] / state.population_t[row_index],
+            );
+        }
+    }
+
+    for (0..line_count) |line_index| {
+        var mixing_sum: f64 = 0.0;
+        for (0..line_count) |other_index| {
+            if (other_index == line_index) continue;
+
+            const delta_sig = state.mod_sig_cm1[line_index] - state.mod_sig_cm1[other_index];
+            if (delta_sig == 0.0) continue;
+
+            mixing_sum += 2.0 * state.dipole_t[other_index] / state.dipole_t[line_index] *
+                relaxationWeightAt(relaxation_weights, line_count, other_index, line_index) /
+                delta_sig;
+        }
+        state.line_mixing_coefficients[line_index] = pressure_atm * mixing_sum;
+    }
+}
+
+fn strongLineContribution(
+    wavelength_nm: f64,
+    strong_index: usize,
+    state: *const StrongLinePreparedState,
+    temperature_k: f64,
+    pressure_atm: f64,
+) SpectroscopyComponents {
+    // strongLineContribution ---------------------------------------------------------------------------------|
+    // Evaluate one prepared O2 strong-line sidecar with the old CPF line-mixing formula.                      |
+    // --------------------------------------------------------------------------------------------------------|
+    const safe_temperature = @max(temperature_k, min_hitran_temperature_k);
+    const safe_pressure = @max(pressure_atm, min_spectroscopy_pressure_atm);
+    const evaluation_wavenumber_cm1 = wavelengthToWavenumberCm1(wavelength_nm);
+    const sig_moy_cm1 = @max(state.sig_moy_cm1, 1.0e-6);
+    const gam_d = @max(
+        dopplerWidthCm1(safe_temperature, sig_moy_cm1, 31.989830),
+        1.0e-6,
+    );
+    const cte = @sqrt(@log(2.0)) / gam_d;
+    const cte1 = cte / @sqrt(hitran_pi);
+    const cpf = complexProbabilityFunction(
+        (state.mod_sig_cm1[strong_index] - evaluation_wavenumber_cm1) * cte,
+        state.half_width_cm1_at_t[strong_index] * safe_pressure * cte,
+    );
+    const cte2 = evaluation_wavenumber_cm1 *
+        @max(1.0 - @exp(-hitran_hc_over_kb_cm_k * evaluation_wavenumber_cm1 / safe_temperature), 0.0);
+    const base_absorption = cte1 *
+        safe_pressure *
+        state.population_t[strong_index] *
+        state.dipole_t[strong_index] *
+        state.dipole_t[strong_index] *
+        cte2;
+    const number_density = 1013.25 * safe_pressure / safe_temperature / hitran_boltzmann_constant_cm3_hpa_per_k;
+    const line_sigma = @max(base_absorption * cpf.wr / number_density, 0.0);
+    const line_mixing_sigma = (-base_absorption *
+        state.line_mixing_coefficients[strong_index] *
+        cpf.wi) / number_density;
+    return .{
+        .strong_line_sigma_cm2_per_molecule = line_sigma,
+        .line_sigma_cm2_per_molecule = line_sigma,
+        .line_mixing_sigma_cm2_per_molecule = line_mixing_sigma,
+        .total_sigma_cm2_per_molecule = @max(line_sigma + line_mixing_sigma, 0.0),
+    };
+}
+
+fn relaxationWeightAt(relaxation_weights: []const f64, line_count: usize, row: usize, column: usize) f64 {
+    // relaxationWeightAt -------------------------------------------------------------------------------------|
+    // Read one row-major relaxation-matrix scratch value.                                                     |
+    // --------------------------------------------------------------------------------------------------------|
+    return relaxation_weights[row * line_count + column];
+}
+
+fn setRelaxationWeight(
+    relaxation_weights: []f64,
+    line_count: usize,
+    row: usize,
+    column: usize,
+    value: f64,
+) void {
+    // setRelaxationWeight ------------------------------------------------------------------------------------|
+    // Write one row-major relaxation-matrix scratch value.                                                    |
+    // --------------------------------------------------------------------------------------------------------|
+    relaxation_weights[row * line_count + column] = value;
 }
 
 fn insideCutoff(

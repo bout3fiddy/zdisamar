@@ -109,6 +109,50 @@ test "ProfileLineValues match old profile-node line math evidence" {
     }
 }
 
+test "ProfileLineValues match old profile-node total line sidecar evidence" {
+    if (builtin.mode == .Debug) return error.SkipZigTest;
+
+    var probe_index: usize = 0;
+    while (probe_index < profile_line_total_probe_evidence.len) {
+        const wavelength_nm = profile_line_total_probe_evidence[probe_index].wavelength_nm;
+        var case = internal.input.defaults.referenceCase();
+        case.spectral_grid = .{
+            .start_nm = wavelength_nm,
+            .end_nm = wavelength_nm,
+            .sample_count = 1,
+        };
+
+        var values = try internal.cache.profile_line_memory.buildReferenceProfileLineValues(
+            std.testing.allocator,
+            case,
+        );
+        defer values.deinit(std.testing.allocator);
+
+        while (probe_index < profile_line_total_probe_evidence.len and
+            profile_line_total_probe_evidence[probe_index].wavelength_nm == wavelength_nm)
+        {
+            const expected = profile_line_total_probe_evidence[probe_index];
+            const actual = values.row(0, expected.profile_node_index) orelse return error.MissingProfileLineValue;
+            try std.testing.expectApproxEqRel(
+                expected.strong_line_sigma_cm2_per_molecule,
+                actual.strong_line_sigma_cm2_per_molecule,
+                1.0e-12,
+            );
+            try std.testing.expectApproxEqRel(
+                expected.line_mixing_sigma_cm2_per_molecule,
+                actual.line_mixing_sigma_cm2_per_molecule,
+                1.0e-12,
+            );
+            try std.testing.expectApproxEqRel(
+                expected.total_sigma_cm2_per_molecule,
+                actual.total_sigma_cm2_per_molecule,
+                1.0e-12,
+            );
+            probe_index += 1;
+        }
+    }
+}
+
 // ProfileLineProbeEvidence -----------------------------------------------------------------------------------|
 // One old-route weak-line value anchor for a diagnostic wavelength and layer node.                            |
 //                                                                                                             |
@@ -131,6 +175,139 @@ const ProfileLineProbeEvidence = struct {
     d_sigma_d_temperature_cm2_per_molecule_per_k: f64,
 };
 // ------------------------------------------------------------------------------------------------------------|
+
+// ProfileLineTotalProbeEvidence ------------------------------------------------------------------------------|
+// One old-route total line-sidecar value anchor for a diagnostic wavelength and layer node.                   |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] wavelength_nm                        : f64                                                         |
+// [ 8..15] profile_node_index                   : usize                                                       |
+// [16..23] strong_line_sigma_cm2_per_molecule   : f64                                                         |
+// [24..31] line_mixing_sigma_cm2_per_molecule   : f64                                                         |
+// [32..39] total_sigma_cm2_per_molecule         : f64                                                         |
+const ProfileLineTotalProbeEvidence = struct {
+    wavelength_nm: f64,
+    profile_node_index: usize,
+    strong_line_sigma_cm2_per_molecule: f64,
+    line_mixing_sigma_cm2_per_molecule: f64,
+    total_sigma_cm2_per_molecule: f64,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// Source: scratch/refactor/2026-06-11-explicit-dataflow-refactor/profile-line-total-baseline-probe.zig.
+// The WP1 artifacts do not expose per-profile-node total line sidecar rows, so this table is derived by running
+// origin/main SpectroscopyLineList.evaluateAt with bundled HITRAN/SDF/RMF sidecars over the current WP2 layer
+// nodes at the five diagnostic wavelengths used by public-python-baseline.json.
+const profile_line_total_probe_evidence = [_]ProfileLineTotalProbeEvidence{
+    .{
+        .wavelength_nm = 758.0,
+        .profile_node_index = 0,
+        .strong_line_sigma_cm2_per_molecule = 1.08375416811245930e-27,
+        .line_mixing_sigma_cm2_per_molecule = -6.36581934975572000e-28,
+        .total_sigma_cm2_per_molecule = 1.50447588856829870e-27,
+    },
+    .{
+        .wavelength_nm = 758.0,
+        .profile_node_index = 16,
+        .strong_line_sigma_cm2_per_molecule = 5.68094292336209900e-28,
+        .line_mixing_sigma_cm2_per_molecule = -3.42362256072298930e-28,
+        .total_sigma_cm2_per_molecule = 7.79182051245344000e-28,
+    },
+    .{
+        .wavelength_nm = 758.0,
+        .profile_node_index = 44,
+        .strong_line_sigma_cm2_per_molecule = 3.47182869052960440e-31,
+        .line_mixing_sigma_cm2_per_molecule = -2.09770626609104530e-31,
+        .total_sigma_cm2_per_molecule = 4.75612080957699400e-31,
+    },
+    .{
+        .wavelength_nm = 760.0,
+        .profile_node_index = 0,
+        .strong_line_sigma_cm2_per_molecule = 1.88996664645741630e-25,
+        .line_mixing_sigma_cm2_per_molecule = 5.36769482601947000e-27,
+        .total_sigma_cm2_per_molecule = 3.90752649812722270e-25,
+    },
+    .{
+        .wavelength_nm = 760.0,
+        .profile_node_index = 16,
+        .strong_line_sigma_cm2_per_molecule = 8.66770413123742800e-26,
+        .line_mixing_sigma_cm2_per_molecule = 1.97333189521312800e-27,
+        .total_sigma_cm2_per_molecule = 1.79074991420843870e-25,
+    },
+    .{
+        .wavelength_nm = 760.0,
+        .profile_node_index = 44,
+        .strong_line_sigma_cm2_per_molecule = 5.20713357554555600e-29,
+        .line_mixing_sigma_cm2_per_molecule = 1.13834333633611140e-30,
+        .total_sigma_cm2_per_molecule = 1.07667255483614820e-28,
+    },
+    .{
+        .wavelength_nm = 765.0,
+        .profile_node_index = 0,
+        .strong_line_sigma_cm2_per_molecule = 3.27944235549163400e-26,
+        .line_mixing_sigma_cm2_per_molecule = 7.27610753617510900e-28,
+        .total_sigma_cm2_per_molecule = 6.57853381468159100e-26,
+    },
+    .{
+        .wavelength_nm = 765.0,
+        .profile_node_index = 16,
+        .strong_line_sigma_cm2_per_molecule = 1.63289111232408520e-26,
+        .line_mixing_sigma_cm2_per_molecule = 2.82103546711251350e-28,
+        .total_sigma_cm2_per_molecule = 3.26893945979713840e-26,
+    },
+    .{
+        .wavelength_nm = 765.0,
+        .profile_node_index = 44,
+        .strong_line_sigma_cm2_per_molecule = 9.92867376068587300e-30,
+        .line_mixing_sigma_cm2_per_molecule = 1.65708220076861960e-31,
+        .total_sigma_cm2_per_molecule = 1.98766385535399770e-29,
+    },
+    .{
+        .wavelength_nm = 767.0,
+        .profile_node_index = 0,
+        .strong_line_sigma_cm2_per_molecule = 4.31165328433395900e-27,
+        .line_mixing_sigma_cm2_per_molecule = -6.33640793800627300e-28,
+        .total_sigma_cm2_per_molecule = 8.04385949169926200e-27,
+    },
+    .{
+        .wavelength_nm = 767.0,
+        .profile_node_index = 16,
+        .strong_line_sigma_cm2_per_molecule = 1.82960685012479400e-27,
+        .line_mixing_sigma_cm2_per_molecule = -3.50377046617917600e-28,
+        .total_sigma_cm2_per_molecule = 3.32518563919886650e-27,
+    },
+    .{
+        .wavelength_nm = 767.0,
+        .profile_node_index = 44,
+        .strong_line_sigma_cm2_per_molecule = 1.09285971325984700e-30,
+        .line_mixing_sigma_cm2_per_molecule = -2.14667815227410840e-31,
+        .total_sigma_cm2_per_molecule = 1.98012419276012700e-30,
+    },
+    .{
+        .wavelength_nm = 776.0,
+        .profile_node_index = 0,
+        .strong_line_sigma_cm2_per_molecule = 7.08414487184700100e-29,
+        .line_mixing_sigma_cm2_per_molecule = -4.17126954818559600e-29,
+        .total_sigma_cm2_per_molecule = 5.43147625680958100e-29,
+    },
+    .{
+        .wavelength_nm = 776.0,
+        .profile_node_index = 16,
+        .strong_line_sigma_cm2_per_molecule = 3.76899249170105570e-29,
+        .line_mixing_sigma_cm2_per_molecule = -2.28866030107605070e-29,
+        .total_sigma_cm2_per_molecule = 2.60578800898636100e-29,
+    },
+    .{
+        .wavelength_nm = 776.0,
+        .profile_node_index = 44,
+        .strong_line_sigma_cm2_per_molecule = 2.30656087811877360e-32,
+        .line_mixing_sigma_cm2_per_molecule = -1.40488148961054600e-32,
+        .total_sigma_cm2_per_molecule = 1.58002063730110300e-32,
+    },
+};
 
 // Source: scratch/refactor/2026-06-11-explicit-dataflow-refactor/profile-line-baseline-probe.zig.
 // The WP1 public artifacts contain diagnostic optical depths, not per-layer line-cache rows, so this table is

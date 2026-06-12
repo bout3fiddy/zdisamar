@@ -5,6 +5,32 @@ const units = @import("../common/units.zig");
 
 const Allocator = std.mem.Allocator;
 
+// VendorO2ABranchMetadata ------------------------------------------------------------------------------------|
+// Optional O2 A branch metadata used to partition weak lines from LISA strong-line sidecars.                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 7 B (0.007 KiB), align: 1 B                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0..1] branch_ic1 : ?u8                                                                                     |
+// [2..3] branch_ic2 : ?u8                                                                                     |
+// [4..5] rotational_nf : ?u8                                                                                  |
+// [6..6] from_source : bool                                                                                   |
+const VendorO2ABranchMetadata = struct {
+    branch_ic1: ?u8 = null,
+    branch_ic2: ?u8 = null,
+    rotational_nf: ?u8 = null,
+    from_source: bool = false,
+
+    fn present(self: VendorO2ABranchMetadata) bool {
+        // VendorO2ABranchMetadata.present --------------------------------------------------------------------|
+        // True when all old O2 A branch fields were recovered from the HITRAN row.                            |
+        // ----------------------------------------------------------------------------------------------------|
+        return self.branch_ic1 != null and self.branch_ic2 != null and self.rotational_nf != null;
+    }
+};
+// ------------------------------------------------------------------------------------------------------------|
+
 // readers.zig ------------------------------------------------------------------------------------------------|
 // Asset readers for WP2 setup tables.                                                                         |
 //                                                                                                             |
@@ -41,10 +67,10 @@ pub const AtmosphereProfileRow = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // O2LineAssetRow ---------------------------------------------------------------------------------------------|
-// Parsed HITRAN line row fields needed by WP2 setup.                                                          |
+// Parsed HITRAN line row fields needed by setup and O2 strong-line partitioning.                              |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 64 B (0.063 KiB), align: 8 B                                                                          |
+// size: 72 B (0.070 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
 // [ 0.. 7] center_wavelength_nm          : f64                                                                |
@@ -56,10 +82,15 @@ pub const AtmosphereProfileRow = struct {
 // [48..55] pressure_shift_cm1            : f64                                                                |
 // [56..57] gas_index                     : u16                                                                |
 // [58..58] isotope_number                : u8                                                                 |
-// [59..63] trailing padding              : 5 B                                                                |
+// [59..59] vendor_filter_metadata_from_source : bool                                                          |
+// [60..61] branch_ic1                    : ?u8                                                                |
+// [62..63] branch_ic2                    : ?u8                                                                |
+// [64..65] rotational_nf                 : ?u8                                                                |
+// [66..71] trailing padding              : 6 B                                                                |
 pub const O2LineAssetRow = struct {
     gas_index: u16,
     isotope_number: u8,
+    vendor_filter_metadata_from_source: bool = false,
     center_wavelength_nm: f64,
     center_wavenumber_cm1: f64,
     line_strength_cm2_per_molecule: f64,
@@ -67,6 +98,9 @@ pub const O2LineAssetRow = struct {
     lower_state_energy_cm1: f64,
     temperature_exponent: f64,
     pressure_shift_cm1: f64,
+    branch_ic1: ?u8 = null,
+    branch_ic2: ?u8 = null,
+    rotational_nf: ?u8 = null,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -259,10 +293,17 @@ pub fn readO2LineList(allocator: Allocator, path: []const u8) ![]O2LineAssetRow 
         const center_wavenumber_cm1 = try parseFixedFloat(row[3..15]);
         const air_half_width_cm1 = try parseFixedFloat(row[35..40]);
         const pressure_shift_cm1 = try parseFixedFloat(row[59..67]);
+        const inline_metadata = try inlineVendorO2ABranchMetadata(row);
+        const fallback_metadata = if (!inline_metadata.present())
+            try fallbackVendorO2ABranchMetadata(row, center_wavenumber_cm1)
+        else
+            null;
+        const vendor_metadata = fallback_metadata orelse inline_metadata;
 
         try rows.append(allocator, .{
             .gas_index = gas_index,
             .isotope_number = isotope_number,
+            .vendor_filter_metadata_from_source = vendor_metadata.from_source,
             .center_wavelength_nm = units.wavenumberToWavelengthNm(center_wavenumber_cm1),
             .center_wavenumber_cm1 = center_wavenumber_cm1,
             .line_strength_cm2_per_molecule = try parseFixedFloat(row[15..25]),
@@ -270,6 +311,9 @@ pub fn readO2LineList(allocator: Allocator, path: []const u8) ![]O2LineAssetRow 
             .lower_state_energy_cm1 = try parseFixedFloat(row[45..55]),
             .temperature_exponent = try parseFixedFloat(row[55..59]),
             .pressure_shift_cm1 = pressure_shift_cm1,
+            .branch_ic1 = vendor_metadata.branch_ic1,
+            .branch_ic2 = vendor_metadata.branch_ic2,
+            .rotational_nf = vendor_metadata.rotational_nf,
         });
     }
 
@@ -505,6 +549,69 @@ fn parseFixedInt(comptime T: type, value: []const u8) !T {
     return std.fmt.parseInt(T, std.mem.trim(u8, value, " \t\r"), 10) catch {
         return errors.Error.InvalidNumber;
     };
+}
+
+fn parseOptionalFixedInt(comptime T: type, value: []const u8) !?T {
+    // parseOptionalFixedInt ----------------------------------------------------------------------------------|
+    // Parse an optional fixed-width integer field, returning null for blank vendor fields.                    |
+    // --------------------------------------------------------------------------------------------------------|
+    const trimmed = std.mem.trim(u8, value, " \t\r");
+    if (trimmed.len == 0) return null;
+    return std.fmt.parseInt(T, trimmed, 10) catch {
+        return errors.Error.InvalidNumber;
+    };
+}
+
+fn inlineVendorO2ABranchMetadata(line: []const u8) !VendorO2ABranchMetadata {
+    // inlineVendorO2ABranchMetadata --------------------------------------------------------------------------|
+    // Recover optional old O2 A branch metadata from fixed HITRAN vendor columns when present.                |
+    // --------------------------------------------------------------------------------------------------------|
+    if (line.len < 85) return .{};
+
+    const branch_ic1 = try parseOptionalFixedInt(u8, line[67..70]);
+    const branch_ic2 = try parseOptionalFixedInt(u8, line[70..73]);
+    const rotational_nf = try parseOptionalFixedInt(u8, line[83..85]);
+    return .{
+        .branch_ic1 = branch_ic1,
+        .branch_ic2 = branch_ic2,
+        .rotational_nf = rotational_nf,
+        .from_source = branch_ic1 != null and branch_ic2 != null and rotational_nf != null,
+    };
+}
+
+fn fallbackVendorO2ABranchMetadata(line: []const u8, center_wavenumber_cm1: f64) !?VendorO2ABranchMetadata {
+    // fallbackVendorO2ABranchMetadata ------------------------------------------------------------------------|
+    // Reconstruct old O2 A P-branch metadata from trailing branch tokens when fixed fields are absent.        |
+    // --------------------------------------------------------------------------------------------------------|
+    if (center_wavenumber_cm1 < 12800.0 or center_wavenumber_cm1 > 13250.0) return null;
+
+    var tokens = std.mem.tokenizeAny(u8, line, " \t");
+    while (tokens.next()) |branch_token| {
+        if (branch_token.len != 1 or branch_token[0] != 'P') continue;
+
+        const upper_token = tokens.next() orelse return null;
+        const lower_token = tokens.next() orelse return null;
+        if (upper_token.len < 2) return null;
+
+        const branch_kind = upper_token[upper_token.len - 1];
+        if (branch_kind != 'P' and branch_kind != 'Q') return null;
+
+        const rotational_prefix = upper_token[0 .. upper_token.len - 1];
+        if (rotational_prefix.len == 0) return null;
+
+        const upper_nf = std.fmt.parseInt(u8, rotational_prefix, 10) catch return errors.Error.InvalidNumber;
+        const lower_nf = std.fmt.parseInt(u8, lower_token, 10) catch return errors.Error.InvalidNumber;
+        if (upper_nf == 0 or upper_nf > 35 or (upper_nf % 2) == 0) return null;
+        if (!(lower_nf == upper_nf or lower_nf + 1 == upper_nf)) return null;
+
+        return .{
+            .branch_ic1 = 5,
+            .branch_ic2 = 1,
+            .rotational_nf = upper_nf,
+            .from_source = false,
+        };
+    }
+    return null;
 }
 
 fn rotationalIndexFromLisaBranch(branch_token: []const u8, nf_token: []const u8) !i32 {
