@@ -3,13 +3,29 @@ const std = @import("std");
 const controls = @import("controls.zig");
 const gauss_angles = @import("gauss_angles.zig");
 const matrix12 = @import("matrix_12x10.zig");
+const layer_depths = @import("../optics/layer_depths.zig");
+const phase_basis = @import("phase_basis.zig");
 const phase_timing = @import("phase_timing.zig");
+const phase_table = @import("../setup/phase_table.zig");
 const rows = @import("rows.zig");
 const Perturbation = @import("../instrumentation/sensitivity.zig");
 const Telemetry = @import("../instrumentation/telemetry.zig");
 const Trace = @import("../instrumentation/trace.zig");
 
 const math = std.math;
+
+const phase_normalization_floor: f64 = 1.0e-30;
+const empty_layer_optical_depth_floor: f64 = 1.0e-20;
+const layer_direction_cosine_floor: f64 = 1.0e-12;
+
+const phase_odd_reciprocal = build_phase_odd_reciprocal: {
+    var values: [phase_table.coefficient_count]f64 = undefined;
+    for (&values, 0..) |*value, index| {
+        const index_f: f64 = @floatFromInt(index);
+        value.* = 1.0 / (2.0 * index_f + 1.0);
+    }
+    break :build_phase_odd_reciprocal values;
+};
 
 // layer_reflect_transmit.zig ---------------------------------------------------------------------------------|
 // Single-layer LABOS reflection/transmission matrix fills and layer-doubling support math.                    |
@@ -32,6 +48,552 @@ const math = std.math;
 //   The functions write caller-owned Mat rows and allocate no storage. Fixed stream_count=12 keeps the old    |
 //   constant-bound loop shape used by the O2 A LABOS route.                                                   |
 // ------------------------------------------------------------------------------------------------------------|
+
+fn locateLowerIndex(values: []const f64, target: f64) usize {
+    // locateLowerIndex -------------------------------------------------------------------------------------- |
+    // Return the largest index whose next value is still below target.                                        |
+    // --------------------------------------------------------------------------------------------------------|
+    if (values.len <= 1) return 0;
+
+    var index: usize = 0;
+    while (index + 1 < values.len and values[index + 1] < target) : (index += 1) {}
+
+    return index;
+}
+
+pub fn fillSurface(
+    fourier_index: usize,
+    surface_albedo: f64,
+    geometry: *const gauss_angles.GaussGeometry,
+) rows.LayerRT {
+    // fillSurface ------------------------------------------------------------------------------------------- |
+    // Build the Lambertian surface boundary as RT layer 0.                                                    |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports old `layers.zig` `fillSurface`.                                                                 |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   R[i,j] = w[i] * albedo * w[j] only for Fourier index 0                                                |
+    // --------------------------------------------------------------------------------------------------------|
+    const stream_count = geometry.stream_count;
+    var result = zeroLayerRt(stream_count);
+
+    if (fourier_index == 0) {
+        for (0..stream_count) |col| {
+            for (0..stream_count) |row| {
+                result.R.set(row, col, geometry.w[row] * surface_albedo * geometry.w[col]);
+            }
+        }
+    }
+
+    return result;
+}
+
+pub fn fillLayerPhaseMaxIndices(
+    layer_phase_max_indices: []usize,
+    layers: []const layer_depths.LayerOptics,
+    phase: phase_table.PhaseTable,
+    rayleigh_phase_coefficient2: f64,
+) void {
+    // fillLayerPhaseMaxIndices ------------------------------------------------------------------------------ |
+    // Store the highest active phase coefficient for each layer.                                              |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports old `layers.zig` `fillLayerPhaseMaxIndices` over the new explicit `LayerOptics` row shape.      |
+    // --------------------------------------------------------------------------------------------------------|
+    std.debug.assert(layer_phase_max_indices.len >= layers.len);
+
+    for (layers, layer_phase_max_indices[0..layers.len]) |layer, *max_index| {
+        max_index.* = layerPhaseMaxIndex(layer, phase, rayleigh_phase_coefficient2);
+    }
+}
+
+pub fn fillLayerEffectiveScatteringSuffixes(
+    suffixes: []f64,
+    layers: []const layer_depths.LayerOptics,
+    phase: phase_table.PhaseTable,
+    rayleigh_phase_coefficient2: f64,
+    layer_phase_max_indices: []const usize,
+    phase_stride: usize,
+) void {
+    // fillLayerEffectiveScatteringSuffixes ------------------------------------------------------------------ |
+    // Precompute effective scattering strength for each layer and Fourier order.                              |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   suffix[m] = max over l>=m of abs(beta_l) / (2l + 1)                                                   |
+    // --------------------------------------------------------------------------------------------------------|
+    std.debug.assert(layer_phase_max_indices.len >= layers.len);
+    std.debug.assert(phase_stride > 0 and phase_stride <= phase_table.coefficient_count);
+    std.debug.assert(suffixes.len >= layers.len * phase_stride);
+
+    for (layers, layer_phase_max_indices[0..layers.len], 0..) |layer, max_phase_index, layer_index| {
+        const layer_suffixes = suffixes[layer_index * phase_stride ..][0..phase_stride];
+        @memset(layer_suffixes, 0.0);
+
+        var suffix: f64 = 0.0;
+        var reverse_index = max_phase_index + 1;
+        while (reverse_index > 0) {
+            reverse_index -= 1;
+
+            const coefficient = layerPhaseCoefficient(layer, phase, rayleigh_phase_coefficient2, reverse_index);
+            const beta_eff = @abs(coefficient) * phase_odd_reciprocal[reverse_index];
+            suffix = @max(suffix, beta_eff);
+            if (reverse_index < phase_stride) layer_suffixes[reverse_index] = suffix;
+        }
+    }
+}
+
+pub fn fillLayerReflectTransmitRowsWithBasis(
+    rt: []rows.LayerRT,
+    layers: []const layer_depths.LayerOptics,
+    fourier_index: usize,
+    geometry: *const gauss_angles.GaussGeometry,
+    transport_controls: controls.TransportControls,
+    phase: phase_table.PhaseTable,
+    rayleigh_phase_coefficient2: f64,
+    plm_basis: *const phase_basis.FourierPlmBasis,
+    layer_phase_max_indices: ?[]const usize,
+    layer_effective_scattering_suffixes: ?[]const f64,
+    layer_effective_scattering_suffix_stride: usize,
+    phase_row_cache: ?[]phase_basis.PhaseKernelRow,
+    phase_row_valid: ?[]bool,
+    rt_active: ?[]bool,
+    trace_phase_timing: ?phase_timing.Active,
+) void {
+    // fillLayerReflectTransmitRowsWithBasis ----------------------------------------------------------------- |
+    // Build LABOS layer reflection/transmission rows for one Fourier term.                                    |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports old `layers.zig` `calcRTlayersIntoWithBasisTimed` over explicit WP3 optics rows.                |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   layer RT maps tau, omega, and beta_l into reflection R and transmission T                             |
+    // --------------------------------------------------------------------------------------------------------|
+    const layer_count = layers.len;
+    std.debug.assert(rt.len >= layer_count + 1);
+    if (rt_active) |active| active[0] = false;
+    if (phase_row_valid) |valid| valid[0] = false;
+
+    for (layers, 0..) |layer, layer_index| {
+        Trace.plotU("layer_visits", 1);
+
+        const rt_index = layer_index + 1;
+        if (fourier_index >= phase_table.coefficient_count) {
+            Trace.plotU("layer_skipped_fourier_out_of_range", 1);
+            markInactiveLayer(rt, phase_row_valid, rt_active, rt_index, geometry.stream_count);
+            continue;
+        }
+
+        const max_phase_index = if (layer_phase_max_indices) |indices|
+            indices[layer_index]
+        else
+            layerPhaseMaxIndex(layer, phase, rayleigh_phase_coefficient2);
+
+        if (fourier_index > max_phase_index) {
+            Trace.plotU("layer_skipped_fourier_out_of_range", 1);
+            markInactiveLayer(rt, phase_row_valid, rt_active, rt_index, geometry.stream_count);
+            continue;
+        }
+
+        if (layer.total_optical_depth < empty_layer_optical_depth_floor or
+            layer.total_scattering_optical_depth <= 0.0 or
+            layer.single_scatter_albedo <= 0.0)
+        {
+            Trace.plotU("layer_skipped_empty_optics", 1);
+            markInactiveLayer(rt, phase_row_valid, rt_active, rt_index, geometry.stream_count);
+            continue;
+        }
+
+        var z = buildLayerPhaseKernel(
+            layer,
+            fourier_index,
+            max_phase_index,
+            geometry,
+            phase,
+            rayleigh_phase_coefficient2,
+            plm_basis,
+            trace_phase_timing,
+        );
+        Trace.plotU("phase_matrix_builds", 1);
+
+        if (phase_row_cache) |cache| {
+            cachePhaseKernelViewRow(cache, rt_index, &z, geometry.viewIndex());
+            if (phase_row_valid) |valid| valid[rt_index] = true;
+        } else if (phase_row_valid) |valid| {
+            valid[rt_index] = false;
+        }
+
+        const optical_depth = layer.total_optical_depth;
+        const single_scatter_albedo = layer.single_scatter_albedo;
+        const max_beta_eff = layerEffectiveScatteringSuffix(
+            layer,
+            layer_index,
+            fourier_index,
+            max_phase_index,
+            phase,
+            rayleigh_phase_coefficient2,
+            layer_effective_scattering_suffixes,
+            layer_effective_scattering_suffix_stride,
+        );
+        const effective_scattering_coefficient = single_scatter_albedo * max_beta_eff;
+        const effective_scattering_depth = effective_scattering_coefficient * optical_depth;
+        const doubling_decision = classifyLayerDoubling(
+            transport_controls.scattering,
+            transport_controls.performance_thresholds.threshold_doubl,
+            optical_depth,
+            effective_scattering_coefficient,
+            effective_scattering_depth,
+        );
+
+        Telemetry.labosLayerDecision(
+            fourier_index,
+            layer_index,
+            max_phase_index,
+            optical_depth,
+            single_scatter_albedo,
+            max_beta_eff,
+            effective_scattering_depth,
+            transport_controls.performance_thresholds.threshold_doubl,
+            doubling_decision.start_optical_depth,
+            doubling_decision.doubling_count,
+            doubling_decision.uses_doubling,
+        );
+
+        const needs_renormalized_phase =
+            doubling_decision.uses_doubling and
+            fourier_index == 0 and
+            transport_controls.renorm_phase_function;
+
+        var attenuation = rows.Vec.zero(geometry.stream_count);
+        for (0..geometry.stream_count) |stream_index| {
+            const mu = @max(geometry.u[stream_index], layer_direction_cosine_floor);
+            attenuation.data[stream_index] = math.exp(-doubling_decision.start_optical_depth / mu);
+        }
+        Trace.plotU("initial_exp_evals", @intCast(geometry.stream_count));
+
+        if (needs_renormalized_phase) {
+            renormalizeZeroFourierPhaseKernel(geometry, &z.zplus, &z.zmin);
+            Trace.plotU("phase_renormalizations", 1);
+        }
+
+        const layer_rt = &rt[rt_index];
+        fillSingleScatterReflection(&layer_rt.R, single_scatter_albedo, &attenuation, &z.zmin, geometry);
+        fillSingleScatterTransmission(
+            &layer_rt.T,
+            single_scatter_albedo,
+            doubling_decision.start_optical_depth,
+            &attenuation,
+            &z.zplus,
+            geometry,
+        );
+        Trace.plotU("single_scatter_r", 1);
+        Trace.plotU("single_scatter_t", 1);
+
+        if (doubling_decision.uses_doubling) {
+            Trace.plotU("doubled_layers", 1);
+            doubleLayer(
+                doubling_decision.doubling_count,
+                geometry.stream_count,
+                geometry.n_gauss,
+                transport_controls.performance_thresholds,
+                &layer_rt.R,
+                &layer_rt.T,
+                &attenuation,
+                fourier_index,
+                layer_index,
+                max_phase_index,
+                trace_phase_timing,
+            );
+        }
+
+        if (rt_active) |active| active[rt_index] = single_scatter_albedo != 0.0;
+    }
+}
+
+fn buildLayerPhaseKernel(
+    layer: layer_depths.LayerOptics,
+    fourier_index: usize,
+    max_phase_index: usize,
+    geometry: *const gauss_angles.GaussGeometry,
+    phase: phase_table.PhaseTable,
+    rayleigh_phase_coefficient2: f64,
+    plm_basis: *const phase_basis.FourierPlmBasis,
+    trace_phase_timing: ?phase_timing.Active,
+) phase_basis.PhaseKernel {
+    // buildLayerPhaseKernel --------------------------------------------------------------------------------- |
+    // Build the weighted aerosol/Rayleigh phase kernel for one layer.                                         |
+    // --------------------------------------------------------------------------------------------------------|
+    const trace_start = phase_timing.start(trace_phase_timing);
+    defer phase_timing.finish(trace_phase_timing, trace_start, "rt_layer_phase_matrix");
+
+    const weights = layerPhaseWeights(layer, rayleigh_phase_coefficient2);
+    return phase_basis.fillZplusZminFromWeightedPhaseLimited(
+        fourier_index,
+        weights.aerosol_weight,
+        weights.rayleigh2_weight,
+        &phase.aerosol_phase_coefficients,
+        max_phase_index,
+        geometry,
+        plm_basis,
+    );
+}
+
+// LayerPhaseWeights ----------------------------------------------------------------------------------------- |
+// Compact gas/aerosol phase mixture weights for one layer.                                                    |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] aerosol_weight   : f64                                                                             |
+// [ 8..15] rayleigh2_weight : f64                                                                             |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); stack row for layer phase builders                              |
+const LayerPhaseWeights = struct {
+    aerosol_weight: f64,
+    rayleigh2_weight: f64,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+fn layerPhaseWeights(
+    layer: layer_depths.LayerOptics,
+    rayleigh_phase_coefficient2: f64,
+) LayerPhaseWeights {
+    // layerPhaseWeights ------------------------------------------------------------------------------------- |
+    // Convert layer gas/aerosol scattering depths into the old compact phase mixture weights.                 |
+    // --------------------------------------------------------------------------------------------------------|
+    const total_scattering =
+        layer.gas_scattering_optical_depth +
+        layer.aerosol_scattering_optical_depth;
+    if (total_scattering <= 0.0) {
+        return .{
+            .aerosol_weight = 0.0,
+            .rayleigh2_weight = rayleigh_phase_coefficient2,
+        };
+    }
+
+    const inv_total = 1.0 / total_scattering;
+    return .{
+        .aerosol_weight = layer.aerosol_scattering_optical_depth * inv_total,
+        .rayleigh2_weight = layer.gas_scattering_optical_depth * inv_total * rayleigh_phase_coefficient2,
+    };
+}
+
+fn layerPhaseCoefficient(
+    layer: layer_depths.LayerOptics,
+    phase: phase_table.PhaseTable,
+    rayleigh_phase_coefficient2: f64,
+    index: usize,
+) f64 {
+    // layerPhaseCoefficient --------------------------------------------------------------------------------- |
+    // Read one beta_l coefficient from the old gas/aerosol layer phase mixture.                               |
+    // --------------------------------------------------------------------------------------------------------|
+    if (index == 0) return 1.0;
+
+    const weights = layerPhaseWeights(layer, rayleigh_phase_coefficient2);
+    var coefficient = weights.aerosol_weight * phase.aerosol_phase_coefficients[index];
+    if (index == 2) coefficient += weights.rayleigh2_weight;
+    return coefficient;
+}
+
+fn layerPhaseMaxIndex(
+    layer: layer_depths.LayerOptics,
+    phase: phase_table.PhaseTable,
+    rayleigh_phase_coefficient2: f64,
+) usize {
+    // layerPhaseMaxIndex ------------------------------------------------------------------------------------ |
+    // Return the highest non-negligible layer phase coefficient index.                                        |
+    // --------------------------------------------------------------------------------------------------------|
+    const weights = layerPhaseWeights(layer, rayleigh_phase_coefficient2);
+    var max_index: usize = 0;
+    if (@abs(weights.rayleigh2_weight) > 1.0e-12) max_index = 2;
+    if (@abs(weights.aerosol_weight) > 1.0e-12) {
+        max_index = @max(max_index, phase.aerosol_phase_max_index);
+    }
+    return max_index;
+}
+
+fn layerEffectiveScatteringSuffix(
+    layer: layer_depths.LayerOptics,
+    layer_index: usize,
+    fourier_index: usize,
+    max_phase_index: usize,
+    phase: phase_table.PhaseTable,
+    rayleigh_phase_coefficient2: f64,
+    layer_effective_scattering_suffixes: ?[]const f64,
+    layer_effective_scattering_suffix_stride: usize,
+) f64 {
+    // layerEffectiveScatteringSuffix ------------------------------------------------------------------------ |
+    // Return the max abs(beta_l)/(2l+1) suffix used by the layer-doubling threshold.                          |
+    // --------------------------------------------------------------------------------------------------------|
+    if (layer_effective_scattering_suffixes) |suffixes| {
+        std.debug.assert(layer_effective_scattering_suffix_stride > fourier_index);
+        std.debug.assert(suffixes.len >= (layer_index + 1) * layer_effective_scattering_suffix_stride);
+        return suffixes[layer_index * layer_effective_scattering_suffix_stride + fourier_index];
+    }
+
+    var suffix: f64 = 0.0;
+    var scanned_terms: usize = 0;
+    var nonzero_terms: usize = 0;
+    for (fourier_index..max_phase_index + 1) |phase_index| {
+        scanned_terms += 1;
+        const coefficient = layerPhaseCoefficient(layer, phase, rayleigh_phase_coefficient2, phase_index);
+        if (coefficient != 0.0) nonzero_terms += 1;
+        suffix = @max(suffix, @abs(coefficient) * phase_odd_reciprocal[phase_index]);
+    }
+    Trace.plotU("phase_coeff_terms_scanned", @intCast(scanned_terms));
+    Trace.plotU("phase_coeff_terms_nonzero", @intCast(nonzero_terms));
+    return suffix;
+}
+
+fn markInactiveLayer(
+    rt: []rows.LayerRT,
+    phase_row_valid: ?[]bool,
+    rt_active: ?[]bool,
+    rt_index: usize,
+    stream_count: usize,
+) void {
+    // markInactiveLayer ------------------------------------------------------------------------------------- |
+    // Mark a skipped layer inactive, or write an explicit zero row when no active mask is provided.           |
+    // --------------------------------------------------------------------------------------------------------|
+    if (phase_row_valid) |valid| valid[rt_index] = false;
+
+    if (rt_active) |active| {
+        active[rt_index] = false;
+    } else {
+        rt[rt_index] = zeroLayerRt(stream_count);
+    }
+}
+
+fn cachePhaseKernelViewRow(
+    phase_row_cache: []phase_basis.PhaseKernelRow,
+    rt_index: usize,
+    z: *const phase_basis.PhaseKernel,
+    row_index: usize,
+) void {
+    // cachePhaseKernelViewRow ------------------------------------------------------------------------------- |
+    // Cache the viewing-direction phase-kernel row needed by later source weighting.                          |
+    // --------------------------------------------------------------------------------------------------------|
+    const stream_count = z.zplus.n;
+    const row_offset = row_index * stream_count;
+    var row = phase_basis.PhaseKernelRow{
+        .zplus = undefined,
+        .zmin = undefined,
+        .n = stream_count,
+    };
+
+    for (0..stream_count) |col| {
+        row.zplus[col] = z.zplus.data[row_offset + col];
+        row.zmin[col] = z.zmin.data[row_offset + col];
+    }
+
+    phase_row_cache[rt_index] = row;
+}
+
+fn zeroLayerRt(stream_count: usize) rows.LayerRT {
+    // zeroLayerRt ------------------------------------------------------------------------------------------- |
+    // Empty layer reflection/transmission pair.                                                               |
+    // --------------------------------------------------------------------------------------------------------|
+    return .{
+        .R = rows.Mat.zero(stream_count),
+        .T = rows.Mat.zero(stream_count),
+    };
+}
+
+pub fn renormalizeZeroFourierPhaseKernel(
+    geometry: *const gauss_angles.GaussGeometry,
+    zplus: *rows.Mat,
+    zmin: *rows.Mat,
+) void {
+    // renormalizeZeroFourierPhaseKernel --------------------------------------------------------------------- |
+    // Adjust zero-Fourier phase rows so their Gaussian integral is 2.                                         |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports old `layers.zig` `renormalizeZeroFourierPhaseKernel`.                                           |
+    // --------------------------------------------------------------------------------------------------------|
+    if (geometry.n_gauss == 0 or geometry.stream_count == 0) return;
+
+    var normalized = [_][rows.max_stream_count]f64{.{0.0} ** rows.max_stream_count} ** rows.max_stream_count;
+
+    for (0..geometry.stream_count) |col| {
+        const column_weight = @max(geometry.w[col], phase_normalization_floor);
+        for (0..geometry.stream_count) |row| {
+            const row_weight = @max(geometry.w[row], phase_normalization_floor);
+            normalized[row][col] = zplus.data[row * zplus.n + col] / (row_weight * column_weight);
+        }
+    }
+
+    for (0..geometry.n_gauss) |col| {
+        var integral: f64 = 0.0;
+
+        for (0..geometry.n_gauss) |row| {
+            const row_weight = @max(geometry.w[row], phase_normalization_floor);
+            const column_weight = @max(geometry.w[col], phase_normalization_floor);
+            const zmin_weighted = zmin.data[row * zmin.n + col] / (row_weight * column_weight);
+            integral += geometry.wg[row] * (normalized[row][col] + zmin_weighted);
+        }
+
+        const denominator = normalized[col][col] * geometry.wg[col];
+        if (@abs(denominator) <= phase_normalization_floor) continue;
+
+        const fraction = (2.0 - integral) / denominator;
+        normalized[col][col] *= 1.0 + fraction;
+    }
+
+    for (geometry.n_gauss..geometry.stream_count) |col| {
+        const target_mu = geometry.u[col];
+        var integral: f64 = 0.0;
+
+        for (0..geometry.n_gauss) |row| {
+            const row_weight = @max(geometry.w[row], phase_normalization_floor);
+            const column_weight = @max(geometry.w[col], phase_normalization_floor);
+            const zmin_weighted = zmin.data[row * zmin.n + col] / (row_weight * column_weight);
+            integral += geometry.wg[row] * (normalized[row][col] + zmin_weighted);
+        }
+
+        const delta = 2.0 - integral;
+        if (target_mu > geometry.ug[0] and target_mu < geometry.ug[geometry.n_gauss - 1]) {
+            const low = @min(locateLowerIndex(geometry.ug[0..geometry.n_gauss], target_mu), geometry.n_gauss - 2);
+            const high = low + 1;
+            const span = geometry.ug[high] - geometry.ug[low];
+            if (span <= 0.0) continue;
+
+            const low_weight = (target_mu - geometry.ug[low]) / span;
+            const high_weight = (geometry.ug[high] - target_mu) / span;
+            const low_denominator = normalized[col][low] * geometry.wg[low];
+            const high_denominator = normalized[col][high] * geometry.wg[high];
+
+            if (@abs(low_denominator) > phase_normalization_floor) {
+                const fraction = low_weight * delta / low_denominator;
+                normalized[col][low] *= 1.0 + fraction;
+                normalized[low][col] = normalized[col][low];
+            }
+
+            if (@abs(high_denominator) > phase_normalization_floor) {
+                const fraction = high_weight * delta / high_denominator;
+                normalized[col][high] *= 1.0 + fraction;
+                normalized[high][col] = normalized[col][high];
+            }
+            continue;
+        }
+
+        const edge = if (target_mu < geometry.ug[0]) 0 else geometry.n_gauss - 1;
+        const denominator = normalized[col][edge] * geometry.wg[edge];
+        if (@abs(denominator) <= phase_normalization_floor) continue;
+
+        const fraction = delta / denominator;
+        normalized[col][edge] *= 1.0 + fraction;
+        normalized[edge][col] = normalized[col][edge];
+    }
+
+    for (0..geometry.stream_count) |col| {
+        const column_weight = geometry.w[col];
+        for (0..geometry.stream_count) |row| {
+            zplus.data[row * zplus.n + col] = normalized[row][col] * geometry.w[row] * column_weight;
+        }
+    }
+}
 
 // LayerDoublingDecision --------------------------------------------------------------------------------------|
 // Small return row for the layer-doubling branch chosen from optical depth and effective scattering depth.    |

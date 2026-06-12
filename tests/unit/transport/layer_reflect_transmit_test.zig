@@ -4,7 +4,10 @@ const internal = @import("internal");
 
 const controls = internal.transport.controls;
 const gauss_angles = internal.transport.gauss_angles;
+const layer_depths = internal.optics.layer_depths;
 const layer_rt = internal.transport.layer_reflect_transmit;
+const phase_basis = internal.transport.phase_basis;
+const phase_table = internal.setup.phase_table;
 const rows = internal.transport.rows;
 
 test "layer-doubling decision keeps old layout" {
@@ -143,6 +146,145 @@ test "attenuation square matches old layer-doubling support path" {
     try expectSquaredPrefix(fixed, rows.max_stream_count, -1.0);
 }
 
+test "surface layer carries only zero Fourier Lambertian reflection" {
+    const geometry = try gauss_angles.GaussGeometry.init(4, 0.58, 0.64);
+    const albedo: f64 = 0.23;
+
+    const zero_fourier = layer_rt.fillSurface(0, albedo, &geometry);
+    const first_fourier = layer_rt.fillSurface(1, albedo, &geometry);
+
+    for (0..geometry.stream_count) |row| {
+        for (0..geometry.stream_count) |col| {
+            const expected = geometry.w[row] * albedo * geometry.w[col];
+            try std.testing.expectApproxEqAbs(expected, zero_fourier.R.get(row, col), 1.0e-15);
+            try std.testing.expectApproxEqAbs(0.0, zero_fourier.T.get(row, col), 0.0);
+            try std.testing.expectApproxEqAbs(0.0, first_fourier.R.get(row, col), 0.0);
+            try std.testing.expectApproxEqAbs(0.0, first_fourier.T.get(row, col), 0.0);
+        }
+    }
+}
+
+test "layer phase max indices and effective scattering suffixes match scalar phase mix" {
+    const phase = testPhaseTable();
+    const rayleigh2: f64 = 0.48;
+    const layers = [_]layer_depths.LayerOptics{
+        testLayer(.{
+            .gas_scattering = 0.02,
+            .aerosol_scattering = 0.01,
+            .total_depth = 0.06,
+        }),
+    };
+    var max_indices: [1]usize = undefined;
+    var suffixes: [phase_table.coefficient_count]f64 = undefined;
+
+    layer_rt.fillLayerPhaseMaxIndices(&max_indices, &layers, phase, rayleigh2);
+    layer_rt.fillLayerEffectiveScatteringSuffixes(
+        &suffixes,
+        &layers,
+        phase,
+        rayleigh2,
+        &max_indices,
+        phase_table.coefficient_count,
+    );
+
+    const aerosol_weight = layers[0].aerosol_scattering_optical_depth / layers[0].total_scattering_optical_depth;
+    const gas_weight = layers[0].gas_scattering_optical_depth / layers[0].total_scattering_optical_depth;
+    const beta1 = aerosol_weight * phase.aerosol_phase_coefficients[1];
+    const beta2 = aerosol_weight * phase.aerosol_phase_coefficients[2] + gas_weight * rayleigh2;
+
+    try std.testing.expectEqual(@as(usize, 2), max_indices[0]);
+    try std.testing.expectApproxEqAbs(1.0, suffixes[0], 1.0e-15);
+    try std.testing.expectApproxEqAbs(@max(@abs(beta1) / 3.0, @abs(beta2) / 5.0), suffixes[1], 1.0e-15);
+    try std.testing.expectApproxEqAbs(@abs(beta2) / 5.0, suffixes[2], 1.0e-15);
+}
+
+test "layer row builder matches phase kernel and single scatter without doubling" {
+    const geometry = try gauss_angles.GaussGeometry.init(4, 0.58, 0.64);
+    const phase = testPhaseTable();
+    const rayleigh2: f64 = 0.48;
+    const layer = testLayer(.{
+        .gas_scattering = 0.02,
+        .aerosol_scattering = 0.01,
+        .total_depth = 0.06,
+    });
+    const layers = [_]layer_depths.LayerOptics{layer};
+    var max_indices: [1]usize = undefined;
+    layer_rt.fillLayerPhaseMaxIndices(&max_indices, &layers, phase, rayleigh2);
+    const basis = phase_basis.FourierPlmBasis.init(0, max_indices[0], &geometry);
+    var rt_rows: [2]rows.LayerRT = undefined;
+    var phase_rows: [2]phase_basis.PhaseKernelRow = undefined;
+    var phase_valid: [2]bool = .{ true, false };
+    var active: [2]bool = .{ true, false };
+    const transport_controls = controls.TransportControls{
+        .scattering = .single,
+        .n_streams = 8,
+        .performance_thresholds = .{},
+    };
+
+    layer_rt.fillLayerReflectTransmitRowsWithBasis(
+        &rt_rows,
+        &layers,
+        0,
+        &geometry,
+        transport_controls,
+        phase,
+        rayleigh2,
+        &basis,
+        &max_indices,
+        null,
+        0,
+        &phase_rows,
+        &phase_valid,
+        &active,
+        null,
+    );
+
+    const aerosol_weight = layer.aerosol_scattering_optical_depth / layer.total_scattering_optical_depth;
+    const rayleigh_weight = layer.gas_scattering_optical_depth / layer.total_scattering_optical_depth * rayleigh2;
+    const kernel = phase_basis.fillZplusZminFromWeightedPhaseLimited(
+        0,
+        aerosol_weight,
+        rayleigh_weight,
+        &phase.aerosol_phase_coefficients,
+        max_indices[0],
+        &geometry,
+        &basis,
+    );
+    var attenuation = rows.Vec.zero(geometry.stream_count);
+    for (0..geometry.stream_count) |stream_index| {
+        attenuation.data[stream_index] = std.math.exp(-layer.total_optical_depth / geometry.u[stream_index]);
+    }
+    var expected_r = rows.Mat.zero(geometry.stream_count);
+    var expected_t = rows.Mat.zero(geometry.stream_count);
+    layer_rt.fillSingleScatterReflection(
+        &expected_r,
+        layer.single_scatter_albedo,
+        &attenuation,
+        &kernel.zmin,
+        &geometry,
+    );
+    layer_rt.fillSingleScatterTransmission(
+        &expected_t,
+        layer.single_scatter_albedo,
+        layer.total_optical_depth,
+        &attenuation,
+        &kernel.zplus,
+        &geometry,
+    );
+
+    try std.testing.expectEqual(false, active[0]);
+    try std.testing.expectEqual(true, active[1]);
+    try std.testing.expectEqual(false, phase_valid[0]);
+    try std.testing.expectEqual(true, phase_valid[1]);
+    try expectMatrixClose(expected_r, rt_rows[1].R, geometry.stream_count, 1.0e-14);
+    try expectMatrixClose(expected_t, rt_rows[1].T, geometry.stream_count, 1.0e-14);
+    for (0..geometry.stream_count) |col| {
+        const index = geometry.viewIndex() * geometry.stream_count + col;
+        try std.testing.expectApproxEqAbs(kernel.zplus.data[index], phase_rows[1].zplus[col], 1.0e-15);
+        try std.testing.expectApproxEqAbs(kernel.zmin.data[index], phase_rows[1].zmin[col], 1.0e-15);
+    }
+}
+
 test "layer doubling matches scalar q-skipped reference for generic stream count" {
     const n = 6;
     const n_gauss = 4;
@@ -174,6 +316,55 @@ test "layer doubling matches scalar q-skipped reference for generic stream count
     try expectMatrixClose(expected_reflection, reflection, n, 1.0e-14);
     try expectMatrixClose(expected_transmission, transmission, n, 1.0e-14);
     try expectVecClose(expected_attenuation, attenuation, n, 1.0e-14);
+}
+
+// TestLayerArgs --------------------------------------------------------------------------------------------- |
+// Small fixture row used to build deterministic layer optics values.                                          |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] gas_scattering     : f64                                                                           |
+// [ 8..15] aerosol_scattering : f64                                                                           |
+// [16..23] total_depth        : f64                                                                           |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 24 B (0.023 KiB); stack-only test fixture row                                     |
+const TestLayerArgs = struct {
+    gas_scattering: f64,
+    aerosol_scattering: f64,
+    total_depth: f64,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+fn testLayer(args: TestLayerArgs) layer_depths.LayerOptics {
+    // testLayer --------------------------------------------------------------------------------------------- |
+    // Build a compact layer optics row for transport-layer tests.                                             |
+    // --------------------------------------------------------------------------------------------------------|
+    return .{
+        .gas_absorption_optical_depth = args.total_depth - args.gas_scattering - args.aerosol_scattering,
+        .gas_scattering_optical_depth = args.gas_scattering,
+        .aerosol_scattering_optical_depth = args.aerosol_scattering,
+        .aerosol_optical_depth = args.aerosol_scattering,
+        .total_optical_depth = args.total_depth,
+        .total_scattering_optical_depth = args.gas_scattering + args.aerosol_scattering,
+        .single_scatter_albedo = (args.gas_scattering + args.aerosol_scattering) / args.total_depth,
+    };
+}
+
+fn testPhaseTable() phase_table.PhaseTable {
+    // testPhaseTable ---------------------------------------------------------------------------------------- |
+    // Build a short explicit phase row for scalar phase-mixture tests.                                        |
+    // --------------------------------------------------------------------------------------------------------|
+    var coefficients = phase_table.zeroPhaseCoefficients();
+    coefficients[1] = 0.20;
+    coefficients[2] = 0.40;
+    return .{
+        .aerosol_phase_coefficients = coefficients,
+        .aerosol_phase_max_index = 2,
+        .aerosol_asymmetry_factor = 0.0,
+    };
 }
 
 test "layer doubling matches scalar q-skipped reference for fixed 12x10 path" {
