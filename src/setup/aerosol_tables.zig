@@ -4,7 +4,7 @@ const o2_case = @import("../input/o2_case.zig");
 // Aerosol optical-depth setup inputs copied into table form.                                                  |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 64 B (0.063 KiB), align: 8 B                                                                          |
+// size: 80 B (0.078 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
 // [ 0.. 7] optical_depth          : f64                                                                       |
@@ -15,6 +15,10 @@ const o2_case = @import("../input/o2_case.zig");
 // [40..47] interval_index_1based  : usize                                                                     |
 // [48..55] top_pressure_hpa       : f64                                                                       |
 // [56..63] bottom_pressure_hpa    : f64                                                                       |
+// [64..79] profile                : []const AerosolProfileLayer                                               |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   profile borrows parser-owned JSON rows retained by the prepared case/context owner.                       |
 pub const AerosolLayerTable = struct {
     optical_depth: f64,
     single_scatter_albedo: f64,
@@ -24,12 +28,13 @@ pub const AerosolLayerTable = struct {
     interval_index_1based: usize,
     top_pressure_hpa: f64,
     bottom_pressure_hpa: f64,
+    profile: []const o2_case.AerosolProfileLayer = &.{},
 };
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn build(case: o2_case.O2Case) AerosolLayerTable {
     // build --------------------------------------------------------------------------------------------------|
-    // Copy aerosol optical controls into the named setup table.                                               |
+    // Copy scalar aerosol controls and the optional explicit profile view into setup table form.              |
     // --------------------------------------------------------------------------------------------------------|
     return .{
         .optical_depth = case.aerosol.optical_depth,
@@ -40,5 +45,6 @@ pub fn build(case: o2_case.O2Case) AerosolLayerTable {
         .interval_index_1based = case.aerosol.interval_index_1based,
         .top_pressure_hpa = case.aerosol.top_pressure_hpa,
         .bottom_pressure_hpa = case.aerosol.bottom_pressure_hpa,
+        .profile = case.aerosol.profile,
     };
 }

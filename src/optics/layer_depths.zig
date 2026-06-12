@@ -14,6 +14,21 @@ const centimeters_per_kilometer = 1.0e5;
 // main:`state_build/spectroscopy.zig` default_o2_volume_mixing_ratio.
 const oxygen_volume_mixing_ratio = 0.20946;
 
+// AerosolSupportDepth --------------------------------------------------------------------------------------- |
+// Wavelength-scaled aerosol carrier values for one support row.                                               |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0.. 7] optical_depth_per_km    : f64                                                                       |
+// [8..15] scattering_depth_per_km : f64                                                                       |
+const AerosolSupportDepth = struct {
+    optical_depth_per_km: f64 = 0.0,
+    scattering_depth_per_km: f64 = 0.0,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
 // layer_depths.zig ------------------------------------------------------------------------------------------ |
 // Converts support-row thermodynamics and caller-supplied O2 line sigma rows into optical-depth rows.         |
 //                                                                                                             |
@@ -219,6 +234,7 @@ pub fn fillSupportOpticsAtWavelength(
     const collision_pair_profile = CollisionPairProfile.init(layer_grid);
     const aerosol_weight_sum_km = aerosolSupportWeightSumKm(layer_grid, aerosol);
     const aerosol_wavelength_scale = aerosolWavelengthScale(aerosol, wavelength_nm);
+    const profile_aerosol_active = aerosol.profile.len != 0;
 
     for (out_support, 0..) |*row, support_index| {
         const path_length_cm = @max(layer_grid.support_path_lengths_cm[support_index], 0.0);
@@ -254,15 +270,27 @@ pub fn fillSupportOpticsAtWavelength(
             cia_pair_density_cm6 *
             centimeters_per_kilometer;
         const cia_depth = cia_depth_per_km * weight_km;
-        const aerosol_optical_depth_per_km = aerosolOpticalDepthPerKmAtSupport(
-            layer_grid,
-            aerosol,
-            support_index,
-            aerosol_weight_sum_km,
-            aerosol_wavelength_scale,
-        );
+        const aerosol_support_depth = choose_aerosol_depth: {
+            if (profile_aerosol_active) {
+                break :choose_aerosol_depth profileAerosolDepthAtSupport(
+                    layer_grid,
+                    aerosol,
+                    support_index,
+                    wavelength_nm,
+                );
+            }
+
+            break :choose_aerosol_depth scalarAerosolDepthAtSupport(
+                layer_grid,
+                aerosol,
+                support_index,
+                aerosol_weight_sum_km,
+                aerosol_wavelength_scale,
+            );
+        };
+        const aerosol_optical_depth_per_km = aerosol_support_depth.optical_depth_per_km;
         const aerosol_depth = aerosol_optical_depth_per_km * weight_km;
-        const aerosol_scattering_per_km = aerosol_optical_depth_per_km * aerosol.single_scatter_albedo;
+        const aerosol_scattering_per_km = aerosol_support_depth.scattering_depth_per_km;
         const aerosol_scattering = aerosol_scattering_per_km * weight_km;
         const total_scattering =
             (gas_scattering_per_km + aerosol_scattering_per_km) *
@@ -319,30 +347,34 @@ fn aerosolSupportWeightSumKm(
     return total_weight_km;
 }
 
-fn aerosolOpticalDepthPerKmAtSupport(
+fn scalarAerosolDepthAtSupport(
     layer_grid: atmosphere_layers.LayerGrid,
     aerosol: aerosol_tables.AerosolLayerTable,
     support_index: usize,
     aerosol_weight_sum_km: f64,
     wavelength_scale: f64,
-) f64 {
-    // aerosolOpticalDepthPerKmAtSupport ----------------------------------------------------------------------|
-    // Return the old-route wavelength-scaled particle carrier for one support row.                            |
+) AerosolSupportDepth {
+    // scalarAerosolDepthAtSupport ----------------------------------------------------------------------------|
+    // Return the old-route wavelength-scaled scalar particle carriers for one support row.                    |
     //                                                                                                         |
     // math                                                                                                    |
     //   k_i(lambda) = tau_ref * (support_weight_i / sum_support_weights) / support_weight_i * scale(lambda)   |
     // --------------------------------------------------------------------------------------------------------|
-    if (aerosol_weight_sum_km <= 0.0 or support_index >= layer_grid.support_path_lengths_cm.len) return 0.0;
-    if (layer_grid.support_interval_indices_1based[support_index] != aerosol.interval_index_1based) return 0.0;
+    if (aerosol_weight_sum_km <= 0.0 or support_index >= layer_grid.support_path_lengths_cm.len) return .{};
+    if (layer_grid.support_interval_indices_1based[support_index] != aerosol.interval_index_1based) return .{};
 
     const support_weight_cm = @max(layer_grid.support_path_lengths_cm[support_index], 0.0);
     const support_weight_km = @max(layer_grid.support_path_lengths_km[support_index], 0.0);
-    if (support_weight_cm <= 0.0 or support_weight_km <= 0.0) return 0.0;
+    if (support_weight_cm <= 0.0 or support_weight_km <= 0.0) return .{};
 
     const reference_depth = aerosol.optical_depth * (support_weight_km / aerosol_weight_sum_km);
     const path_span_km = @max(support_weight_cm / centimeters_per_kilometer, 0.0);
     const depth_per_km = if (path_span_km > 0.0) reference_depth / path_span_km else 0.0;
-    return if (depth_per_km == 0.0) 0.0 else depth_per_km * wavelength_scale;
+    const scaled_depth_per_km = if (depth_per_km == 0.0) 0.0 else depth_per_km * wavelength_scale;
+    return .{
+        .optical_depth_per_km = scaled_depth_per_km,
+        .scattering_depth_per_km = scaled_depth_per_km * aerosol.single_scatter_albedo,
+    };
 }
 
 fn aerosolWavelengthScale(aerosol: aerosol_tables.AerosolLayerTable, wavelength_nm: f64) f64 {
@@ -358,6 +390,134 @@ fn aerosolWavelengthScale(aerosol: aerosol_tables.AerosolLayerTable, wavelength_
     const safe_wavelength_nm = @max(wavelength_nm, 1.0);
     const safe_reference_nm = @max(aerosol.reference_wavelength_nm, 1.0);
     return std.math.pow(f64, safe_reference_nm / safe_wavelength_nm, aerosol.angstrom_exponent);
+}
+
+fn profileAerosolDepthAtSupport(
+    layer_grid: atmosphere_layers.LayerGrid,
+    aerosol: aerosol_tables.AerosolLayerTable,
+    support_index: usize,
+    wavelength_nm: f64,
+) AerosolSupportDepth {
+    // profileAerosolDepthAtSupport ---------------------------------------------------------------------------|
+    // Distribute explicit profile optical depth onto the active support rows of the owning setup layer.       |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   main:`state_build/layer_accumulation.zig` buildAerosolProfileSublayerProperties overlaps public       |
+    //   profile pressure bounds with vertical-grid pressure bounds, scales each contribution by Angstrom law  |
+    //   at wavelength time, and weights scattering by each row's single-scatter albedo.                       |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   layer_tau_i = profile_tau_i * pressure_overlap_i / profile_pressure_span_i                            |
+    //   support_tau_i = layer_tau_i * support_weight_km / active_layer_weight_km                              |
+    //   k_tau = sum(scale(support_tau_i, wavelength_nm)) / support_weight_km                                  |
+    //   k_sca = sum(scale(support_tau_i, wavelength_nm) * ssa_i) / support_weight_km                          |
+    // --------------------------------------------------------------------------------------------------------|
+    const owner_layer_index = findSupportOwnerLayer(layer_grid, support_index) orelse return .{};
+    const support_weight_km = @max(layer_grid.support_path_lengths_km[support_index], 0.0);
+    if (support_weight_km <= 0.0) return .{};
+
+    const active_weight_sum_km = activeSupportWeightSumKm(layer_grid, owner_layer_index);
+    if (active_weight_sum_km <= 0.0) return .{};
+
+    const layer_top_pressure_hpa = layer_grid.layer_top_pressures_hpa[owner_layer_index];
+    const layer_bottom_pressure_hpa = layer_grid.layer_bottom_pressures_hpa[owner_layer_index];
+    var optical_depth: f64 = 0.0;
+    var scattering_depth: f64 = 0.0;
+
+    for (aerosol.profile) |profile_layer| {
+        const profile_span_hpa = profile_layer.bottom_pressure_hpa - profile_layer.top_pressure_hpa;
+        if (profile_span_hpa <= 0.0 or profile_layer.optical_depth <= 0.0) continue;
+
+        const overlap_hpa = pressureOverlapHpa(
+            profile_layer.top_pressure_hpa,
+            profile_layer.bottom_pressure_hpa,
+            layer_top_pressure_hpa,
+            layer_bottom_pressure_hpa,
+        );
+        if (overlap_hpa <= 0.0) continue;
+
+        const layer_reference_depth = profile_layer.optical_depth * (overlap_hpa / profile_span_hpa);
+        const support_reference_depth = layer_reference_depth * (support_weight_km / active_weight_sum_km);
+        const support_scaled_depth = scaleOpticalDepth(
+            support_reference_depth,
+            profile_layer.reference_wavelength_nm,
+            profile_layer.angstrom_exponent,
+            wavelength_nm,
+        );
+        optical_depth += support_scaled_depth;
+        scattering_depth += support_scaled_depth * profile_layer.single_scatter_albedo;
+    }
+
+    return .{
+        .optical_depth_per_km = optical_depth / support_weight_km,
+        .scattering_depth_per_km = scattering_depth / support_weight_km,
+    };
+}
+
+fn findSupportOwnerLayer(layer_grid: atmosphere_layers.LayerGrid, support_index: usize) ?usize {
+    // findSupportOwnerLayer ----------------------------------------------------------------------------------|
+    // Locate the setup layer whose support range owns this active support row. Boundary rows have zero path.  |
+    // --------------------------------------------------------------------------------------------------------|
+    for (layer_grid.layer_support_starts, layer_grid.layer_support_counts, 0..) |
+        support_start_u32,
+        support_count_u32,
+        layer_index,
+    | {
+        const support_start: usize = @intCast(support_start_u32);
+        const support_count: usize = @intCast(support_count_u32);
+        const support_end = support_start + support_count;
+        if (support_index <= support_start or support_index + 1 >= support_end) continue;
+        return layer_index;
+    }
+
+    return null;
+}
+
+fn activeSupportWeightSumKm(layer_grid: atmosphere_layers.LayerGrid, layer_index: usize) f64 {
+    // activeSupportWeightSumKm ------------------------------------------------------------------------------ |
+    // Sum non-boundary support weights for one setup layer.                                                   |
+    // --------------------------------------------------------------------------------------------------------|
+    const support_start: usize = @intCast(layer_grid.layer_support_starts[layer_index]);
+    const support_count: usize = @intCast(layer_grid.layer_support_counts[layer_index]);
+    if (support_count <= 2) return 0.0;
+
+    var total_weight_km: f64 = 0.0;
+    for (layer_grid.support_path_lengths_km[support_start + 1 .. support_start + support_count - 1]) |
+        support_weight_km,
+    | {
+        total_weight_km += @max(support_weight_km, 0.0);
+    }
+    return total_weight_km;
+}
+
+fn pressureOverlapHpa(
+    left_top_hpa: f64,
+    left_bottom_hpa: f64,
+    right_top_hpa: f64,
+    right_bottom_hpa: f64,
+) f64 {
+    // pressureOverlapHpa -------------------------------------------------------------------------------------|
+    // Return the positive overlap of two pressure-bounded layers.                                             |
+    // --------------------------------------------------------------------------------------------------------|
+    return @max(@min(left_bottom_hpa, right_bottom_hpa) - @max(left_top_hpa, right_top_hpa), 0.0);
+}
+
+fn scaleOpticalDepth(
+    optical_depth: f64,
+    reference_wavelength_nm: f64,
+    angstrom_exponent: f64,
+    wavelength_nm: f64,
+) f64 {
+    // scaleOpticalDepth --------------------------------------------------------------------------------------|
+    // Apply old aerosol Angstrom scaling with the same safe wavelength/reference guard.                       |
+    // --------------------------------------------------------------------------------------------------------|
+    if (optical_depth == 0.0 or angstrom_exponent == 0.0 or reference_wavelength_nm == wavelength_nm) {
+        return optical_depth;
+    }
+
+    const safe_wavelength_nm = @max(wavelength_nm, 1.0);
+    const safe_reference_nm = @max(reference_wavelength_nm, 1.0);
+    return optical_depth * std.math.pow(f64, safe_reference_nm / safe_wavelength_nm, angstrom_exponent);
 }
 
 pub fn reduceLayerOpticsFromSupportRows(
@@ -435,6 +595,7 @@ pub fn fillLayerAerosolJacobians(
     }
 
     if (!jacobian_states.includes(state_mask, .aerosol_optical_depth)) return;
+    if (aerosol.profile.len != 0) return;
     if (aerosol.optical_depth <= 0.0) return;
 
     for (layers) |*layer| {

@@ -68,11 +68,11 @@ pub const buildO2ProfileLineValues = profile_lines.buildO2ProfileLineValues;
 // Public owner for parsed/default O2 A controls and setup tables.                                             |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 2520 B (2.461 KiB), align: 8                                                                          |
+// size: 2560 B (2.500 KiB), align: 8                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [   0.. 599] case  : O2Case                                                                                 |
-// [ 600..2519] tables: O2RunTables                                                                            |
+// [   0.. 623] case  : O2Case                                                                                 |
+// [ 624..2559] tables: O2RunTables                                                                            |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   case borrows control strings/slices. tables owns loaded physical setup arrays and scalar tables.          |
@@ -361,12 +361,14 @@ fn prepareSessionRows(
     }
 
     const layer_count = prepared.tables.layers.layer_pressures_hpa.len;
+    const phase_max_index = @max(prepared.tables.phase.aerosol_phase_max_index, @as(usize, 2));
+    const fourier_max_index = solve_config.controls.performance_thresholds.cappedFourierMax(phase_max_index);
     try session.transport_workers.ensureCapacity(
         allocator,
         layer_count + 1,
         solve_config.controls.n_streams,
-        40,
-        40,
+        @min(phase_max_index, fourier_max_index) + 1,
+        fourier_max_index + 1,
         true,
     );
     return .{ .table = table };

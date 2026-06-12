@@ -119,11 +119,36 @@ pub const GeometryControls = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
+// AerosolProfileLayer ----------------------------------------------------------------------------------------|
+// One explicit aerosol profile layer supplied by the public Python input.                                     |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 56 B (0.055 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] top_pressure_hpa       : f64                                                                       |
+// [ 8..15] bottom_pressure_hpa    : f64                                                                       |
+// [16..23] optical_depth          : f64                                                                       |
+// [24..31] single_scatter_albedo  : f64                                                                       |
+// [32..39] asymmetry_factor       : f64                                                                       |
+// [40..47] angstrom_exponent      : f64                                                                       |
+// [48..55] reference_wavelength_nm: f64                                                                       |
+pub const AerosolProfileLayer = struct {
+    top_pressure_hpa: f64,
+    bottom_pressure_hpa: f64,
+    optical_depth: f64,
+    single_scatter_albedo: f64 = 0.93,
+    asymmetry_factor: f64 = 0.65,
+    angstrom_exponent: f64 = 1.3,
+    reference_wavelength_nm: f64 = 550.0,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
 // AerosolControls --------------------------------------------------------------------------------------------|
 // Aerosol optical-depth and explicit interval placement controls.                                             |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 64 B (0.063 KiB), align: 8 B                                                                          |
+// size: 80 B (0.078 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
 // [ 0.. 7] optical_depth          : f64                                                                       |
@@ -134,6 +159,10 @@ pub const GeometryControls = struct {
 // [40..47] interval_index_1based  : usize                                                                     |
 // [48..55] top_pressure_hpa       : f64                                                                       |
 // [56..63] bottom_pressure_hpa    : f64                                                                       |
+// [64..79] profile                : []const AerosolProfileLayer                                               |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   profile borrows parser-owned JSON rows. A one-layer public profile is folded back into scalar placement.  |
 pub const AerosolControls = struct {
     optical_depth: f64,
     single_scatter_albedo: f64,
@@ -143,6 +172,7 @@ pub const AerosolControls = struct {
     interval_index_1based: usize,
     top_pressure_hpa: f64,
     bottom_pressure_hpa: f64,
+    profile: []const AerosolProfileLayer = &.{},
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -236,7 +266,7 @@ pub const RtmControls = struct {
 // Borrowed reference-case setup row.                                                                          |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 608 B (0.594 KiB), align: 8 B                                                                         |
+// size: 624 B (0.609 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0.. 15] id           : []const u8                                                                        |
@@ -244,11 +274,11 @@ pub const RtmControls = struct {
 // [ 40.. 47] surface_albedo: f64                                                                              |
 // [ 48..143] atmosphere   : AtmosphereControls                                                                |
 // [144..175] geometry     : GeometryControls                                                                  |
-// [176..239] aerosol      : AerosolControls                                                                   |
-// [240..351] observation  : ObservationControls                                                               |
-// [352..535] line_gas     : LineGasControls                                                                   |
-// [536..591] cia          : CiaControls                                                                       |
-// [592..607] rtm          : RtmControls                                                                       |
+// [176..255] aerosol      : AerosolControls                                                                   |
+// [256..367] observation  : ObservationControls                                                               |
+// [368..551] line_gas     : LineGasControls                                                                   |
+// [552..607] cia          : CiaControls                                                                       |
+// [608..623] rtm          : RtmControls                                                                       |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   id, asset strings, isotope slices, and interval slices are borrowed; table builders own loaded rows.      |

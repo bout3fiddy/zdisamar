@@ -26,11 +26,11 @@ const default_output_isotopes = [_]usize{ 1, 2, 3 };
 // Owns parser arena storage backing one borrowed O2Case.                                                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 1648 B (1.609 KiB), align: 8 B                                                                        |
+// size: 1664 B (1.625 KiB), align: 8 B                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
 // [   0..1039] parsed: std.json.Parsed(NativeO2CaseJson)                                                      |
-// [1040..1647] case  : O2Case                                                                                 |
+// [1040..1663] case  : O2Case                                                                                 |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   case slices and strings point into parsed.arena and stay valid until deinit.                              |
@@ -120,14 +120,15 @@ fn buildCase(native: NativeO2CaseJson) !o2_case.O2Case {
         },
 
         .aerosol = .{
-            .optical_depth = native.aerosol.optical_depth,
-            .single_scatter_albedo = native.aerosol.single_scatter_albedo,
-            .asymmetry_factor = native.aerosol.asymmetry_factor,
-            .angstrom_exponent = native.aerosol.angstrom_exponent,
-            .reference_wavelength_nm = native.aerosol.reference_wavelength_nm,
+            .optical_depth = aerosolScalarOpticalDepth(native.aerosol),
+            .single_scatter_albedo = aerosolScalarSingleScatterAlbedo(native.aerosol),
+            .asymmetry_factor = aerosolScalarAsymmetryFactor(native.aerosol),
+            .angstrom_exponent = aerosolScalarAngstromExponent(native.aerosol),
+            .reference_wavelength_nm = aerosolScalarReferenceWavelengthNm(native.aerosol),
             .interval_index_1based = native.aerosol.placement.interval_index_1based,
-            .top_pressure_hpa = native.aerosol.placement.top_pressure_hpa,
-            .bottom_pressure_hpa = native.aerosol.placement.bottom_pressure_hpa,
+            .top_pressure_hpa = aerosolScalarTopPressureHpa(native.aerosol),
+            .bottom_pressure_hpa = aerosolScalarBottomPressureHpa(native.aerosol),
+            .profile = aerosolProfileRows(native.aerosol),
         },
 
         .observation = .{
@@ -220,12 +221,82 @@ fn validateRtm(rtm: RtmControlsJson, geometry_model: []const u8) !void {
 
 fn validateAerosol(aerosol: AerosolJson) !void {
     // validateAerosol ----------------------------------------------------------------------------------------|
-    // Accept the scalar explicit-pressure aerosol layer; reject multi-layer profile payloads for WP5.         |
+    // Accept scalar placement and explicit multi-layer profile payloads on the proven O2 A route.             |
     // --------------------------------------------------------------------------------------------------------|
     if (!std.mem.eql(u8, aerosol.placement.semantics, "explicit_interval_bounds")) {
         return errors.Error.UnsupportedJsonInput;
     }
-    if (aerosol.profile.len != 0) return errors.Error.UnsupportedJsonInput;
+}
+
+fn aerosolScalarOpticalDepth(aerosol: AerosolJson) f64 {
+    // aerosolScalarOpticalDepth ------------------------------------------------------------------------------|
+    // Preserve old single-profile-layer behavior by folding one layer into the scalar aerosol controls.       |
+    // --------------------------------------------------------------------------------------------------------|
+    return if (aerosol.profile.len == 1) aerosol.profile[0].optical_depth else aerosol.optical_depth;
+}
+
+fn aerosolScalarSingleScatterAlbedo(aerosol: AerosolJson) f64 {
+    // aerosolScalarSingleScatterAlbedo -----------------------------------------------------------------------|
+    // Preserve old single-profile-layer behavior by folding one layer into the scalar aerosol controls.       |
+    // --------------------------------------------------------------------------------------------------------|
+    return if (aerosol.profile.len == 1)
+        aerosol.profile[0].single_scatter_albedo
+    else
+        aerosol.single_scatter_albedo;
+}
+
+fn aerosolScalarAsymmetryFactor(aerosol: AerosolJson) f64 {
+    // aerosolScalarAsymmetryFactor ---------------------------------------------------------------------------|
+    // Preserve old single-profile-layer behavior by folding one layer into the scalar aerosol controls.       |
+    // --------------------------------------------------------------------------------------------------------|
+    return if (aerosol.profile.len == 1) aerosol.profile[0].asymmetry_factor else aerosol.asymmetry_factor;
+}
+
+fn aerosolScalarAngstromExponent(aerosol: AerosolJson) f64 {
+    // aerosolScalarAngstromExponent --------------------------------------------------------------------------|
+    // Preserve old single-profile-layer behavior by folding one layer into the scalar aerosol controls.       |
+    // --------------------------------------------------------------------------------------------------------|
+    return if (aerosol.profile.len == 1)
+        aerosol.profile[0].angstrom_exponent
+    else
+        aerosol.angstrom_exponent;
+}
+
+fn aerosolScalarReferenceWavelengthNm(aerosol: AerosolJson) f64 {
+    // aerosolScalarReferenceWavelengthNm ---------------------------------------------------------------------|
+    // Preserve old single-profile-layer behavior by folding one layer into the scalar aerosol controls.       |
+    // --------------------------------------------------------------------------------------------------------|
+    return if (aerosol.profile.len == 1)
+        aerosol.profile[0].reference_wavelength_nm
+    else
+        aerosol.reference_wavelength_nm;
+}
+
+fn aerosolScalarTopPressureHpa(aerosol: AerosolJson) f64 {
+    // aerosolScalarTopPressureHpa ----------------------------------------------------------------------------|
+    // Preserve old single-profile-layer behavior by folding one layer into explicit pressure placement.       |
+    // --------------------------------------------------------------------------------------------------------|
+    return if (aerosol.profile.len == 1)
+        aerosol.profile[0].top_pressure_hpa
+    else
+        aerosol.placement.top_pressure_hpa;
+}
+
+fn aerosolScalarBottomPressureHpa(aerosol: AerosolJson) f64 {
+    // aerosolScalarBottomPressureHpa -------------------------------------------------------------------------|
+    // Preserve old single-profile-layer behavior by folding one layer into explicit pressure placement.       |
+    // --------------------------------------------------------------------------------------------------------|
+    return if (aerosol.profile.len == 1)
+        aerosol.profile[0].bottom_pressure_hpa
+    else
+        aerosol.placement.bottom_pressure_hpa;
+}
+
+fn aerosolProfileRows(aerosol: AerosolJson) []const o2_case.AerosolProfileLayer {
+    // aerosolProfileRows -------------------------------------------------------------------------------------|
+    // Preserve old single-layer folding while passing explicit multi-layer profile rows into setup.           |
+    // --------------------------------------------------------------------------------------------------------|
+    return if (aerosol.profile.len > 1) aerosol.profile else &.{};
 }
 
 fn expectDefaultThresholds(thresholds: PerformanceThresholdsJson) !void {
@@ -481,16 +552,6 @@ const AerosolPlacementJson = struct {
     bottom_pressure_hpa: f64,
 };
 
-const AerosolProfileLayerJson = struct {
-    top_pressure_hpa: f64,
-    bottom_pressure_hpa: f64,
-    optical_depth: f64,
-    single_scatter_albedo: f64 = 0.93,
-    asymmetry_factor: f64 = 0.65,
-    angstrom_exponent: f64 = 1.3,
-    reference_wavelength_nm: f64 = 550.0,
-};
-
 const AerosolJson = struct {
     optical_depth: f64,
     single_scatter_albedo: f64,
@@ -498,7 +559,7 @@ const AerosolJson = struct {
     angstrom_exponent: f64,
     reference_wavelength_nm: f64,
     placement: AerosolPlacementJson,
-    profile: []const AerosolProfileLayerJson = &.{},
+    profile: []const o2_case.AerosolProfileLayer = &.{},
 };
 
 const AdaptiveO2GridJson = struct {

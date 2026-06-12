@@ -170,15 +170,20 @@ const CResult = struct {
 // Native owner behind the opaque C handle.                                                                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 7952 B (7.766 KiB), align: 8 B                                                                        |
+// Debug build: size 8000 B (7.812 KiB), align 8                                                               |
+// optimized  : size 7992 B (7.805 KiB), align 8                                                               |
 //                                                                                                             |
 // memory                                                                                                      |
-// [   0..1655] parsed    : ?ParsedO2CaseJson                                                                  |
-// [1656..4191] prepared  : ?PreparedO2A                                                                       |
-// [4192..7663] session   : O2SessionMemory                                                                    |
-// [7664..7687] results   : ArrayList(*CResult)                                                                |
-// [7688..7943] last_error: [256:0]u8                                                                          |
-// [7944..7951] trailing padding: 8 B                                                                          |
+// [   0..1671] parsed    : ?ParsedO2CaseJson                                                                  |
+// [1672..4239] prepared  : ?PreparedO2A                                                                       |
+// [4240..7711] session   : O2SessionMemory in Debug                                                           |
+// [4240..7703] session   : O2SessionMemory in optimized builds                                                |
+// [7712..7735] results   : ArrayList(*CResult) in Debug                                                       |
+// [7704..7727] results   : ArrayList(*CResult) in optimized builds                                            |
+// [7736..7991] last_error: [256:0]u8 in Debug                                                                 |
+// [7728..7983] last_error: [256:0]u8 in optimized builds                                                      |
+// [7992..7999] trailing padding: 8 B in Debug                                                                 |
+// [7984..7991] trailing padding: 8 B in optimized builds                                                      |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   parsed owns JSON arena storage borrowed by prepared.case for zds_prepare_o2a_json.                        |
@@ -643,6 +648,7 @@ export fn zds_run_o2a_optimal_estimation(ctx: ?*Context, _: ?*const anyopaque, _
     // zds_run_o2a_optimal_estimation -------------------------------------------------------------------------|
     // Return a typed failure until package 5 ports optimal estimation.                                        |
     // --------------------------------------------------------------------------------------------------------|
+    if (rejectMultiLayerAerosolProfileRetrieval(ctx)) |status| return status;
     return unsupported(ctx, "UnsupportedOptimalEstimation");
 }
 
@@ -650,6 +656,7 @@ export fn zds_run_o2a_optimal_estimation_correction(ctx: ?*Context, _: ?*const a
     // zds_run_o2a_optimal_estimation_correction --------------------------------------------------------------|
     // Return a typed failure until package 5 ports correction runs.                                           |
     // --------------------------------------------------------------------------------------------------------|
+    if (rejectMultiLayerAerosolProfileRetrieval(ctx)) |status| return status;
     return unsupported(ctx, "UnsupportedOptimalEstimationCorrection");
 }
 
@@ -657,6 +664,7 @@ export fn zds_run_o2a_optimal_estimation_batch(ctx: ?*Context, _: ?*const anyopa
     // zds_run_o2a_optimal_estimation_batch -------------------------------------------------------------------|
     // Return a typed failure until package 5 ports batch retrieval.                                           |
     // --------------------------------------------------------------------------------------------------------|
+    if (rejectMultiLayerAerosolProfileRetrieval(ctx)) |status| return status;
     return unsupported(ctx, "UnsupportedOptimalEstimationBatch");
 }
 
@@ -928,6 +936,18 @@ fn unsupported(ctx: ?*Context, message: []const u8) c_int {
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
     resolved.setError(message);
+    return @intFromEnum(ZdsStatus.failure);
+}
+
+fn rejectMultiLayerAerosolProfileRetrieval(ctx: ?*Context) ?c_int {
+    // rejectMultiLayerAerosolProfileRetrieval --------------------------------------------------------------- |
+    // Preserve the public Python contract that multi-layer aerosol profiles are forward-simulation only.      |
+    // --------------------------------------------------------------------------------------------------------|
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+    const prepared = &(resolved.prepared orelse return null);
+    if (prepared.case.aerosol.profile.len <= 1) return null;
+
+    resolved.setError("multi-layer aerosol profiles are forward-simulation only");
     return @intFromEnum(ZdsStatus.failure);
 }
 

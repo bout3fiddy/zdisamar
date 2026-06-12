@@ -62,6 +62,7 @@ pub fn referenceCase() o2_case.O2Case {
             .interval_index_1based = 2,
             .top_pressure_hpa = 500.0,
             .bottom_pressure_hpa = 520.0,
+            .profile = &.{},
         },
         .observation = .{
             .instrument_name = "disamar-o2a-compare",

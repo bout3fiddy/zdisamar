@@ -86,3 +86,80 @@ test "unsupported JSON route controls fail at the input boundary" {
         internal.input.json.parseO2CaseJson(allocator, fast_threshold),
     );
 }
+
+test "Python native aerosol profile JSON validates explicit multi-layer rows" {
+    const allocator = std.testing.allocator;
+
+    const rendered = try internal.input.json.renderDefaultO2CaseJson(allocator);
+    defer allocator.free(rendered);
+
+    const valid_profile = try jsonWithAerosolProfile(allocator, rendered,
+        \\[
+        \\{"top_pressure_hpa":430.0,"bottom_pressure_hpa":510.0,"optical_depth":0.18,
+        \\"single_scatter_albedo":0.96,"asymmetry_factor":0.72,"angstrom_exponent":0.4,
+        \\"reference_wavelength_nm":550.0},
+        \\{"top_pressure_hpa":760.0,"bottom_pressure_hpa":900.0,"optical_depth":0.24,
+        \\"single_scatter_albedo":0.88,"asymmetry_factor":0.55,"angstrom_exponent":1.5,
+        \\"reference_wavelength_nm":550.0}
+        \\]
+    );
+    defer allocator.free(valid_profile);
+
+    var parsed = try internal.input.json.parseO2CaseJson(allocator, valid_profile);
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), parsed.case.aerosol.profile.len);
+    try std.testing.expectApproxEqAbs(0.18, parsed.case.aerosol.profile[0].optical_depth, 0.0);
+    try std.testing.expectApproxEqAbs(0.24, parsed.case.aerosol.profile[1].optical_depth, 0.0);
+}
+
+test "Python native aerosol profile JSON rejects unsupported pressure and merge shapes" {
+    const allocator = std.testing.allocator;
+
+    const rendered = try internal.input.json.renderDefaultO2CaseJson(allocator);
+    defer allocator.free(rendered);
+
+    const off_grid_profile = try jsonWithAerosolProfile(allocator, rendered,
+        \\[
+        \\{"top_pressure_hpa":1000.0,"bottom_pressure_hpa":1100.0,"optical_depth":0.05},
+        \\{"top_pressure_hpa":760.0,"bottom_pressure_hpa":900.0,"optical_depth":0.05}
+        \\]
+    );
+    defer allocator.free(off_grid_profile);
+    try std.testing.expectError(
+        error.InvalidRequest,
+        internal.input.json.parseO2CaseJson(allocator, off_grid_profile),
+    );
+
+    const spectral_merge_profile = try jsonWithAerosolProfile(allocator, rendered,
+        \\[
+        \\{"top_pressure_hpa":430.0,"bottom_pressure_hpa":460.0,"optical_depth":0.05,
+        \\"angstrom_exponent":0.4},
+        \\{"top_pressure_hpa":440.0,"bottom_pressure_hpa":470.0,"optical_depth":0.05,
+        \\"angstrom_exponent":1.5}
+        \\]
+    );
+    defer allocator.free(spectral_merge_profile);
+    try std.testing.expectError(
+        error.InvalidRequest,
+        internal.input.json.parseO2CaseJson(allocator, spectral_merge_profile),
+    );
+}
+
+fn jsonWithAerosolProfile(
+    allocator: std.mem.Allocator,
+    rendered: []const u8,
+    profile_json: []const u8,
+) ![]u8 {
+    // jsonWithAerosolProfile ---------------------------------------------------------------------------------|
+    // Replace the rendered empty profile array with an explicit profile without changing the Python schema.   |
+    // --------------------------------------------------------------------------------------------------------|
+    const replacement = try std.fmt.allocPrint(
+        allocator,
+        "\"profile\":{s}",
+        .{profile_json},
+    );
+    defer allocator.free(replacement);
+
+    return std.mem.replaceOwned(u8, allocator, rendered, "\"profile\":[]", replacement);
+}

@@ -6,6 +6,7 @@ pub const Error = error{
     EmptyAsset,
     InvalidAssetFormat,
     InvalidControl,
+    InvalidRequest,
     InvalidNumber,
     InvalidO2Case,
     UnsupportedJsonInput,

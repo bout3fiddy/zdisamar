@@ -16,16 +16,16 @@ const Allocator = std.mem.Allocator;
 // Package boundary for setup tables below radiance math.                                                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 1920 B (1.875 KiB), align: 8 B                                                                        |
+// size: 1936 B (1.891 KiB), align: 8 B                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
 // [   0.. 399] layers    : LayerGrid                                                                          |
 // [ 400.. 511] lines     : O2LineTable                                                                        |
 // [ 512.. 535] cia       : O2CiaTable                                                                         |
-// [ 536.. 599] aerosol   : AerosolLayerTable                                                                  |
-// [ 600..1823] phase     : PhaseTable                                                                         |
-// [1824..1887] instrument: InstrumentTable                                                                    |
-// [1888..1919] solar     : SolarTable                                                                         |
+// [ 536.. 615] aerosol   : AerosolLayerTable                                                                  |
+// [ 616..1839] phase     : PhaseTable                                                                         |
+// [1840..1903] instrument: InstrumentTable                                                                    |
+// [1904..1935] solar     : SolarTable                                                                         |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   This owner groups table families only for top-level setup/run functions. Later optics/transport code      |
