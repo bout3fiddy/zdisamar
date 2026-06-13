@@ -353,10 +353,10 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
     );
     defer deinitWeakLineStates(allocator, weak_states);
 
-    // The old-route temperature derivative is a centered finite difference at T +/- 0.5 K. Non-Jacobian
-    // spectrum runs never read d_sigma/dT, so the public no-Jacobian path skips these two full weak-line
-    // state families and records that choice in the reuse stamp. Jacobian runs request the derivative rows
-    // explicitly and rebuild if the session currently holds a non-derivative profile-line cache.
+    // The old-route temperature derivative is a centered finite difference at T +/- 0.5 K. The public WP4
+    // Jacobian states are surface/aerosol controls, so root spectrum runs do not read d_sigma/dT and skip
+    // these two full weak-line state families. Explicit profile-line parity builders still request the rows
+    // directly, and the reuse stamp records the choice so incompatible session caches cannot mix.
     var upper_weak_states: []WeakLinePreparedState = &.{};
     var lower_weak_states: []WeakLinePreparedState = &.{};
     if (include_temperature_derivatives) {

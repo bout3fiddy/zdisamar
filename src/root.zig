@@ -340,7 +340,10 @@ fn prepareSessionRows(
     }
     const worker_count = spectrum_run.preferredRadianceWorkerCount(dense_count);
     const worker_pool = session.worker_pool.poolForWorkerCount(allocator, worker_count);
-    const needs_temperature_derivatives = solve_config.derivative_mode != .none;
+
+    // Public WP4 Jacobian states are surface/aerosol controls and do not read profile-line d_sigma/dT rows.
+    // The derivative-row bit remains in the reuse stamp so a future temperature-profile state can split caches.
+    const needs_temperature_derivatives = false;
     const profile_stamp = profileLineReuseStamp(
         prepared.case.id,
         exact_wavelengths,

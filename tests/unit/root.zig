@@ -161,6 +161,10 @@ test "runO2AWithSessionMemory reuses profile-line rows across repeated case runs
     const dense_radiance_ptr = session.radiance.results.ptr;
     const dense_radiance_stamp = session.radiance.result_stamp;
     try std.testing.expect(dense_radiance_stamp.value != 0);
+    try std.testing.expectEqual(
+        @as(f64, 0.0),
+        session.profile_lines.values[0].d_sigma_d_temperature_cm2_per_molecule_per_k,
+    );
 
     var second = try zdisamar.runO2AWithSessionMemory(
         allocator,
