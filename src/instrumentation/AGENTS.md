@@ -1,7 +1,7 @@
 # Forward-Model Instrumentation
 
 - This directory holds the production-facing instrumentation facades:
-  `trace.zig`, `telemetry.zig`, and `sensitivity.zig`.
+  `trace.zig`, `telemetry.zig`, `cost_timing.zig`, and `sensitivity.zig`.
 - Normal forward-model code imports these facades only. Capture storage,
   Parquet writers, trace CLIs, perturbation sweep drivers, and analysis code
   live under `scaffolding/instrumentation/`.
@@ -30,6 +30,9 @@
 - `telemetry.zig` records structured calculation rows. Call sites sit around
   wavelength sampling, cache misses, reflectance assembly, Jacobian columns,
   LABOS layer/order/Fourier decisions, and optimal-estimation context.
+- `cost_timing.zig` records per-worker stage cost counters. Call sites sit
+  inside LABOS transport and any hot setup stage whose recomputation cost needs
+  a fixed bucket.
 - `sensitivity.zig` exposes perturbation hooks for ablation sweeps. Call sites
   sit inside LABOS Fourier contribution/tail decisions, layer-doubling gates,
   scattering-order convergence, and aerosol Jacobian contributions.
@@ -43,5 +46,5 @@
 - Keep file headers as concise maps of what the facade records and where hooks
   are inserted. Do not add function docstrings for pass-through facade methods.
 - Run `zig fmt` and
-  `uv run scripts/linting/check-zig-styleguide.py src/forward_model/instrumentation`
+  `uv run scripts/linting/check-zig-styleguide.py src/instrumentation`
   after changing this directory.

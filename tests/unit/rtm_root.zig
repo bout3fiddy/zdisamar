@@ -7,7 +7,7 @@ test {
     _ = @import("rtm/layer_reflect_transmit_test.zig");
     _ = @import("rtm/matrix_12x10_test.zig");
     _ = @import("rtm/phase_basis_test.zig");
-    _ = @import("rtm/phase_timing_test.zig");
+    _ = @import("instrumentation/cost_timing_test.zig");
     _ = @import("rtm/reflectance_test.zig");
     _ = @import("rtm/rows_test.zig");
     _ = @import("rtm/scattering_orders_test.zig");

@@ -9,7 +9,7 @@ const InstrumentationModules = struct {
 
 fn addBuildOptions(
     b: *std.Build,
-    enable_trace_phase_timing: bool,
+    enable_cost_timing: bool,
     enable_calculation_telemetry: bool,
     enable_perturbation_sensitivity: bool,
 ) *std.Build.Module {
@@ -19,7 +19,7 @@ fn addBuildOptions(
     const options = b.addOptions();
     options.addOption(bool, "enable_test_support", false);
     options.addOption(bool, "enable_ztracy", false);
-    options.addOption(bool, "enable_trace_phase_timing", enable_trace_phase_timing);
+    options.addOption(bool, "enable_cost_timing", enable_cost_timing);
     options.addOption(bool, "enable_calculation_telemetry", enable_calculation_telemetry);
     options.addOption(bool, "enable_perturbation_sensitivity", enable_perturbation_sensitivity);
     return options.createModule();

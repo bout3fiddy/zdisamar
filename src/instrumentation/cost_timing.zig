@@ -1,32 +1,32 @@
 const std = @import("std");
 const build_options = @import("build_options");
 
-// phase_timing.zig ------------------------------------------------------------------------------------------ |
-// Opt-in LABOS phase timers for trace builds. Product, test, telemetry, and perturbation builds keep the      |
-// same source calls, but comptime enabled=false turns workspace timing state into a zero-size type and makes  |
+// cost_timing.zig -------------------------------------------------------------------------------------------|
+// Opt-in per-stage cost counters for trace builds. Product, test, telemetry, and perturbation builds keep the |
+// same source calls, but comptime enabled=false turns workspace cost state into a zero-size type and makes    |
 // start/finish/count return before any clock read, counter write, or worker merge.                            |
 //                                                                                                             |
-//   phase timing calls without inventing a new instrumentation shape.                                         |
+//   cost timing calls without inventing a new instrumentation shape.                                          |
 //                                                                                                             |
 // build route                                                                                                 |
-//   build.zig sets enable_trace_phase_timing=false for normal artifacts. Enabled trace/test builds set it     |
-//   true and attach one worker-local Timing row through WorkspaceState.                                       |
+//   build.zig sets enable_cost_timing=false for normal artifacts. Enabled trace/test builds set it true and   |
+//   attach one worker-local StageCost row through WorkspaceState.                                             |
 //                                                                                                             |
 // hot path                                                                                                    |
 //   The call sites sit inside high-resolution wavelength, Fourier, layer-doubling, and scattering-order       |
-//   loops. In trace builds, each worker writes only its own Timing row, so the loop path takes no locks;      |
+//   loops. In trace builds, each worker writes only its own StageCost row, so the loop path takes no locks;   |
 //   cross-worker aggregation happens after workers finish. Counter updates saturate so long traces cannot     |
 //   wrap elapsed-time or event totals.                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
-//   Timing is 376 B: 19 elapsed-time Counter rows plus 9 event Count rows. WorkspaceState is 0 B normally     |
-//   and one 8 B optional Timing pointer in the trace build. Active is a borrowed 8 B pointer handle threaded  |
-//   through LABOS calls; no timing type owns heap storage.                                                    |
+//   StageCost is 376 B: 19 elapsed-time Counter rows plus 9 event Count rows. WorkspaceState is 0 B normally |
+//   and one 8 B optional StageCost pointer in the trace build. Active is a borrowed 8 B pointer handle        |
+//   threaded through measured calls; no cost-timing type owns heap storage.                                   |
 // ----------------------------------------------------------------------------------------------------------- |
 
 pub const enabled: bool = enabled_by_build: {
-    if (!@hasDecl(build_options, "enable_trace_phase_timing")) break :enabled_by_build false;
-    break :enabled_by_build build_options.enable_trace_phase_timing;
+    if (!@hasDecl(build_options, "enable_cost_timing")) break :enabled_by_build false;
+    break :enabled_by_build build_options.enable_cost_timing;
 };
 
 // Counter --------------------------------------------------------------------------------------------------- |
@@ -40,7 +40,7 @@ pub const enabled: bool = enabled_by_build: {
 // [ 8..15] count : u64                                                                                        |
 //                                                                                                             |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
-// footprint: per instance = 16 B (0.016 KiB); total = per timed phase in Timing                               |
+// footprint: per instance = 16 B (0.016 KiB); total = per timed stage in StageCost                            |
 pub const Counter = struct {
     ns: u64 = 0,
     count: u64 = 0,
@@ -73,7 +73,7 @@ pub const Counter = struct {
 // [0..7] count : u64                                                                                          |
 //                                                                                                             |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
-// footprint: per instance = 8 B (0.008 KiB); total = per counted event in Timing                              |
+// footprint: per instance = 8 B (0.008 KiB); total = per counted event in StageCost                           |
 pub const Count = struct {
     count: u64 = 0,
 
@@ -93,7 +93,7 @@ pub const Count = struct {
 };
 // ----------------------------------------------------------------------------------------------------------- |
 
-// Timing ---------------------------------------------------------------------------------------------------- |
+// StageCost --------------------------------------------------------------------------------------------------|
 // Per-worker LABOS trace payload merged into the product-level trace summary after forward prefetch.          |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -132,7 +132,7 @@ pub const Count = struct {
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // cache span: 6 cache lines at 64 B per line                                                                  |
 // footprint: per instance = 376 B (0.367 KiB); total = one per active forward worker in trace builds          |
-pub const Timing = struct {
+pub const StageCost = struct {
     execute: Counter = .{},
     attenuation_fill: Counter = .{},
     fourier_loop: Counter = .{},
@@ -162,16 +162,16 @@ pub const Timing = struct {
     fixed_td_skipped: Count = .{},
     fixed_td_retained: Count = .{},
 
-    pub fn reset(self: *Timing) void {
-        // Timing.reset -------------------------------------------------------------------------------------- |
-        // Clear one worker-local timing row before reuse by a trace run.                                      |
+    pub fn reset(self: *StageCost) void {
+        // StageCost.reset -----------------------------------------------------------------------------------|
+        // Clear one worker-local cost row before reuse by a trace run.                                        |
         // --------------------------------------------------------------------------------------------------- |
         self.* = .{};
     }
 
-    pub fn merge(self: *Timing, other: Timing) void {
-        // Timing.merge -------------------------------------------------------------------------------------- |
-        // Merge every LABOS phase bucket from one worker row into the retained run summary.                   |
+    pub fn merge(self: *StageCost, other: StageCost) void {
+        // StageCost.merge -----------------------------------------------------------------------------------|
+        // Merge every stage bucket from one worker row into the retained run summary.                         |
         // --------------------------------------------------------------------------------------------------- |
         self.execute.merge(other.execute);
         self.attenuation_fill.merge(other.attenuation_fill);
@@ -206,55 +206,55 @@ pub const Timing = struct {
 // ----------------------------------------------------------------------------------------------------------- |
 
 // Active ---------------------------------------------------------------------------------------------------- |
-// Small non-owning handle threaded through LABOS calls that can record phase timing.                          |
+// Small non-owning handle threaded through measured calls that can record stage cost.                         |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 8 B (0.008 KiB), align: 8 B                                                                           |
 //                                                                                                             |
 // memory                                                                                                      |
-// [0..7] timing : *Timing                                                                                     |
+// [0..7] stage_cost : *StageCost                                                                              |
 //                                                                                                             |
-// referenced storage: timing points at the worker-local Timing row owned by spectrum trace storage.           |
+// referenced storage: stage_cost points at the worker-local StageCost row owned by forward worker storage.    |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // footprint: per instance = 8 B (0.008 KiB); total = borrowed handle only                                     |
 pub const Active = struct {
-    timing: *Timing,
+    stage_cost: *StageCost,
 };
 // ----------------------------------------------------------------------------------------------------------- |
 
 // WorkspaceState -------------------------------------------------------------------------------------------- |
-// Compile-time selected LABOS workspace hook for the optional phase-timing sink.                              |
+// Compile-time selected workspace hook for the optional cost-timing sink.                                     |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // normal build: size 0 B, align 1                                                                             |
 // trace build : size 8 B (0.008 KiB), align 8                                                                 |
 //                                                                                                             |
 // memory, trace build                                                                                         |
-// [0..7] timing : ?*Timing                                                                                    |
+// [0..7] stage_cost : ?*StageCost                                                                             |
 //                                                                                                             |
-// referenced storage: timing points at the worker-local Timing row, or null when no trace sink is attached.   |
+// referenced storage: stage_cost points at the worker-local StageCost row, or null when no sink is attached.  |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // footprint: normally zero-size; trace build adds one pointer inside each LABOS workspace                     |
 pub const WorkspaceState = if (enabled) struct {
-    timing: ?*Timing = null,
+    stage_cost: ?*StageCost = null,
 } else struct {};
 // ----------------------------------------------------------------------------------------------------------- |
 
-pub inline fn setWorkspaceState(state: *WorkspaceState, timing: *Timing) void {
+pub inline fn setWorkspaceState(state: *WorkspaceState, stage_cost: *StageCost) void {
     // setWorkspaceState ------------------------------------------------------------------------------------- |
-    // Attach one worker-local Timing row to a LABOS workspace when phase timing is enabled.                   |
+    // Attach one worker-local StageCost row to a workspace when cost timing is enabled.                       |
     // ------------------------------------------------------------------------------------------------------- |
 
     if (comptime !enabled) return;
 
     state.* = .{
-        .timing = timing,
+        .stage_cost = stage_cost,
     };
 }
 
 pub inline fn clearWorkspaceState(state: *WorkspaceState) void {
     // clearWorkspaceState ----------------------------------------------------------------------------------- |
-    // Detach the optional worker timing row from a LABOS workspace.                                           |
+    // Detach the optional worker StageCost row from a workspace.                                              |
     // ------------------------------------------------------------------------------------------------------- |
 
     if (comptime !enabled) return;
@@ -264,7 +264,7 @@ pub inline fn clearWorkspaceState(state: *WorkspaceState) void {
 
 pub inline fn setActiveWorkspaceState(state: *WorkspaceState, active: ?Active) void {
     // setActiveWorkspaceState ------------------------------------------------------------------------------- |
-    // Copy an already-resolved active timing handle into another workspace hook.                              |
+    // Copy an already-resolved active cost handle into another workspace hook.                                |
     // ------------------------------------------------------------------------------------------------------- |
 
     if (comptime !enabled) return;
@@ -274,20 +274,20 @@ pub inline fn setActiveWorkspaceState(state: *WorkspaceState, active: ?Active) v
         return;
     };
     state.* = .{
-        .timing = resolved.timing,
+        .stage_cost = resolved.stage_cost,
     };
 }
 
 pub inline fn activeWorkspaceState(state: *WorkspaceState) ?Active {
     // activeWorkspaceState ---------------------------------------------------------------------------------- |
-    // Resolve the borrowed active timing handle for LABOS calls.                                              |
+    // Resolve the borrowed active cost handle for measured calls.                                             |
     // ------------------------------------------------------------------------------------------------------- |
 
     if (comptime !enabled) return null;
 
-    const timing = state.timing orelse return null;
+    const stage_cost = state.stage_cost orelse return null;
     return .{
-        .timing = timing,
+        .stage_cost = stage_cost,
     };
 }
 
@@ -317,16 +317,16 @@ pub inline fn finish(active: ?Active, start_timestamp: ?i128, comptime field_nam
 
     const elapsed_ns = finished - started;
     if (elapsed_ns <= 0) return;
-    @field(resolved.timing, field_name).add(std.math.cast(u64, elapsed_ns) orelse std.math.maxInt(u64));
+    @field(resolved.stage_cost, field_name).add(std.math.cast(u64, elapsed_ns) orelse std.math.maxInt(u64));
 }
 
 pub inline fn count(active: ?Active, comptime field_name: []const u8, amount: u64) void {
     // count ------------------------------------------------------------------------------------------------- |
-    // Add one event count into a named Count bucket when phase timing is active.                              |
+    // Add one event count into a named Count bucket when cost timing is active.                              |
     // ------------------------------------------------------------------------------------------------------- |
 
     if (comptime !enabled) return;
 
     const resolved = active orelse return;
-    @field(resolved.timing, field_name).add(amount);
+    @field(resolved.stage_cost, field_name).add(amount);
 }

@@ -52,12 +52,10 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     ("src/rtm/matrix_12x10.zig", "esmulSemul"): "matrix oracle/helper; production uses caller-owned Into kernels from layer_reflect_transmit",
     ("src/rtm/matrix_12x10.zig", "esmulSemulAdd"): "matrix oracle/helper; production uses caller-owned Into kernels from layer_reflect_transmit",
     ("src/rtm/phase_basis.zig", "minusParitySign"): "transport test oracle for old LABOS Z- parity",
-    ("src/rtm/phase_timing.zig", "setWorkspaceState"): "trace-build public hook; stripped or wired at WP5 cutover",
-    ("src/rtm/phase_timing.zig", "clearWorkspaceState"): "trace-build public hook; stripped or wired at WP5 cutover",
     ("src/rtm/reflectance.zig", "fourierWeight"): "transport test oracle for old Fourier accumulation weight",
     ("src/rtm/reflectance.zig", "fourierTailBreak"): "transport test oracle for old Fourier tail stop rule",
-    ("src/rtm/scattering_orders.zig", "setTracePhaseTiming"): "trace-build public hook; stripped or wired at WP5 cutover",
-    ("src/rtm/scattering_orders.zig", "activeTracePhaseTiming"): "trace-build public hook; stripped or wired at WP5 cutover",
+    ("src/rtm/scattering_orders.zig", "setCostTiming"): "cost-timing public hook; wired when the forward path owns worker rows",
+    ("src/rtm/scattering_orders.zig", "activeCostTiming"): "cost-timing public hook; wired when the forward path owns worker rows",
     ("src/retrieval/root.zig", "altitudeDerivativeAtPressure"): "wp5-staged pressure-profile hook; retrieval tests pin old finite-difference route before solver wiring",
 }
 

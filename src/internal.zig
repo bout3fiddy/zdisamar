@@ -191,7 +191,6 @@ pub const rtm = struct {
     pub const layer_reflect_transmit = @import("rtm/layer_reflect_transmit.zig");
     pub const matrix_12x10 = @import("rtm/matrix_12x10.zig");
     pub const phase_basis = @import("rtm/phase_basis.zig");
-    pub const phase_timing = @import("rtm/phase_timing.zig");
     pub const reflectance = @import("rtm/reflectance.zig");
     pub const rows = @import("rtm/rows.zig");
     pub const scattering_orders = @import("rtm/scattering_orders.zig");
@@ -245,6 +244,7 @@ pub const validation = struct {
 //                                                                                                             |
 // footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
 pub const instrumentation = struct {
+    pub const cost_timing = @import("instrumentation/cost_timing.zig");
     pub const sensitivity = @import("instrumentation/sensitivity.zig");
     pub const telemetry = @import("instrumentation/telemetry.zig");
     pub const trace = @import("instrumentation/trace.zig");

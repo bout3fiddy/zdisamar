@@ -3,7 +3,7 @@ const std = @import("std");
 const attenuation_mod = @import("attenuation.zig");
 const controls = @import("controls.zig");
 const gauss_angles = @import("gauss_angles.zig");
-const phase_timing = @import("phase_timing.zig");
+const CostTiming = @import("../instrumentation/cost_timing.zig");
 const rows = @import("rows.zig");
 const Perturbation = @import("../instrumentation/sensitivity.zig");
 const Telemetry = @import("../instrumentation/telemetry.zig");
@@ -70,7 +70,7 @@ pub const OrdersView = struct {
 // [64..79] ud_tangent_orde  : []UDLocal                                                                       |
 // [80..95] ud_tangent_local : []UDLocal                                                                       |
 // [96..111] rt_active       : []bool                                                                          |
-// [112..119] trace build only: trace_phase : WorkspaceState                                                   |
+// [112..119] trace build only: cost_timing_state : WorkspaceState                                             |
 //                                                                                                             |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // referenced storage: all slices are borrowed from the transport worker memory owner                          |
@@ -84,20 +84,20 @@ pub const OrdersWorkArrays = struct {
     ud_tangent_orde: []rows.UDLocal,
     ud_tangent_local: []rows.UDLocal,
     rt_active: []bool,
-    trace_phase: phase_timing.WorkspaceState = .{},
+    cost_timing_state: CostTiming.WorkspaceState = .{},
 
-    pub fn setTracePhaseTiming(self: *OrdersWorkArrays, active: ?phase_timing.Active) void {
-        // OrdersWorkArrays.setTracePhaseTiming -------------------------------------------------------------- |
-        // Attach the worker-local LABOS phase sink used by trace builds.                                      |
+    pub fn setCostTiming(self: *OrdersWorkArrays, active: ?CostTiming.Active) void {
+        // OrdersWorkArrays.setCostTiming --------------------------------------------------------------------|
+        // Attach the worker-local cost row used by enabled cost-timing builds.                                |
         // ----------------------------------------------------------------------------------------------------|
-        phase_timing.setActiveWorkspaceState(&self.trace_phase, active);
+        CostTiming.setActiveWorkspaceState(&self.cost_timing_state, active);
     }
 
-    pub fn activeTracePhaseTiming(self: *OrdersWorkArrays) ?phase_timing.Active {
-        // OrdersWorkArrays.activeTracePhaseTiming ----------------------------------------------------------- |
-        // Return the active timing sink for order child phases.                                               |
+    pub fn activeCostTiming(self: *OrdersWorkArrays) ?CostTiming.Active {
+        // OrdersWorkArrays.activeCostTiming -----------------------------------------------------------------|
+        // Return the active cost row for order child stages.                                                  |
         // ----------------------------------------------------------------------------------------------------|
-        return phase_timing.activeWorkspaceState(&self.trace_phase);
+        return CostTiming.activeWorkspaceState(&self.cost_timing_state);
     }
 };
 // ------------------------------------------------------------------------------------------------------------|
@@ -367,8 +367,8 @@ fn solveOrdersInternal(
         // why: separate first-order source setup from later inter-level transport.                            |
         const zone = Trace.deepStaticZone(@src(), "labos.orders.initial_sources");
         defer zone.end();
-        const trace_start = phase_timing.start(work.activeTracePhaseTiming());
-        defer phase_timing.finish(work.activeTracePhaseTiming(), trace_start, "orders_initial_sources");
+        const trace_start = CostTiming.start(work.activeCostTiming());
+        defer CostTiming.finish(work.activeCostTiming(), trace_start, "orders_initial_sources");
 
         fillInitialDirectAndLocalSources(
             ud,
@@ -393,8 +393,8 @@ fn solveOrdersInternal(
         // why: isolate first scattering transport before convergence tests.                                   |
         const zone = Trace.deepStaticZone(@src(), "labos.orders.initial_transport");
         defer zone.end();
-        const trace_start = phase_timing.start(work.activeTracePhaseTiming());
-        defer phase_timing.finish(work.activeTracePhaseTiming(), trace_start, "orders_initial_transport");
+        const trace_start = CostTiming.start(work.activeCostTiming());
+        defer CostTiming.finish(work.activeCostTiming(), trace_start, "orders_initial_transport");
         transportToOtherLevels(start_level, end_level, stream_count, attenuation, ud_local, ud_orde);
         // end instrumentation: trace zone: initial transport -------------------------------------------------|
 
@@ -473,8 +473,8 @@ fn solveOrdersInternal(
             // why: isolate downward matrix-vector work inside each order.                                     |
             const zone = Trace.deepStaticZone(@src(), "labos.orders.local_down");
             defer zone.end();
-            const trace_start = phase_timing.start(work.activeTracePhaseTiming());
-            defer phase_timing.finish(work.activeTracePhaseTiming(), trace_start, "orders_local_down");
+            const trace_start = CostTiming.start(work.activeCostTiming());
+            defer CostTiming.finish(work.activeCostTiming(), trace_start, "orders_local_down");
             fillDownwardLocalSources(start_level, end_level, geometry, rt, rt_active, ud_orde, ud_local);
             // end instrumentation: trace zone: local down ----------------------------------------------------|
 
@@ -487,8 +487,8 @@ fn solveOrdersInternal(
             // why: isolate upward matrix-vector work inside each order.                                       |
             const zone = Trace.deepStaticZone(@src(), "labos.orders.local_up");
             defer zone.end();
-            const trace_start = phase_timing.start(work.activeTracePhaseTiming());
-            defer phase_timing.finish(work.activeTracePhaseTiming(), trace_start, "orders_local_up");
+            const trace_start = CostTiming.start(work.activeCostTiming());
+            defer CostTiming.finish(work.activeCostTiming(), trace_start, "orders_local_up");
             fillUpwardLocalSources(start_level, end_level, geometry, rt, rt_active, ud_orde, ud_local);
             // end instrumentation: trace zone: local up ------------------------------------------------------|
 
@@ -501,8 +501,8 @@ fn solveOrdersInternal(
             // why: separate propagation from local source computation.                                        |
             const zone = Trace.deepStaticZone(@src(), "labos.orders.rtm");
             defer zone.end();
-            const trace_start = phase_timing.start(work.activeTracePhaseTiming());
-            defer phase_timing.finish(work.activeTracePhaseTiming(), trace_start, "orders_transport");
+            const trace_start = CostTiming.start(work.activeCostTiming());
+            defer CostTiming.finish(work.activeCostTiming(), trace_start, "orders_transport");
             transportToOtherLevels(start_level, end_level, stream_count, attenuation, ud_local, ud_orde);
             // end instrumentation: trace zone: order transport -----------------------------------------------|
 
@@ -560,8 +560,8 @@ fn solveOrdersInternal(
             // why: separate retained-order summation from convergence testing.                                |
             const zone = Trace.deepStaticZone(@src(), "labos.orders.accumulate");
             defer zone.end();
-            const trace_start = phase_timing.start(work.activeTracePhaseTiming());
-            defer phase_timing.finish(work.activeTracePhaseTiming(), trace_start, "orders_accumulate");
+            const trace_start = CostTiming.start(work.activeCostTiming());
+            defer CostTiming.finish(work.activeCostTiming(), trace_start, "orders_accumulate");
             accumulateOrderContribution(
                 track_sum_local,
                 ud,

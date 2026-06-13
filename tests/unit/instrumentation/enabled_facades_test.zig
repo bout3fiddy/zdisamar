@@ -10,32 +10,32 @@ test "instrumentation facades compile when enabled by build options" {
     internal.instrumentation.telemetry.clearContext();
 
     _ = internal.instrumentation.sensitivity.enabled;
-    try exerciseEnabledPhaseTiming();
+    try exerciseEnabledCostTiming();
     try std.testing.expect(true);
 }
 
-fn exerciseEnabledPhaseTiming() !void {
-    // exerciseEnabledPhaseTiming ----------------------------------------------------------------------------|
-    // Compile and exercise the trace-build branch of transport phase timing.                                 |
+fn exerciseEnabledCostTiming() !void {
+    // exerciseEnabledCostTiming -----------------------------------------------------------------------------|
+    // Compile and exercise the enabled branch of transport cost timing.                                      |
     // -------------------------------------------------------------------------------------------------------|
-    const phase_timing = internal.rtm.phase_timing;
+    const cost_timing = internal.instrumentation.cost_timing;
 
-    try std.testing.expectEqual(true, phase_timing.enabled);
-    try std.testing.expectEqual(@as(usize, 8), @sizeOf(phase_timing.WorkspaceState));
-    try std.testing.expectEqual(@as(usize, 8), @alignOf(phase_timing.WorkspaceState));
+    try std.testing.expectEqual(true, cost_timing.enabled);
+    try std.testing.expectEqual(@as(usize, 8), @sizeOf(cost_timing.WorkspaceState));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(cost_timing.WorkspaceState));
 
-    var timing = phase_timing.Timing{};
-    var state = phase_timing.WorkspaceState{};
-    phase_timing.setWorkspaceState(&state, &timing);
+    var timing = cost_timing.StageCost{};
+    var state = cost_timing.WorkspaceState{};
+    cost_timing.setWorkspaceState(&state, &timing);
 
-    const active = phase_timing.activeWorkspaceState(&state) orelse return error.MissingActivePhaseTiming;
-    phase_timing.count(active, "fixed_doubling_steps", 3);
+    const active = cost_timing.activeWorkspaceState(&state) orelse return error.MissingActiveCostTiming;
+    cost_timing.count(active, "fixed_doubling_steps", 3);
     try std.testing.expectEqual(@as(u64, 3), timing.fixed_doubling_steps.count);
 
-    const start = phase_timing.start(active);
-    phase_timing.finish(active, start, "fixed_qseries_work");
+    const start = cost_timing.start(active);
+    cost_timing.finish(active, start, "fixed_qseries_work");
     try std.testing.expect(timing.fixed_qseries_work.count <= 1);
 
-    phase_timing.clearWorkspaceState(&state);
-    try std.testing.expectEqual(null, phase_timing.activeWorkspaceState(&state));
+    cost_timing.clearWorkspaceState(&state);
+    try std.testing.expectEqual(null, cost_timing.activeWorkspaceState(&state));
 }

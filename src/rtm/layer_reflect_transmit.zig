@@ -6,7 +6,7 @@ const jacobian_states = @import("jacobian_states.zig");
 const matrix12 = @import("matrix_12x10.zig");
 const layer_depths = @import("../optics/layer_depths.zig");
 const phase_basis = @import("phase_basis.zig");
-const phase_timing = @import("phase_timing.zig");
+const CostTiming = @import("../instrumentation/cost_timing.zig");
 const phase_table = @import("../setup/phase_table.zig");
 const rows = @import("rows.zig");
 const Perturbation = @import("../instrumentation/sensitivity.zig");
@@ -51,7 +51,7 @@ const phase_odd_reciprocal = build_phase_odd_reciprocal: {
 // hot path                                                                                                    |
 //   solve.zig enters fillLayerReflectTransmitRowsWithBasis for every retained Fourier term. Each active       |
 //   layer builds a Z+/Z- phase kernel, fills single-scatter R/T, and may run layer doubling. The 12x10 route  |
-//   keeps the O2 A loop order and phase-timing buckets so trace output remains comparable to LABOS.           |
+//   keeps the O2 A loop order and cost-timing buckets so trace output remains comparable to LABOS.           |
 //                                                                                                             |
 // instrumentation                                                                                             |
 //   Trace counters count layer visits, skip reasons, phase-row work, doubled layers, q-series decisions, and  |
@@ -164,7 +164,7 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
     phase_row_cache: ?[]phase_basis.PhaseKernelRow,
     phase_row_valid: ?[]bool,
     rt_active: ?[]bool,
-    trace_phase_timing: ?phase_timing.Active,
+    stage_cost: ?CostTiming.Active,
 ) void {
     // fillLayerReflectTransmitRowsWithBasis ----------------------------------------------------------------- |
     // Build LABOS layer reflection/transmission rows for one Fourier term.                                    |
@@ -256,7 +256,7 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
             phase,
             rayleigh_phase_coefficient2,
             plm_basis,
-            trace_phase_timing,
+            stage_cost,
         );
 
         // instrumentation: trace counter: phase matrix build ------------------------------------------------ |
@@ -389,7 +389,7 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
                 fourier_index,
                 layer_index,
                 max_phase_index,
-                trace_phase_timing,
+                stage_cost,
             );
         }
 
@@ -510,13 +510,13 @@ fn buildLayerPhaseKernel(
     phase: phase_table.PhaseTable,
     rayleigh_phase_coefficient2: f64,
     plm_basis: *const phase_basis.FourierPlmBasis,
-    trace_phase_timing: ?phase_timing.Active,
+    stage_cost: ?CostTiming.Active,
 ) phase_basis.PhaseKernel {
     // buildLayerPhaseKernel --------------------------------------------------------------------------------- |
     // Build the weighted aerosol/Rayleigh phase kernel for one layer.                                         |
     // --------------------------------------------------------------------------------------------------------|
-    const trace_start = phase_timing.start(trace_phase_timing);
-    defer phase_timing.finish(trace_phase_timing, trace_start, "rt_layer_phase_matrix");
+    const trace_start = CostTiming.start(stage_cost);
+    defer CostTiming.finish(stage_cost, trace_start, "rt_layer_phase_matrix");
 
     const weights = layerPhaseWeights(layer, rayleigh_phase_coefficient2);
     return phase_basis.fillZplusZminFromWeightedPhaseLimited(
@@ -1042,7 +1042,7 @@ pub fn doubleLayer(
     fourier_index: usize,
     layer_index: usize,
     phase_max_index: usize,
-    trace_phase_timing: ?phase_timing.Active,
+    stage_cost: ?CostTiming.Active,
 ) void {
     // doubleLayer --------------------------------------------------------------------------------------------|
     // Dynamic-shape LABOS layer doubling for one layer and Fourier term.                                      |
@@ -1076,7 +1076,7 @@ pub fn doubleLayer(
             fourier_index,
             layer_index,
             phase_max_index,
-            trace_phase_timing,
+            stage_cost,
         );
     }
 
@@ -1157,7 +1157,7 @@ fn doubleLayer12x10(
     fourier_index: usize,
     layer_index: usize,
     phase_max_index: usize,
-    trace_phase_timing: ?phase_timing.Active,
+    stage_cost: ?CostTiming.Active,
 ) void {
     // doubleLayer12x10 ---------------------------------------------------------------------------------------|
     // Fixed 12x10 layer doubling for the O2 A LABOS route.                                                    |
@@ -1168,7 +1168,7 @@ fn doubleLayer12x10(
     //   keep constant loop bounds visible to the optimizer.                                                   |
     //                                                                                                         |
     // instrumentation                                                                                         |
-    //   Trace and phase_timing counters keep the `doDouble12x10` step and attenuation-square buckets.         |
+    //   Trace and cost_timing counters keep the `doDouble12x10` step and attenuation-square buckets.         |
     //   The per-step q-series and downstream-product gates live in doubleLayer12x10Step so the counters stay  |
     //   next to the fixed matrix kernels they measure.                                                        |
     // --------------------------------------------------------------------------------------------------------|
@@ -1183,7 +1183,7 @@ fn doubleLayer12x10(
 
     for (0..doubling_count) |doubling_step_index| {
         Trace.plotU("doubling_steps", 1);
-        phase_timing.count(trace_phase_timing, "fixed_doubling_steps", 1);
+        CostTiming.count(stage_cost, "fixed_doubling_steps", 1);
 
         doubleLayer12x10Step(
             thresholds,
@@ -1196,7 +1196,7 @@ fn doubleLayer12x10(
             layer_index,
             phase_max_index,
             doubling_step_index,
-            trace_phase_timing,
+            stage_cost,
         );
 
         const previous_r = current_r;
@@ -1371,10 +1371,10 @@ inline fn doubleLayer12x10Step(
     layer_index: usize,
     phase_max_index: usize,
     doubling_step_index: usize,
-    trace_phase_timing: ?phase_timing.Active,
+    stage_cost: ?CostTiming.Active,
 ) void {
     // doubleLayer12x10Step -----------------------------------------------------------------------------------|
-    // One fixed 12x10 doubling step with LABOS gate order and phase-timing buckets.                           |
+    // One fixed 12x10 doubling step with LABOS gate order and cost-timing buckets.                           |
     //                                                                                                         |
     //                                                                                                         |
     // math                                                                                                    |
@@ -1382,7 +1382,7 @@ inline fn doubleLayer12x10Step(
     //   retained or skipped product branch.                                                                   |
     //                                                                                                         |
     // instrumentation                                                                                         |
-    //   Trace counters keep matrix-kernel names. phase_timing buckets split q-series, R-D, T-U, and T-D       |
+    //   Trace counters keep matrix-kernel names. cost_timing buckets split q-series, R-D, T-U, and T-D       |
     //   work without changing the fixed update order. Perturbation and telemetry share the same Coord fields  |
     //   as the dynamic route so sensitivity sweeps can compare both kernels.                                  |
     // --------------------------------------------------------------------------------------------------------|
@@ -1412,7 +1412,7 @@ inline fn doubleLayer12x10Step(
     const D = choose_fixed_doubling_d: {
         if (q_is_zero) {
             Trace.plotU("doubling_qseries_skipped", 1);
-            phase_timing.count(trace_phase_timing, "fixed_qseries_skipped", 1);
+            CostTiming.count(stage_cost, "fixed_qseries_skipped", 1);
             break :choose_fixed_doubling_d current_t;
         }
 
@@ -1420,11 +1420,11 @@ inline fn doubleLayer12x10Step(
         Trace.plotU("matrix_qseries", 1);
         Trace.plotU("matrix_smul_q_product", 1);
         Trace.plotU("matrix_smul_add_semul3", 1);
-        phase_timing.count(trace_phase_timing, "fixed_qseries_retained", 1);
+        CostTiming.count(stage_cost, "fixed_qseries_retained", 1);
 
         var Q: rows.Mat = undefined;
-        const trace_start = phase_timing.start(trace_phase_timing);
-        defer phase_timing.finish(trace_phase_timing, trace_start, "fixed_qseries_work");
+        const trace_start = CostTiming.start(stage_cost);
+        defer CostTiming.finish(stage_cost, trace_start, "fixed_qseries_work");
 
         matrix12.qseriesKnownNonzeroProductInto(&Q, rows.max_stream_count, rows.max_gauss, current_r, current_r);
         matrix12.smulAddSemul3KnownRightTraceInto(
@@ -1457,13 +1457,13 @@ inline fn doubleLayer12x10Step(
 
     var U: rows.Mat = undefined;
     {
-        const trace_start = phase_timing.start(trace_phase_timing);
-        defer phase_timing.finish(trace_phase_timing, trace_start, "fixed_rd_update");
+        const trace_start = CostTiming.start(stage_cost);
+        defer CostTiming.finish(stage_cost, trace_start, "fixed_rd_update");
 
         if (rd_nonzero) {
             Trace.plotU("matrix_smul_rd_nonzero", 1);
             Trace.plotU("matrix_semul_add", 1);
-            phase_timing.count(trace_phase_timing, "fixed_rd_retained", 1);
+            CostTiming.count(stage_cost, "fixed_rd_retained", 1);
             matrix12.semulAddProductKnownNonzeroInto(
                 &U,
                 rows.max_stream_count,
@@ -1474,7 +1474,7 @@ inline fn doubleLayer12x10Step(
             );
         } else {
             Trace.plotU("matrix_semul", 1);
-            phase_timing.count(trace_phase_timing, "fixed_rd_skipped", 1);
+            CostTiming.count(stage_cost, "fixed_rd_skipped", 1);
             matrix12.semulInto(&U, rows.max_stream_count, current_r, attenuation);
         }
     }
@@ -1488,13 +1488,13 @@ inline fn doubleLayer12x10Step(
     );
 
     {
-        const trace_start = phase_timing.start(trace_phase_timing);
-        defer phase_timing.finish(trace_phase_timing, trace_start, "fixed_tu_update");
+        const trace_start = CostTiming.start(stage_cost);
+        defer CostTiming.finish(stage_cost, trace_start, "fixed_tu_update");
 
         if (tu_nonzero) {
             Trace.plotU("matrix_smul_tu_nonzero", 1);
             Trace.plotU("matrix_mat_add_esmul3", 1);
-            phase_timing.count(trace_phase_timing, "fixed_tu_retained", 1);
+            CostTiming.count(stage_cost, "fixed_tu_retained", 1);
             matrix12.matAddEsmul3ProductKnownNonzeroInto(
                 next_r,
                 rows.max_stream_count,
@@ -1506,7 +1506,7 @@ inline fn doubleLayer12x10Step(
             );
         } else {
             Trace.plotU("matrix_mat_add_esmul", 1);
-            phase_timing.count(trace_phase_timing, "fixed_tu_skipped", 1);
+            CostTiming.count(stage_cost, "fixed_tu_skipped", 1);
             matrix12.matAddEsmulInto(next_r, rows.max_stream_count, current_r, attenuation, &U);
         }
     }
@@ -1534,14 +1534,14 @@ inline fn doubleLayer12x10Step(
     );
 
     {
-        const trace_start = phase_timing.start(trace_phase_timing);
-        defer phase_timing.finish(trace_phase_timing, trace_start, "fixed_td_update");
+        const trace_start = CostTiming.start(stage_cost);
+        defer CostTiming.finish(stage_cost, trace_start, "fixed_td_update");
 
         if (q_is_zero) {
             if (td_nonzero) {
                 Trace.plotU("matrix_smul_td_nonzero", 1);
                 Trace.plotU("matrix_esmul_semul_add", 1);
-                phase_timing.count(trace_phase_timing, "fixed_td_retained", 1);
+                CostTiming.count(stage_cost, "fixed_td_retained", 1);
                 matrix12.esmulSemulSelfAddProductKnownNonzeroInto(
                     next_t,
                     rows.max_stream_count,
@@ -1551,14 +1551,14 @@ inline fn doubleLayer12x10Step(
                 );
             } else {
                 Trace.plotU("matrix_esmul_semul", 1);
-                phase_timing.count(trace_phase_timing, "fixed_td_skipped", 1);
+                CostTiming.count(stage_cost, "fixed_td_skipped", 1);
                 matrix12.esmulSemulSelfInto(next_t, rows.max_stream_count, attenuation, current_t);
             }
         } else {
             if (td_nonzero) {
                 Trace.plotU("matrix_smul_td_nonzero", 1);
                 Trace.plotU("matrix_esmul_semul_add", 1);
-                phase_timing.count(trace_phase_timing, "fixed_td_retained", 1);
+                CostTiming.count(stage_cost, "fixed_td_retained", 1);
                 matrix12.esmulSemulAddProductKnownNonzeroInto(
                     next_t,
                     rows.max_stream_count,
@@ -1569,7 +1569,7 @@ inline fn doubleLayer12x10Step(
                 );
             } else {
                 Trace.plotU("matrix_esmul_semul", 1);
-                phase_timing.count(trace_phase_timing, "fixed_td_skipped", 1);
+                CostTiming.count(stage_cost, "fixed_td_skipped", 1);
                 matrix12.esmulSemulInto(next_t, rows.max_stream_count, attenuation, D, current_t);
             }
         }
