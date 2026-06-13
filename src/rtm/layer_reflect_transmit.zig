@@ -51,7 +51,7 @@ const phase_odd_reciprocal = build_phase_odd_reciprocal: {
 // hot path                                                                                                    |
 //   solve.zig enters fillLayerReflectTransmitRowsWithBasis for every retained Fourier term. Each active       |
 //   layer builds a Z+/Z- phase kernel, fills single-scatter R/T, and may run layer doubling. The 12x10 route  |
-//   keeps the O2 A loop order and cost-timing buckets so trace output remains comparable to LABOS.           |
+//   keeps the O2 A loop order and cost-timing buckets so trace output remains comparable to LABOS.            |
 //                                                                                                             |
 // instrumentation                                                                                             |
 //   Trace counters count layer visits, skip reasons, phase-row work, doubled layers, q-series decisions, and  |
@@ -1168,7 +1168,7 @@ fn doubleLayer12x10(
     //   keep constant loop bounds visible to the optimizer.                                                   |
     //                                                                                                         |
     // instrumentation                                                                                         |
-    //   Trace and cost_timing counters keep the `doDouble12x10` step and attenuation-square buckets.         |
+    //   Trace and cost_timing counters keep the `doDouble12x10` step and attenuation-square buckets.          |
     //   The per-step q-series and downstream-product gates live in doubleLayer12x10Step so the counters stay  |
     //   next to the fixed matrix kernels they measure.                                                        |
     // --------------------------------------------------------------------------------------------------------|
@@ -1374,7 +1374,7 @@ inline fn doubleLayer12x10Step(
     stage_cost: ?CostTiming.Active,
 ) void {
     // doubleLayer12x10Step -----------------------------------------------------------------------------------|
-    // One fixed 12x10 doubling step with LABOS gate order and cost-timing buckets.                           |
+    // One fixed 12x10 doubling step with LABOS gate order and cost-timing buckets.                            |
     //                                                                                                         |
     //                                                                                                         |
     // math                                                                                                    |
@@ -1382,7 +1382,7 @@ inline fn doubleLayer12x10Step(
     //   retained or skipped product branch.                                                                   |
     //                                                                                                         |
     // instrumentation                                                                                         |
-    //   Trace counters keep matrix-kernel names. cost_timing buckets split q-series, R-D, T-U, and T-D       |
+    //   Trace counters keep matrix-kernel names. cost_timing buckets split q-series, R-D, T-U, and T-D        |
     //   work without changing the fixed update order. Perturbation and telemetry share the same Coord fields  |
     //   as the dynamic route so sensitivity sweeps can compare both kernels.                                  |
     // --------------------------------------------------------------------------------------------------------|

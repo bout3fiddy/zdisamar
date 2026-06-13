@@ -1,7 +1,7 @@
 const std = @import("std");
 const build_options = @import("build_options");
 
-// cost_timing.zig -------------------------------------------------------------------------------------------|
+// cost_timing.zig ------------------------------------------------------------------------------------------- |
 // Opt-in per-stage cost counters for trace builds. Product, test, telemetry, and perturbation builds keep the |
 // same source calls, but comptime enabled=false turns workspace cost state into a zero-size type and makes    |
 // start/finish/count return before any clock read, counter write, or worker merge.                            |
@@ -19,7 +19,7 @@ const build_options = @import("build_options");
 //   wrap elapsed-time or event totals.                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
-//   StageCost is 376 B: 19 elapsed-time Counter rows plus 9 event Count rows. WorkspaceState is 0 B normally |
+//   StageCost is 376 B: 19 elapsed-time Counter rows plus 9 event Count rows. WorkspaceState is 0 B normally  |
 //   and one 8 B optional StageCost pointer in the trace build. Active is a borrowed 8 B pointer handle        |
 //   threaded through measured calls; no cost-timing type owns heap storage.                                   |
 // ----------------------------------------------------------------------------------------------------------- |
@@ -163,14 +163,14 @@ pub const StageCost = struct {
     fixed_td_retained: Count = .{},
 
     pub fn reset(self: *StageCost) void {
-        // StageCost.reset -----------------------------------------------------------------------------------|
+        // StageCost.reset ----------------------------------------------------------------------------------- |
         // Clear one worker-local cost row before reuse by a trace run.                                        |
         // --------------------------------------------------------------------------------------------------- |
         self.* = .{};
     }
 
     pub fn merge(self: *StageCost, other: StageCost) void {
-        // StageCost.merge -----------------------------------------------------------------------------------|
+        // StageCost.merge ----------------------------------------------------------------------------------- |
         // Merge every stage bucket from one worker row into the retained run summary.                         |
         // --------------------------------------------------------------------------------------------------- |
         self.execute.merge(other.execute);
@@ -322,7 +322,7 @@ pub inline fn finish(active: ?Active, start_timestamp: ?i128, comptime field_nam
 
 pub inline fn count(active: ?Active, comptime field_name: []const u8, amount: u64) void {
     // count ------------------------------------------------------------------------------------------------- |
-    // Add one event count into a named Count bucket when cost timing is active.                              |
+    // Add one event count into a named Count bucket when cost timing is active.                               |
     // ------------------------------------------------------------------------------------------------------- |
 
     if (comptime !enabled) return;

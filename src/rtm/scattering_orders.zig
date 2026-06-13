@@ -87,14 +87,14 @@ pub const OrdersWorkArrays = struct {
     cost_timing_state: CostTiming.WorkspaceState = .{},
 
     pub fn setCostTiming(self: *OrdersWorkArrays, active: ?CostTiming.Active) void {
-        // OrdersWorkArrays.setCostTiming --------------------------------------------------------------------|
+        // OrdersWorkArrays.setCostTiming -------------------------------------------------------------------- |
         // Attach the worker-local cost row used by enabled cost-timing builds.                                |
         // ----------------------------------------------------------------------------------------------------|
         CostTiming.setActiveWorkspaceState(&self.cost_timing_state, active);
     }
 
     pub fn activeCostTiming(self: *OrdersWorkArrays) ?CostTiming.Active {
-        // OrdersWorkArrays.activeCostTiming -----------------------------------------------------------------|
+        // OrdersWorkArrays.activeCostTiming ----------------------------------------------------------------- |
         // Return the active cost row for order child stages.                                                  |
         // ----------------------------------------------------------------------------------------------------|
         return CostTiming.activeWorkspaceState(&self.cost_timing_state);

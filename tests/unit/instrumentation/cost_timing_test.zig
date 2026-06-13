@@ -71,7 +71,7 @@ test "disabled cost timing workspace calls are no-ops" {
 }
 
 fn expectStageCostOffsets() !void {
-    // expectStageCostOffsets --------------------------------------------------------------------------------|
+    // expectStageCostOffsets -------------------------------------------------------------------------------- |
     // Pin the cost-timing StageCost field order used by retained trace JSON.                                  |
     // --------------------------------------------------------------------------------------------------------|
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(cost_timing.StageCost, "execute"));
