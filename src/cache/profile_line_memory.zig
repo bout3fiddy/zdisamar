@@ -3,10 +3,12 @@ const std = @import("std");
 const readers = @import("../assets/readers.zig");
 const hashing = @import("../common/hashing.zig");
 const spline = @import("../common/math/spline.zig");
+const worker_partition = @import("../common/worker_partition.zig");
 const hitran_partition_tables = @import("../input/hitran_partition_tables.zig");
 const o2_case = @import("../input/o2_case.zig");
 const atmosphere_layers = @import("../setup/atmosphere_layers.zig");
 const line_tables = @import("../setup/line_tables.zig");
+const Trace = @import("../instrumentation/trace.zig");
 
 const Allocator = std.mem.Allocator;
 const hitran_reference_temperature_k = 296.0;
@@ -20,6 +22,10 @@ const min_spectroscopy_pressure_atm = 1.0e-12;
 const max_strong_line_sidecars: usize = 128;
 const max_spectroscopy_profile_nodes: usize = 64;
 const cutoff_grid_merge_tolerance_nm = 1.0e-9;
+const min_parallel_profile_line_state_count: usize = 4;
+const profile_line_state_chunk_size: usize = 2;
+const min_parallel_profile_cache_build_count: usize = 32;
+const profile_cache_build_chunk_size: usize = 8;
 
 // min_hitran_temperature_k -----------------------------------------------------------------------------------|
 // Old provenance: main:`src/input/reference/spectroscopy/physics_core.zig` clamps weak-line temperatures to   |
@@ -278,6 +284,8 @@ pub fn buildO2ProfileLineValuesForWavelengths(
         wavelengths_nm,
         &.{},
         true,
+        null,
+        preferredProfileLineWorkerCount(wavelengths_nm.len),
     );
 }
 
@@ -287,6 +295,8 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
     wavelengths_nm: []const f64,
     cutoff_grid_wavelengths_nm: []const f64,
     include_temperature_derivatives: bool,
+    pool: ?*std.Thread.Pool,
+    worker_count: usize,
 ) !ProfileLineValues {
     // buildO2ProfileLineValuesForWavelengthsWithCutoffGrid ---------------------------------------------------|
     // Build retained line values over a caller-provided exact wavelength list.                                |
@@ -384,109 +394,42 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
         layers.spectroscopy_profile.rows,
     );
     defer deinitWeakLineStates(allocator, support_total_weak_states);
-    const strong_states = try allocator.alloc(StrongLinePreparedState, profile_node_count);
+    const strong_states = try prepareLayerStrongLineStates(
+        allocator,
+        lines.strong_lines,
+        lines.relaxation_matrix,
+        layers.layer_temperatures_k,
+        layers.layer_pressures_hpa,
+    );
     defer allocator.free(strong_states);
-    for (0..profile_node_count) |profile_node_index| {
-        strong_states[profile_node_index] = prepareStrongLineState(
-            lines.strong_lines,
-            lines.relaxation_matrix,
-            layers.layer_temperatures_k[profile_node_index],
-            @max(layers.layer_pressures_hpa[profile_node_index] / 1013.25, min_spectroscopy_pressure_atm),
-        );
-    }
-    const support_strong_states = try allocator.alloc(StrongLinePreparedState, support_profile_node_count);
+    const support_strong_states = try prepareProfileStrongLineStates(
+        allocator,
+        lines.strong_lines,
+        lines.relaxation_matrix,
+        layers.spectroscopy_profile.rows,
+    );
     defer allocator.free(support_strong_states);
-    for (layers.spectroscopy_profile.rows, 0..) |profile_row, profile_node_index| {
-        support_strong_states[profile_node_index] = prepareStrongLineState(
-            lines.strong_lines,
-            lines.relaxation_matrix,
-            profile_row.temperature_k,
-            @max(profile_row.pressure_hpa / 1013.25, min_spectroscopy_pressure_atm),
-        );
-    }
 
-    for (wavelengths_nm, 0..) |wavelength_nm, wavelength_index| {
-        for (0..profile_node_count) |profile_node_index| {
-            const row_index = wavelength_index * profile_node_count + profile_node_index;
-            const pressure_hpa = layers.layer_pressures_hpa[profile_node_index];
-            const temperature_k = layers.layer_temperatures_k[profile_node_index];
-            const sigma = weakLineSigmaAtPrepared(
-                active_lines,
-                &weak_states[profile_node_index],
-                wavelength_nm,
-                runtime,
-            );
-
-            var d_sigma_d_temperature: f64 = 0.0;
-            if (include_temperature_derivatives) {
-                const upper_sigma = weakLineSigmaAtPreparedFiniteDifference(
-                    active_lines,
-                    &upper_weak_states[profile_node_index],
-                    wavelength_nm,
-                    runtime,
-                );
-                const lower_sigma = weakLineSigmaAtPreparedFiniteDifference(
-                    active_lines,
-                    &lower_weak_states[profile_node_index],
-                    wavelength_nm,
-                    runtime,
-                );
-                d_sigma_d_temperature = (upper_sigma - lower_sigma) / 1.0;
-            }
-
-            const total = totalSpectroscopyAt(
-                total_lines,
-                lines.strong_lines,
-                lines.relaxation_matrix,
-                wavelength_nm,
-                temperature_k,
-                pressure_hpa,
-                runtime,
-                &strong_states[profile_node_index],
-                &total_weak_states[profile_node_index],
-            );
-
-            values[row_index] = .{
-                .wavelength_nm = wavelength_nm,
-                .layer_index = @intCast(profile_node_index),
-                .interval_index_1based = layers.layer_interval_indices_1based[profile_node_index],
-                .pressure_hpa = pressure_hpa,
-                .temperature_k = temperature_k,
-                .weak_line_sigma_cm2_per_molecule = sigma,
-                .strong_line_sigma_cm2_per_molecule = total.strong_line_sigma_cm2_per_molecule,
-                .line_sigma_cm2_per_molecule = total.line_sigma_cm2_per_molecule,
-                .line_mixing_sigma_cm2_per_molecule = total.line_mixing_sigma_cm2_per_molecule,
-                .total_sigma_cm2_per_molecule = total.total_sigma_cm2_per_molecule,
-                .d_sigma_d_temperature_cm2_per_molecule_per_k = d_sigma_d_temperature,
-            };
-        }
-
-        for (layers.spectroscopy_profile.rows, 0..) |profile_row, profile_node_index| {
-            const support_row_index = wavelength_index * support_profile_node_count + profile_node_index;
-            const total = totalSpectroscopyAt(
-                total_lines,
-                lines.strong_lines,
-                lines.relaxation_matrix,
-                wavelength_nm,
-                profile_row.temperature_k,
-                profile_row.pressure_hpa,
-                runtime,
-                &support_strong_states[profile_node_index],
-                &support_total_weak_states[profile_node_index],
-            );
-
-            support_profile_values[support_row_index] = .{
-                .wavelength_nm = wavelength_nm,
-                .profile_node_index = @intCast(profile_node_index),
-                .altitude_km = profile_row.altitude_km,
-                .pressure_hpa = profile_row.pressure_hpa,
-                .temperature_k = profile_row.temperature_k,
-                .line_sigma_cm2_per_molecule = total.line_sigma_cm2_per_molecule,
-                .line_mixing_sigma_cm2_per_molecule = total.line_mixing_sigma_cm2_per_molecule,
-                .total_sigma_cm2_per_molecule = total.total_sigma_cm2_per_molecule,
-            };
-        }
-    }
+    try buildProfileLineValuesByWavelength(
+        pool,
+        worker_count,
+        wavelengths_nm,
+        layers,
+        lines,
+        runtime,
+        include_temperature_derivatives,
+        active_lines,
+        total_lines,
+        weak_states,
+        upper_weak_states,
+        lower_weak_states,
+        total_weak_states,
+        support_total_weak_states,
+        strong_states,
+        support_strong_states,
+        values,
+        support_profile_values,
+    );
 
     return .{
         .values = values,
@@ -496,6 +439,304 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
         .support_profile_node_count = support_profile_node_count,
         .reuse_stamp = profileLineReuseStamp(case.id, wavelengths_nm, include_temperature_derivatives),
     };
+}
+
+// ProfileLineBuildWorker -------------------------------------------------------------------------------------|
+// Site-local worker row for wavelength-major profile-line value construction.                                 |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// This row is not size-pinned because it carries many borrowed slice descriptors and only lives on the build  |
+// stack. No field owns heap storage; every output write is to a disjoint wavelength-major row range.          |
+//                                                                                                             |
+// memory groups                                                                                               |
+//   inputs     : exact wavelengths, layer/support thermodynamic rows, HITRAN/strong-line tables, runtime      |
+//   prepared   : weak-line and strong-line states prepared before workers start                               |
+//   outputs    : wavelength-major layer rows and spectroscopy-profile support rows                            |
+//   scheduling : static range, worker index                                                                   |
+const ProfileLineBuildWorker = struct {
+    wavelengths_nm: []const f64,
+    layer_pressures_hpa: []const f64,
+    layer_temperatures_k: []const f64,
+    layer_interval_indices_1based: []const u32,
+    support_profile_rows: []const readers.AtmosphereProfileRow,
+    runtime: RuntimeControls,
+    include_temperature_derivatives: bool,
+    active_lines: []const readers.O2LineAssetRow,
+    total_lines: []const readers.O2LineAssetRow,
+    strong_lines: []const readers.O2StrongLineAssetRow,
+    relaxation_matrix: readers.O2RelaxationMatrixAsset,
+    weak_states: []const WeakLinePreparedState,
+    upper_weak_states: []const WeakLinePreparedState,
+    lower_weak_states: []const WeakLinePreparedState,
+    total_weak_states: []const WeakLinePreparedState,
+    support_total_weak_states: []const WeakLinePreparedState,
+    strong_states: []const StrongLinePreparedState,
+    support_strong_states: []const StrongLinePreparedState,
+    values: []ProfileLineValue,
+    support_profile_values: []ProfileSupportLineValue,
+    start_index: usize,
+    end_index: usize,
+    worker_index: usize = 0,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// ProfileLineStateWorker -------------------------------------------------------------------------------------|
+// Site-local raw worker row for profile-node weak/strong line-state preparation.                              |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// This worker row is not size-pinned because it carries borrowed slices plus a relaxation-matrix view.        |
+// Workers perform no allocation; the caller allocates output row storage before launch and deinitializes it   |
+// after the later spectroscopy-value phase.                                                                   |
+//                                                                                                             |
+// memory groups                                                                                               |
+//   inputs     : thermodynamic node rows and parsed weak/strong-line tables                                   |
+//   outputs    : optional weak-line and strong-line prepared states, indexed by profile node                  |
+//   scheduling : shared chunk queue, worker index                                                             |
+const ProfileLineStateWorker = struct {
+    lines: []const readers.O2LineAssetRow,
+    strong_lines: []const readers.O2StrongLineAssetRow,
+    relaxation_matrix: readers.O2RelaxationMatrixAsset,
+    temperatures_k: []const f64,
+    pressures_hpa: []const f64,
+    temperature_offset_k: f64 = 0.0,
+    weak_states: ?[]WeakLinePreparedState = null,
+    strong_states: ?[]StrongLinePreparedState = null,
+    queue: *worker_partition.ChunkQueue,
+    worker_index: usize,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+fn buildProfileLineValuesByWavelength(
+    pool: ?*std.Thread.Pool,
+    worker_count: usize,
+    wavelengths_nm: []const f64,
+    layers: atmosphere_layers.LayerGrid,
+    lines: line_tables.O2LineTable,
+    runtime: RuntimeControls,
+    include_temperature_derivatives: bool,
+    active_lines: []const readers.O2LineAssetRow,
+    total_lines: []const readers.O2LineAssetRow,
+    weak_states: []const WeakLinePreparedState,
+    upper_weak_states: []const WeakLinePreparedState,
+    lower_weak_states: []const WeakLinePreparedState,
+    total_weak_states: []const WeakLinePreparedState,
+    support_total_weak_states: []const WeakLinePreparedState,
+    strong_states: []const StrongLinePreparedState,
+    support_strong_states: []const StrongLinePreparedState,
+    values: []ProfileLineValue,
+    support_profile_values: []ProfileSupportLineValue,
+) !void {
+    // buildProfileLineValuesByWavelength ---------------------------------------------------------------------|
+    // Fill retained profile-line values over exact wavelengths, partitioned exactly like the old profile      |
+    // spectroscopy cache build: threshold 32, static worker ranges, chunk size 8, and optional session pool.  |
+    //                                                                                                         |
+    // instrumentation                                                                                         |
+    //   `profile_spectroscopy_cache.build` measures this whole setup phase. Worker and chunk zones live in    |
+    //   `profileLineBuildWorkerMain` and retain the old trace names for profile-cache construction.           |
+    // --------------------------------------------------------------------------------------------------------|
+    if (worker_count == 0 or worker_count > worker_partition.max_workers) return error.InvalidShape;
+    if (wavelengths_nm.len == 0) return;
+
+    const profile_node_count = layers.layer_pressures_hpa.len;
+    const support_profile_node_count = layers.spectroscopy_profile.rows.len;
+    if (values.len != wavelengths_nm.len * profile_node_count) return error.InvalidShape;
+    if (support_profile_values.len != wavelengths_nm.len * support_profile_node_count) return error.InvalidShape;
+
+    // instrumentation: trace zone: profile spectroscopy cache build ----------------------------------------- |
+    // captures: profile-line cache build wall time and exact-wavelength count                                 |
+    // why: shows setup cost that WP4 compares before forward prefetch starts.                                 |
+    const zone = Trace.staticZone(@src(), "profile_spectroscopy_cache.build");
+    zone.value(@intCast(wavelengths_nm.len));
+    defer zone.end();
+    // end instrumentation: trace zone: profile spectroscopy cache build ------------------------------------- |
+
+    var worker_storage: [worker_partition.max_workers]ProfileLineBuildWorker = undefined;
+    for (0..worker_count) |worker_index| {
+        const range = worker_partition.staticRange(wavelengths_nm.len, worker_count, worker_index);
+        worker_storage[worker_index] = .{
+            .wavelengths_nm = wavelengths_nm,
+            .layer_pressures_hpa = layers.layer_pressures_hpa,
+            .layer_temperatures_k = layers.layer_temperatures_k,
+            .layer_interval_indices_1based = layers.layer_interval_indices_1based,
+            .support_profile_rows = layers.spectroscopy_profile.rows,
+            .runtime = runtime,
+            .include_temperature_derivatives = include_temperature_derivatives,
+            .active_lines = active_lines,
+            .total_lines = total_lines,
+            .strong_lines = lines.strong_lines,
+            .relaxation_matrix = lines.relaxation_matrix,
+            .weak_states = weak_states,
+            .upper_weak_states = upper_weak_states,
+            .lower_weak_states = lower_weak_states,
+            .total_weak_states = total_weak_states,
+            .support_total_weak_states = support_total_weak_states,
+            .strong_states = strong_states,
+            .support_strong_states = support_strong_states,
+            .values = values,
+            .support_profile_values = support_profile_values,
+            .start_index = range.start,
+            .end_index = range.end,
+            .worker_index = worker_index,
+        };
+    }
+
+    worker_partition.runWorkers(pool, worker_storage[0..worker_count], profileLineBuildWorkerMain);
+}
+
+fn profileLineBuildWorkerMain(worker: *ProfileLineBuildWorker) void {
+    // profileLineBuildWorkerMain -----------------------------------------------------------------------------|
+    // Fill one worker-owned range of wavelength-major profile-line rows.                                      |
+    // --------------------------------------------------------------------------------------------------------|
+    var thread_name_buffer: [64]u8 = undefined;
+    const thread_name = std.fmt.bufPrintZ(
+        &thread_name_buffer,
+        "zdisamar-profile-cache-{d}",
+        .{worker.worker_index},
+    ) catch "zdisamar-profile-cache";
+
+    // instrumentation: trace thread label: profile spectroscopy cache worker -------------------------------- |
+    // captures: profile-line build worker identity                                                            |
+    // why: makes parallel profile-cache lanes separable in timeline traces.                                   |
+    Trace.setThreadName(thread_name);
+    // end instrumentation: trace thread label: profile spectroscopy cache worker ---------------------------- |
+
+    // instrumentation: trace zone: profile spectroscopy cache worker ---------------------------------------- |
+    // captures: worker wall time for retained profile-line value construction                                 |
+    // why: exposes load balance across exact-wavelength profile-cache ranges.                                 |
+    const worker_zone = Trace.staticZone(@src(), "profile_spectroscopy_cache.worker");
+    worker_zone.value(@intCast(worker.worker_index));
+    defer worker_zone.end();
+    // end instrumentation: trace zone: profile spectroscopy cache worker ------------------------------------ |
+
+    var chunk_start = worker.start_index;
+    while (worker_partition.nextStaticChunk(
+        &chunk_start,
+        worker.end_index,
+        profile_cache_build_chunk_size,
+    )) |chunk| {
+
+        // instrumentation: trace zone: profile spectroscopy cache build chunk --------------------------------|
+        // captures: chunk wall time and exact-wavelength row count                                            |
+        // why: preserves the old chunk boundary while showing uneven wavelength-window costs.                 |
+        const chunk_zone = Trace.deepStaticZone(@src(), "profile_spectroscopy_cache.build");
+        chunk_zone.value(@intCast(chunk.len()));
+        defer chunk_zone.end();
+        // end instrumentation: trace zone: profile spectroscopy cache build chunk ----------------------------|
+
+        for (chunk.start..chunk.end) |wavelength_index| {
+            fillProfileLineValueRowsAtWavelength(worker, wavelength_index);
+            fillSupportProfileLineValueRowsAtWavelength(worker, wavelength_index);
+        }
+    }
+}
+
+fn fillProfileLineValueRowsAtWavelength(worker: *ProfileLineBuildWorker, wavelength_index: usize) void {
+    // fillProfileLineValueRowsAtWavelength -------------------------------------------------------------------|
+    // Fill all layer-node line-value rows for one exact wavelength.                                           |
+    // --------------------------------------------------------------------------------------------------------|
+    const wavelength_nm = worker.wavelengths_nm[wavelength_index];
+    for (worker.layer_pressures_hpa, worker.layer_temperatures_k, 0..) |pressure_hpa, temperature_k, node_index| {
+        const sigma = weakLineSigmaAtPrepared(
+            worker.active_lines,
+            &worker.weak_states[node_index],
+            wavelength_nm,
+            worker.runtime,
+        );
+
+        var d_sigma_d_temperature: f64 = 0.0;
+        if (worker.include_temperature_derivatives) {
+            const upper_sigma = weakLineSigmaAtPreparedFiniteDifference(
+                worker.active_lines,
+                &worker.upper_weak_states[node_index],
+                wavelength_nm,
+                worker.runtime,
+            );
+            const lower_sigma = weakLineSigmaAtPreparedFiniteDifference(
+                worker.active_lines,
+                &worker.lower_weak_states[node_index],
+                wavelength_nm,
+                worker.runtime,
+            );
+            d_sigma_d_temperature = (upper_sigma - lower_sigma) / 1.0;
+        }
+
+        const total = totalSpectroscopyAt(
+            worker.total_lines,
+            worker.strong_lines,
+            worker.relaxation_matrix,
+            wavelength_nm,
+            temperature_k,
+            pressure_hpa,
+            worker.runtime,
+            &worker.strong_states[node_index],
+            &worker.total_weak_states[node_index],
+        );
+        const row_index = wavelength_index * worker.layer_pressures_hpa.len + node_index;
+        worker.values[row_index] = .{
+            .wavelength_nm = wavelength_nm,
+            .layer_index = @intCast(node_index),
+            .interval_index_1based = worker.layer_interval_indices_1based[node_index],
+            .pressure_hpa = pressure_hpa,
+            .temperature_k = temperature_k,
+            .weak_line_sigma_cm2_per_molecule = sigma,
+            .strong_line_sigma_cm2_per_molecule = total.strong_line_sigma_cm2_per_molecule,
+            .line_sigma_cm2_per_molecule = total.line_sigma_cm2_per_molecule,
+            .line_mixing_sigma_cm2_per_molecule = total.line_mixing_sigma_cm2_per_molecule,
+            .total_sigma_cm2_per_molecule = total.total_sigma_cm2_per_molecule,
+            .d_sigma_d_temperature_cm2_per_molecule_per_k = d_sigma_d_temperature,
+        };
+    }
+}
+
+fn fillSupportProfileLineValueRowsAtWavelength(worker: *ProfileLineBuildWorker, wavelength_index: usize) void {
+    // fillSupportProfileLineValueRowsAtWavelength ------------------------------------------------------------|
+    // Fill all spectroscopy-profile support rows for one exact wavelength.                                    |
+    // --------------------------------------------------------------------------------------------------------|
+    const wavelength_nm = worker.wavelengths_nm[wavelength_index];
+    for (worker.support_profile_rows, 0..) |profile_row, node_index| {
+        const total = totalSpectroscopyAt(
+            worker.total_lines,
+            worker.strong_lines,
+            worker.relaxation_matrix,
+            wavelength_nm,
+            profile_row.temperature_k,
+            profile_row.pressure_hpa,
+            worker.runtime,
+            &worker.support_strong_states[node_index],
+            &worker.support_total_weak_states[node_index],
+        );
+        const row_index = wavelength_index * worker.support_profile_rows.len + node_index;
+        worker.support_profile_values[row_index] = .{
+            .wavelength_nm = wavelength_nm,
+            .profile_node_index = @intCast(node_index),
+            .altitude_km = profile_row.altitude_km,
+            .pressure_hpa = profile_row.pressure_hpa,
+            .temperature_k = profile_row.temperature_k,
+            .line_sigma_cm2_per_molecule = total.line_sigma_cm2_per_molecule,
+            .line_mixing_sigma_cm2_per_molecule = total.line_mixing_sigma_cm2_per_molecule,
+            .total_sigma_cm2_per_molecule = total.total_sigma_cm2_per_molecule,
+        };
+    }
+}
+
+fn preferredProfileLineWorkerCount(wavelength_count: usize) usize {
+    // preferredProfileLineWorkerCount ------------------------------------------------------------------------|
+    // Resolve the old profile-cache build worker-count policy for retained exact-wavelength spectroscopy.     |
+    // --------------------------------------------------------------------------------------------------------|
+    return worker_partition.preferredWorkerCount(
+        wavelength_count,
+        min_parallel_profile_cache_build_count,
+    );
+}
+
+fn preferredProfileLineStateWorkerCount(profile_count: usize) usize {
+    // preferredProfileLineStateWorkerCount -------------------------------------------------------------------|
+    // Resolve the old thermodynamic profile-line state worker-count policy.                                   |
+    // --------------------------------------------------------------------------------------------------------|
+    return worker_partition.preferredWorkerCount(
+        profile_count,
+        min_parallel_profile_line_state_count,
+    );
 }
 
 fn profileLineReuseStamp(
@@ -816,25 +1057,13 @@ fn prepareLayerWeakLineStates(
     // Prepare one weak-line state per layer profile node for the exact-route setup grid.                      |
     // --------------------------------------------------------------------------------------------------------|
     if (temperatures_k.len != pressures_hpa.len) return error.InvalidShape;
-
-    const states = try allocator.alloc(WeakLinePreparedState, temperatures_k.len);
-    var initialized_count: usize = 0;
-    errdefer {
-        for (states[0..initialized_count]) |*state| state.deinit(allocator);
-        allocator.free(states);
-    }
-
-    for (states, temperatures_k, pressures_hpa) |*state, temperature_k, pressure_hpa| {
-        state.* = try prepareWeakLineState(
-            allocator,
-            lines,
-            @max(temperature_k + temperature_offset_k, min_hitran_temperature_k),
-            @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm),
-        );
-        initialized_count += 1;
-    }
-
-    return states;
+    return prepareWeakLineStatesForRows(
+        allocator,
+        lines,
+        temperatures_k,
+        pressures_hpa,
+        temperature_offset_k,
+    );
 }
 
 fn prepareProfileWeakLineStates(
@@ -845,53 +1074,252 @@ fn prepareProfileWeakLineStates(
     // prepareProfileWeakLineStates ---------------------------------------------------------------------------|
     // Prepare one weak-line state per vendor spectroscopy-profile row for support-row interpolation.          |
     // --------------------------------------------------------------------------------------------------------|
-    const states = try allocator.alloc(WeakLinePreparedState, profile_rows.len);
+    if (profile_rows.len > max_spectroscopy_profile_nodes) return error.InvalidShape;
+
+    var temperatures_k: [max_spectroscopy_profile_nodes]f64 = undefined;
+    var pressures_hpa: [max_spectroscopy_profile_nodes]f64 = undefined;
+    for (profile_rows, 0..) |profile_row, index| {
+        temperatures_k[index] = profile_row.temperature_k;
+        pressures_hpa[index] = profile_row.pressure_hpa;
+    }
+
+    return prepareWeakLineStatesForRows(
+        allocator,
+        lines,
+        temperatures_k[0..profile_rows.len],
+        pressures_hpa[0..profile_rows.len],
+        0.0,
+    );
+}
+
+fn prepareWeakLineStatesForRows(
+    allocator: Allocator,
+    lines: []const readers.O2LineAssetRow,
+    temperatures_k: []const f64,
+    pressures_hpa: []const f64,
+    temperature_offset_k: f64,
+) ![]WeakLinePreparedState {
+    // prepareWeakLineStatesForRows ---------------------------------------------------------------------------|
+    // Allocate weak-line row storage serially, then fill thermodynamic state rows through raw worker chunks.  |
+    //                                                                                                         |
+    // allocation                                                                                              |
+    //   Each state owns one per-line slice. Allocation stays on the caller thread because the active          |
+    //   allocator may not be thread-safe; workers only write already-owned row storage.                       |
+    // --------------------------------------------------------------------------------------------------------|
+    if (temperatures_k.len != pressures_hpa.len) return error.InvalidShape;
+    const states = try allocator.alloc(WeakLinePreparedState, temperatures_k.len);
     var initialized_count: usize = 0;
     errdefer {
         for (states[0..initialized_count]) |*state| state.deinit(allocator);
         allocator.free(states);
     }
 
-    for (states, profile_rows) |*state, profile_row| {
-        state.* = try prepareWeakLineState(
-            allocator,
-            lines,
-            profile_row.temperature_k,
-            @max(profile_row.pressure_hpa / 1013.25, min_spectroscopy_pressure_atm),
-        );
+    for (states) |*state| {
+        state.* = .{
+            .line_count = lines.len,
+            .safe_temperature = 0.0,
+            .safe_pressure = 0.0,
+            .lines = try allocator.alloc(WeakLinePreparedLineState, lines.len),
+        };
         initialized_count += 1;
     }
 
+    fillProfileLineStates(
+        lines,
+        &.{},
+        emptyRelaxationMatrix(),
+        temperatures_k,
+        pressures_hpa,
+        temperature_offset_k,
+        states,
+        null,
+    );
     return states;
 }
 
-fn prepareWeakLineState(
+fn prepareLayerStrongLineStates(
     allocator: Allocator,
+    strong_lines: []const readers.O2StrongLineAssetRow,
+    relaxation_matrix: readers.O2RelaxationMatrixAsset,
+    temperatures_k: []const f64,
+    pressures_hpa: []const f64,
+) ![]StrongLinePreparedState {
+    // prepareLayerStrongLineStates ---------------------------------------------------------------------------|
+    // Prepare one strong-line ConvTP state per layer profile node through the old raw worker policy.          |
+    // --------------------------------------------------------------------------------------------------------|
+    if (temperatures_k.len != pressures_hpa.len) return error.InvalidShape;
+
+    const states = try allocator.alloc(StrongLinePreparedState, temperatures_k.len);
+    errdefer allocator.free(states);
+    fillProfileLineStates(
+        &.{},
+        strong_lines,
+        relaxation_matrix,
+        temperatures_k,
+        pressures_hpa,
+        0.0,
+        null,
+        states,
+    );
+    return states;
+}
+
+fn prepareProfileStrongLineStates(
+    allocator: Allocator,
+    strong_lines: []const readers.O2StrongLineAssetRow,
+    relaxation_matrix: readers.O2RelaxationMatrixAsset,
+    profile_rows: []const readers.AtmosphereProfileRow,
+) ![]StrongLinePreparedState {
+    // prepareProfileStrongLineStates -------------------------------------------------------------------------|
+    // Prepare one strong-line ConvTP state per spectroscopy-profile row through the old raw worker policy.    |
+    // --------------------------------------------------------------------------------------------------------|
+    if (profile_rows.len > max_spectroscopy_profile_nodes) return error.InvalidShape;
+
+    var temperatures_k: [max_spectroscopy_profile_nodes]f64 = undefined;
+    var pressures_hpa: [max_spectroscopy_profile_nodes]f64 = undefined;
+    for (profile_rows, 0..) |profile_row, index| {
+        temperatures_k[index] = profile_row.temperature_k;
+        pressures_hpa[index] = profile_row.pressure_hpa;
+    }
+
+    return prepareLayerStrongLineStates(
+        allocator,
+        strong_lines,
+        relaxation_matrix,
+        temperatures_k[0..profile_rows.len],
+        pressures_hpa[0..profile_rows.len],
+    );
+}
+
+fn fillProfileLineStates(
+    lines: []const readers.O2LineAssetRow,
+    strong_lines: []const readers.O2StrongLineAssetRow,
+    relaxation_matrix: readers.O2RelaxationMatrixAsset,
+    temperatures_k: []const f64,
+    pressures_hpa: []const f64,
+    temperature_offset_k: f64,
+    weak_states: ?[]WeakLinePreparedState,
+    strong_states: ?[]StrongLinePreparedState,
+) void {
+    // fillProfileLineStates ----------------------------------------------------------------------------------|
+    // Fill weak and/or strong line states with the old profile-line-state worker policy.                      |
+    //                                                                                                         |
+    // scheduling                                                                                              |
+    //   Threshold 4 and chunk size 2 match main:`state_build/absorbers.zig` for thermodynamic profile nodes.  |
+    //   This phase always uses raw spawn mode; the session pool is reserved for forward-miss cache builds.    |
+    // --------------------------------------------------------------------------------------------------------|
+    const row_count = temperatures_k.len;
+    if (row_count == 0) return;
+    std.debug.assert(pressures_hpa.len == row_count);
+    if (weak_states) |states| std.debug.assert(states.len == row_count);
+    if (strong_states) |states| std.debug.assert(states.len == row_count);
+
+    const worker_count = preferredProfileLineStateWorkerCount(row_count);
+    var queue = worker_partition.ChunkQueue.init(row_count, profile_line_state_chunk_size);
+    var worker_storage: [worker_partition.max_workers]ProfileLineStateWorker = undefined;
+    for (0..worker_count) |worker_index| {
+        worker_storage[worker_index] = .{
+            .lines = lines,
+            .strong_lines = strong_lines,
+            .relaxation_matrix = relaxation_matrix,
+            .temperatures_k = temperatures_k,
+            .pressures_hpa = pressures_hpa,
+            .temperature_offset_k = temperature_offset_k,
+            .weak_states = weak_states,
+            .strong_states = strong_states,
+            .queue = &queue,
+            .worker_index = worker_index,
+        };
+    }
+
+    worker_partition.runWorkers(null, worker_storage[0..worker_count], profileLineStateWorkerMain);
+}
+
+fn profileLineStateWorkerMain(worker: *ProfileLineStateWorker) void {
+    // profileLineStateWorkerMain -----------------------------------------------------------------------------|
+    // Fill weak/strong line states for raw-spawn profile-node chunks.                                         |
+    // --------------------------------------------------------------------------------------------------------|
+    var thread_name_buffer: [64]u8 = undefined;
+    const thread_name = std.fmt.bufPrintZ(
+        &thread_name_buffer,
+        "zdisamar-optics-{d}",
+        .{worker.worker_index},
+    ) catch "zdisamar-optics";
+
+    // instrumentation: trace thread label: profile line-state worker ---------------------------------------- |
+    // captures: profile-line state worker identity                                                            |
+    // why: makes parallel thermodynamic-state preparation lanes separable in timeline traces.                 |
+    Trace.setThreadName(thread_name);
+    // end instrumentation: trace thread label: profile line-state worker ------------------------------------ |
+
+    // instrumentation: trace zone: profile line-state worker ------------------------------------------------ |
+    // captures: profile-line state worker wall time                                                           |
+    // why: exposes work distribution across thermodynamic profile nodes.                                      |
+    const worker_zone = Trace.staticZone(@src(), "optical_prepare.profile_line_state_worker");
+    worker_zone.value(@intCast(worker.worker_index));
+    defer worker_zone.end();
+    // end instrumentation: trace zone: profile line-state worker -------------------------------------------- |
+
+    while (worker.queue.next()) |chunk| {
+
+        // instrumentation: trace zone: profile line-state chunk ----------------------------------------------|
+        // captures: profile-line state chunk wall time and row count                                          |
+        // why: preserves the old chunk boundary for P/T spectroscopy preparation.                             |
+        const chunk_zone = Trace.deepStaticZone(@src(), "optical_prepare.profile_line_state_chunk");
+        chunk_zone.value(@intCast(chunk.len()));
+        defer chunk_zone.end();
+        // end instrumentation: trace zone: profile line-state chunk ------------------------------------------|
+
+        fillProfileLineStateRows(worker, chunk.start, chunk.end);
+    }
+}
+
+fn fillProfileLineStateRows(worker: *ProfileLineStateWorker, start: usize, end: usize) void {
+    // fillProfileLineStateRows -------------------------------------------------------------------------------|
+    // Fill one contiguous thermodynamic profile-node range claimed by the raw worker queue.                   |
+    // --------------------------------------------------------------------------------------------------------|
+    for (start..end) |index| {
+        const pressure_atm = @max(worker.pressures_hpa[index] / 1013.25, min_spectroscopy_pressure_atm);
+        if (worker.weak_states) |states| {
+            fillWeakLineStateInto(
+                &states[index],
+                worker.lines,
+                @max(worker.temperatures_k[index] + worker.temperature_offset_k, min_hitran_temperature_k),
+                pressure_atm,
+            );
+        }
+        if (worker.strong_states) |states| {
+            states[index] = prepareStrongLineState(
+                worker.strong_lines,
+                worker.relaxation_matrix,
+                worker.temperatures_k[index],
+                pressure_atm,
+            );
+        }
+    }
+}
+
+fn fillWeakLineStateInto(
+    state: *WeakLinePreparedState,
     lines: []const readers.O2LineAssetRow,
     temperature_k: f64,
     pressure_atm: f64,
-) !WeakLinePreparedState {
-    // prepareWeakLineState -----------------------------------------------------------------------------------|
-    // Prepare old-route weak-line constants for one thermodynamic point.                                      |
+) void {
+    // fillWeakLineStateInto ----------------------------------------------------------------------------------|
+    // Fill old-route weak-line constants for one already-allocated thermodynamic state row.                   |
     //                                                                                                         |
     // provenance                                                                                              |
     //   Ports main:`src/input/reference/spectroscopy/physics_core.zig` prepareWeakLinePreparedLineState.      |
     // --------------------------------------------------------------------------------------------------------|
     const safe_temperature = @max(temperature_k, min_hitran_temperature_k);
     const safe_pressure = @max(pressure_atm, min_spectroscopy_pressure_atm);
-    const prepared_lines = try allocator.alloc(WeakLinePreparedLineState, lines.len);
-    errdefer allocator.free(prepared_lines);
-
-    for (lines, prepared_lines) |line, *prepared_line| {
+    std.debug.assert(state.lines.len == lines.len);
+    state.line_count = lines.len;
+    state.safe_temperature = safe_temperature;
+    state.safe_pressure = safe_pressure;
+    for (lines, state.lines) |line, *prepared_line| {
         prepared_line.* = prepareWeakLinePreparedLineState(line, safe_temperature, safe_pressure);
     }
-
-    return .{
-        .line_count = lines.len,
-        .safe_temperature = safe_temperature,
-        .safe_pressure = safe_pressure,
-        .lines = prepared_lines,
-    };
 }
 
 fn deinitWeakLineStates(allocator: Allocator, states: []WeakLinePreparedState) void {
@@ -900,6 +1328,13 @@ fn deinitWeakLineStates(allocator: Allocator, states: []WeakLinePreparedState) v
     // --------------------------------------------------------------------------------------------------------|
     for (states) |*state| state.deinit(allocator);
     allocator.free(states);
+}
+
+fn emptyRelaxationMatrix() readers.O2RelaxationMatrixAsset {
+    // emptyRelaxationMatrix ----------------------------------------------------------------------------------|
+    // Provide an unused, well-formed relaxation-matrix view for weak-only profile-line state workers.         |
+    // --------------------------------------------------------------------------------------------------------|
+    return .{ .line_count = 0, .wt0 = &.{}, .bw = &.{} };
 }
 
 fn prepareWeakLinePreparedLineState(

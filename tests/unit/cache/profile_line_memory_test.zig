@@ -223,6 +223,45 @@ test "ProfileLineValues preserve caller-provided exact wavelength order" {
     try std.testing.expectApproxEqRel(expected_sigma, support_sigma[support_index], 1.0e-12);
 }
 
+test "ProfileLineValues parallel wavelength build matches serial rows" {
+    if (builtin.mode == .Debug) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const wavelengths_nm = [_]f64{ 758.0, 760.0, 765.0, 767.0, 776.0 };
+
+    var serial = try internal.cache.profile_line_memory.buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
+        allocator,
+        internal.input.defaults.referenceCase(),
+        wavelengths_nm[0..],
+        wavelengths_nm[0..],
+        true,
+        null,
+        1,
+    );
+    defer serial.deinit(allocator);
+
+    var parallel = try internal.cache.profile_line_memory.buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
+        allocator,
+        internal.input.defaults.referenceCase(),
+        wavelengths_nm[0..],
+        wavelengths_nm[0..],
+        true,
+        null,
+        2,
+    );
+    defer parallel.deinit(allocator);
+
+    try std.testing.expectEqual(serial.wavelength_count, parallel.wavelength_count);
+    try std.testing.expectEqual(serial.profile_node_count, parallel.profile_node_count);
+    try std.testing.expectEqual(serial.support_profile_node_count, parallel.support_profile_node_count);
+    try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(serial.values), std.mem.sliceAsBytes(parallel.values));
+    try std.testing.expectEqualSlices(
+        u8,
+        std.mem.sliceAsBytes(serial.support_profile_values),
+        std.mem.sliceAsBytes(parallel.support_profile_values),
+    );
+}
+
 test "ProfileLineValues fill support-row sigma from old atmospheric-budget evidence" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
 

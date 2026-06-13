@@ -322,6 +322,8 @@ fn prepareSessionRows(
     for (owned_wavelengths.wavelengths, exact_wavelengths) |row, *wavelength_nm| {
         wavelength_nm.* = row.wavelength_nm;
     }
+    const worker_count = spectrum_run.preferredRadianceWorkerCount(dense_count);
+    const worker_pool = session.worker_pool.poolForWorkerCount(allocator, worker_count);
     const needs_temperature_derivatives = solve_config.derivative_mode != .none;
     const profile_stamp = profileLineReuseStamp(
         prepared.case.id,
@@ -343,6 +345,8 @@ fn prepareSessionRows(
                 exact_wavelengths,
                 exact_wavelengths,
                 needs_temperature_derivatives,
+                worker_pool,
+                worker_count,
             );
     }
 
@@ -350,7 +354,6 @@ fn prepareSessionRows(
     const support_count = prepared.tables.layers.support_mid_altitudes_km.len;
     const phase_max_index = @max(prepared.tables.phase.aerosol_phase_max_index, @as(usize, 2));
     const fourier_max_index = solve_config.controls.performance_thresholds.cappedFourierMax(phase_max_index);
-    const worker_count = spectrum_run.preferredRadianceWorkerCount(dense_count);
     try session.transport_workers.ensureWorkerCount(allocator, worker_count);
     for (session.transport_workers.workers[0..worker_count]) |*worker_memory| {
         try worker_memory.ensureOpticsCapacity(allocator, support_count, layer_count);
