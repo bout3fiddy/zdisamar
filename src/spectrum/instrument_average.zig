@@ -15,7 +15,7 @@ pub const Error = error{
 // Product-grid radiance, irradiance, and reflectance assembly helpers.                                        |
 //                                                                                                             |
 // provenance                                                                                                  |
-//   `assembleReflectance` ports the old final conversion from main:                                           |
+//   `assembleReflectanceResults` ports the old final conversion from main:                                    |
 //   `src/forward_model/instrument_grid/grid_calculation/simulate.zig` `assembleReflectance`.                  |
 //                                                                                                             |
 // boundary                                                                                                    |
@@ -94,53 +94,6 @@ pub const ReflectanceAssemblySummary = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn applySignal(calibration: Calibration, signal: []const f64, output: []f64) Error!void {
-    // applySignal ------------------------------------------------------------------------------------------- |
-    // Apply gain, offset, and stray-light mixing to one sampled channel.                                      |
-    //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/forward_model/instrument_grid/spectral_math/calibration.zig` `applySignal`.           |
-    //                                                                                                         |
-    // math                                                                                                    |
-    //   mean     = sum(signal) / N                                                                            |
-    //   mixed_i  = signal_i + stray_light * (mean - signal_i)                                                 |
-    //   output_i = gain * mixed_i + offset                                                                    |
-    // --------------------------------------------------------------------------------------------------------|
-    if (signal.len != output.len) return error.ShapeMismatch;
-    if (signal.len == 0) return;
-
-    const mean_signal = mean(signal);
-    for (signal, output) |sample, *slot| {
-        const stray_mixed = sample + calibration.stray_light * (mean_signal - sample);
-        slot.* = calibration.gain * stray_mixed + calibration.offset;
-    }
-}
-
-pub fn applySignalDerivative(calibration: Calibration, signal: []const f64, output: []f64) Error!void {
-    // applySignalDerivative --------------------------------------------------------------------------------- |
-    // Apply the linear channel calibration terms to one derivative column.                                    |
-    //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/forward_model/instrument_grid/spectral_math/calibration.zig`                          |
-    //   `applySignalDerivative`.                                                                              |
-    //                                                                                                         |
-    // math                                                                                                    |
-    //   mean_dx      = sum(dsignal_i/dx) / N                                                                  |
-    //   doutput_i/dx = gain * (dsignal_i/dx + stray_light * (mean_dx - dsignal_i/dx))                         |
-    //                                                                                                         |
-    // branch reason                                                                                           |
-    //   The additive offset drops out because d(offset)/dx = 0.                                               |
-    // --------------------------------------------------------------------------------------------------------|
-    if (signal.len != output.len) return error.ShapeMismatch;
-    if (signal.len == 0) return;
-
-    const mean_signal = mean(signal);
-    for (signal, output) |sample, *slot| {
-        const stray_mixed = sample + calibration.stray_light * (mean_signal - sample);
-        slot.* = calibration.gain * stray_mixed;
-    }
-}
-
 pub fn applySlitConvolution(signal: []const f64, kernel: []const f64, output: []f64) Error!void {
     // applySlitConvolution ---------------------------------------------------------------------------------- |
     // Apply the legacy slit convolution used when instrument integration has not already averaged a channel.  |
@@ -208,7 +161,15 @@ pub fn postprocessSignal(
     } else {
         try applySlitConvolution(raw_signal, slit_kernel, out_signal);
     }
-    try applySignal(calibration, out_signal, out_signal);
+    if (out_signal.len == 0) return;
+
+    var signal_sum: f64 = 0.0;
+    for (out_signal) |sample| signal_sum += sample;
+    const mean_signal = signal_sum / @as(f64, @floatFromInt(out_signal.len));
+    for (out_signal) |*sample| {
+        const stray_mixed = sample.* + calibration.stray_light * (mean_signal - sample.*);
+        sample.* = calibration.gain * stray_mixed + calibration.offset;
+    }
 }
 
 pub fn postprocessRadianceResults(
@@ -277,69 +238,6 @@ pub fn postprocessRadianceResults(
         }
         applyJacobianCalibration(calibration, out_rows, state_index);
     }
-}
-
-pub fn assembleReflectance(
-    solar_cosine: f64,
-    radiance: []const f64,
-    irradiance: []const f64,
-    out_reflectance: []f64,
-) Error!ReflectanceAssemblySummary {
-    // assembleReflectance ----------------------------------------------------------------------------------- |
-    // Convert calibrated radiance and irradiance into top-of-atmosphere reflectance for each output sample.   |
-    //                                                                                                         |
-    // math                                                                                                    |
-    //   rho_i = pi * L_i / max(E0_i * mu0, 1e-9)                                                              |
-    //                                                                                                         |
-    // relation to forward scaling                                                                             |
-    //   The forward radiance prefetch uses L = rho * mu0 * E0 / pi. This step inverts that convention after   |
-    //   instrument sampling has produced calibrated radiance and irradiance on the product grid.              |
-    //                                                                                                         |
-    // numerical guard                                                                                         |
-    //   The `1e-9` floor prevents Inf/NaN reflectance when irradiance is near zero. Telemetry reports how     |
-    //   often the raw denominator crossed the guard.                                                          |
-    // --------------------------------------------------------------------------------------------------------|
-    if (radiance.len != irradiance.len or radiance.len != out_reflectance.len) return error.ShapeMismatch;
-    if (!std.math.isFinite(solar_cosine)) return error.InvalidSolarCosine;
-
-    var min_denominator: f64 = 0.0;
-    var max_reflectance: f64 = 0.0;
-    if (radiance.len != 0) {
-        min_denominator = std.math.inf(f64);
-        max_reflectance = -std.math.inf(f64);
-    }
-
-    var summary = ReflectanceAssemblySummary{
-        .sample_count = radiance.len,
-        .min_denominator = min_denominator,
-        .max_reflectance = max_reflectance,
-    };
-
-    for (radiance, irradiance, out_reflectance) |radiance_value, irradiance_value, *reflectance| {
-        const denominator_raw = irradiance_value * solar_cosine;
-        const denominator = @max(denominator_raw, reflectance_denominator_floor);
-        reflectance.* = (radiance_value * std.math.pi) / denominator;
-
-        if (denominator_raw <= reflectance_denominator_floor) summary.denominator_clamp_count += 1;
-        summary.min_denominator = @min(summary.min_denominator, denominator_raw);
-        summary.max_reflectance = @max(summary.max_reflectance, reflectance.*);
-        summary.radiance_sum += radiance_value;
-        summary.irradiance_sum += irradiance_value;
-        summary.reflectance_sum += reflectance.*;
-    }
-
-    // instrumentation: calculation telemetry: reflectance assembly -----------------------------------------  |
-    // captures: denominator clamps and final reflectance extrema                                              |
-    // why: preserves old simulate.reflectanceAssembly telemetry for numerical guard analysis.                 |
-    telemetry.reflectanceAssembly(
-        summary.sample_count,
-        summary.denominator_clamp_count,
-        summary.min_denominator,
-        summary.max_reflectance,
-    );
-    // end instrumentation: calculation telemetry: reflectance assembly -------------------------------------  |
-
-    return summary;
 }
 
 pub fn assembleReflectanceResults(
@@ -458,15 +356,6 @@ fn emitReflectanceTelemetry(summary: ReflectanceAssemblySummary) void {
     );
     // end instrumentation: calculation telemetry: reflectance assembly -------------------------------------  |
 
-}
-
-fn mean(values: []const f64) f64 {
-    // mean -------------------------------------------------------------------------------------------------- |
-    // Return the arithmetic mean of a non-empty scalar row.                                                   |
-    // --------------------------------------------------------------------------------------------------------|
-    var total: f64 = 0.0;
-    for (values) |value| total += value;
-    return total / @as(f64, @floatFromInt(values.len));
 }
 
 fn kernelSum(kernel: []const f64) f64 {

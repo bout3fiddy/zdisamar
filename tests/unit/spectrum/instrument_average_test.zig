@@ -7,43 +7,6 @@ const jacobian_states = internal.transport.jacobian_states;
 const instrument_average = internal.spectrum.instrument_average;
 const radiance_results = internal.spectrum.radiance_results;
 
-test "applySignal keeps old gain offset and stray-light calibration math" {
-    const signal = [_]f64{ 2.0, 4.0, 10.0 };
-    var output = [_]f64{0.0} ** signal.len;
-    const calibration = instrument_average.Calibration{
-        .gain = 1.5,
-        .offset = -0.25,
-        .stray_light = 0.2,
-    };
-
-    try instrument_average.applySignal(calibration, signal[0..], output[0..]);
-
-    const signal_mean = (2.0 + 4.0 + 10.0) / 3.0;
-    for (signal, output) |sample, actual| {
-        const expected = calibration.gain * (sample + calibration.stray_light * (signal_mean - sample)) +
-            calibration.offset;
-        try std.testing.expectApproxEqAbs(expected, actual, 1.0e-15);
-    }
-}
-
-test "applySignalDerivative omits additive offset and keeps stray-light derivative coupling" {
-    const derivative = [_]f64{ -1.0, 3.0, 4.0 };
-    var output = [_]f64{0.0} ** derivative.len;
-    const calibration = instrument_average.Calibration{
-        .gain = 2.0,
-        .offset = 100.0,
-        .stray_light = 0.25,
-    };
-
-    try instrument_average.applySignalDerivative(calibration, derivative[0..], output[0..]);
-
-    const derivative_mean = (-1.0 + 3.0 + 4.0) / 3.0;
-    for (derivative, output) |sample, actual| {
-        const expected = calibration.gain * (sample + calibration.stray_light * (derivative_mean - sample));
-        try std.testing.expectApproxEqAbs(expected, actual, 1.0e-15);
-    }
-}
-
 test "applySlitConvolution uses clipped boundary normalization" {
     const signal = [_]f64{ 2.0, 4.0, 8.0, 16.0 };
     const kernel = [_]f64{ 1.0, 2.0, 1.0 };
@@ -203,17 +166,22 @@ test "postprocessRadianceResults rejects in-place non-integrated convolution" {
     );
 }
 
-test "assembleReflectance converts calibrated radiance and irradiance to reflectance" {
+test "assembleReflectanceResults converts calibrated radiance and irradiance to reflectance" {
     const solar_cosine = 0.5;
-    const radiance = [_]f64{ 2.0, 4.0 };
+    const radiance = [_]radiance_results.RadianceResult{
+        .{ .radiance = 2.0 },
+        .{ .radiance = 4.0 },
+    };
     const irradiance = [_]f64{ 8.0, 16.0 };
     var reflectance = [_]f64{0.0} ** 2;
 
-    const summary = try instrument_average.assembleReflectance(
+    const summary = try instrument_average.assembleReflectanceResults(
+        .{},
         solar_cosine,
         radiance[0..],
         irradiance[0..],
         reflectance[0..],
+        &.{},
     );
 
     try std.testing.expectApproxEqAbs(std.math.pi * 2.0 / 4.0, reflectance[0], 1.0e-15);
@@ -226,16 +194,21 @@ test "assembleReflectance converts calibrated radiance and irradiance to reflect
     try std.testing.expectApproxEqAbs(reflectance[1], summary.max_reflectance, 0.0);
 }
 
-test "assembleReflectance keeps old denominator floor and clamp summary" {
-    const radiance = [_]f64{ 1.0, 2.0 };
+test "assembleReflectanceResults keeps old denominator floor and clamp summary" {
+    const radiance = [_]radiance_results.RadianceResult{
+        .{ .radiance = 1.0 },
+        .{ .radiance = 2.0 },
+    };
     const irradiance = [_]f64{ 0.0, 2.0e-9 };
     var reflectance = [_]f64{0.0} ** 2;
 
-    const summary = try instrument_average.assembleReflectance(
+    const summary = try instrument_average.assembleReflectanceResults(
+        .{},
         0.5,
         radiance[0..],
         irradiance[0..],
         reflectance[0..],
+        &.{},
     );
 
     try std.testing.expectApproxEqAbs(
@@ -344,15 +317,18 @@ test "assembleReflectanceResults zeros provided Jacobian rows when derivative mo
     try std.testing.expectEqual(jacobian_states.zero(), summary.jacobian_sum);
 }
 
-test "assembleReflectance returns zero extrema for empty spectra" {
-    const empty = [_]f64{};
+test "assembleReflectanceResults returns zero extrema for empty spectra" {
+    const empty_radiance = [_]radiance_results.RadianceResult{};
+    const empty_irradiance = [_]f64{};
     var reflectance = [_]f64{};
 
-    const summary = try instrument_average.assembleReflectance(
+    const summary = try instrument_average.assembleReflectanceResults(
+        .{},
         1.0,
-        empty[0..],
-        empty[0..],
+        empty_radiance[0..],
+        empty_irradiance[0..],
         reflectance[0..],
+        &.{},
     );
 
     try std.testing.expectEqual(@as(usize, 0), summary.sample_count);
@@ -361,18 +337,18 @@ test "assembleReflectance returns zero extrema for empty spectra" {
     try std.testing.expectApproxEqAbs(0.0, summary.max_reflectance, 0.0);
 }
 
-test "assembleReflectance rejects invalid shapes and solar cosine" {
-    const one = [_]f64{1.0};
+test "assembleReflectanceResults rejects invalid shapes and solar cosine" {
+    const one = [_]radiance_results.RadianceResult{.{ .radiance = 1.0 }};
     const two = [_]f64{ 1.0, 2.0 };
     var out = [_]f64{0.0};
 
     try std.testing.expectError(
         error.ShapeMismatch,
-        instrument_average.assembleReflectance(1.0, one[0..], two[0..], out[0..]),
+        instrument_average.assembleReflectanceResults(.{}, 1.0, one[0..], two[0..], out[0..], &.{}),
     );
     try std.testing.expectError(
         error.InvalidSolarCosine,
-        instrument_average.assembleReflectance(std.math.nan(f64), one[0..], one[0..], out[0..]),
+        instrument_average.assembleReflectanceResults(.{}, std.math.nan(f64), one[0..], two[0..1], out[0..], &.{}),
     );
 }
 

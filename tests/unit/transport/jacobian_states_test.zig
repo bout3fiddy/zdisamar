@@ -15,14 +15,6 @@ test "jacobian state masks preserve old fixed state order" {
     try std.testing.expect(jacobian.includes(active_mask, .surface_albedo));
     try std.testing.expect(!jacobian.includes(active_mask, .aerosol_optical_depth));
     try std.testing.expectEqual(@as(usize, 2), jacobian.activeStateCount(active_mask));
-    try std.testing.expectEqual(
-        @as(?usize, 1),
-        jacobian.activeStateIndex(active_mask, .aerosol_layer_mid_pressure_hpa),
-    );
-    try std.testing.expectEqual(
-        @as(?jacobian.State, .aerosol_layer_mid_pressure_hpa),
-        jacobian.activeStateAt(active_mask, 1),
-    );
 }
 
 test "jacobian masked vector helpers leave inactive lanes untouched" {

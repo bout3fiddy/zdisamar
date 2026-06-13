@@ -6,7 +6,6 @@ const radiance_memory = @import("radiance_memory.zig");
 const solar_irradiance_memory = @import("solar_irradiance_memory.zig");
 const spectrum_memory = @import("spectrum_memory.zig");
 const transport_worker_memory = @import("transport_worker_memory.zig");
-const weak_line_cutoff_memory = @import("weak_line_cutoff_memory.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -26,8 +25,8 @@ const Allocator = std.mem.Allocator;
 // Top-level allocation owner for reusable O2 A setup, spectrum, solar, workers, and transport work.           |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// Debug build: size 432 B (0.422 KiB), align 8                                                                |
-// optimized  : size 400 B (0.391 KiB), align 8                                                                |
+// Debug build: size 400 B (0.391 KiB), align 8                                                                |
+// optimized  : size 368 B (0.359 KiB), align 8                                                                |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0.. 47] spectrum          : SpectrumMemory                                                               |
@@ -39,8 +38,6 @@ const Allocator = std.mem.Allocator;
 // [240..351] worker_pool       : ForwardWorkerPool in optimized builds                                        |
 // [384..399] transport_workers : TransportWorkerMemoryCollection in Debug                                     |
 // [352..367] transport_workers : TransportWorkerMemoryCollection in optimized builds                          |
-// [400..431] weak_line_cutoff  : WeakLineCutoffMemory in Debug                                                |
-// [368..399] weak_line_cutoff  : WeakLineCutoffMemory in optimized builds                                     |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Child memory owners release their own heap storage through deinit. Worker-local transport buffers live    |
@@ -52,7 +49,6 @@ pub const O2SessionMemory = struct {
     solar_irradiance: solar_irradiance_memory.SolarIrradianceMemory,
     worker_pool: forward_worker_pool.ForwardWorkerPool = .{},
     transport_workers: transport_worker_memory.TransportWorkerMemoryCollection = .{},
-    weak_line_cutoff: weak_line_cutoff_memory.WeakLineCutoffMemory = .{},
 
     pub fn init(allocator: Allocator) O2SessionMemory {
         // O2SessionMemory.init ------------------------------------------------------------------------------ |
@@ -67,7 +63,6 @@ pub const O2SessionMemory = struct {
         // O2SessionMemory.deinit ---------------------------------------------------------------------------- |
         // Release every child memory owner in reverse hot-path dependency order.                              |
         // ----------------------------------------------------------------------------------------------------|
-        self.weak_line_cutoff.deinit(allocator);
         self.transport_workers.deinit(allocator);
         self.worker_pool.deinit();
         self.solar_irradiance.deinit();
@@ -80,6 +75,6 @@ pub const O2SessionMemory = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 comptime {
-    const expected_size: usize = if (@import("builtin").mode == .Debug) 432 else 400;
+    const expected_size: usize = if (@import("builtin").mode == .Debug) 400 else 368;
     std.debug.assert(@sizeOf(O2SessionMemory) == expected_size);
 }

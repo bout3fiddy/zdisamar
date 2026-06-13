@@ -119,7 +119,6 @@ pub const cache = struct {
     pub const solar_irradiance_memory = @import("cache/solar_irradiance_memory.zig");
     pub const spectrum_memory = @import("cache/spectrum_memory.zig");
     pub const transport_worker_memory = @import("cache/transport_worker_memory.zig");
-    pub const weak_line_cutoff_memory = @import("cache/weak_line_cutoff_memory.zig");
 };
 // ------------------------------------------------------------------------------------------------------------|
 

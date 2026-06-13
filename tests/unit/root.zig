@@ -20,7 +20,6 @@ test {
     _ = @import("cache/solar_irradiance_memory_test.zig");
     _ = @import("cache/spectrum_memory_test.zig");
     _ = @import("cache/transport_worker_memory_test.zig");
-    _ = @import("cache/weak_line_cutoff_memory_test.zig");
     _ = @import("optics/curved_sun_path_test.zig");
     _ = @import("optics/layer_depths_test.zig");
     _ = @import("optics/source_levels_test.zig");

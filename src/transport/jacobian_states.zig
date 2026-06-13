@@ -85,41 +85,6 @@ pub fn activeStateCount(mask: StateMask) usize {
     return count;
 }
 
-pub fn activeStateIndex(mask: StateMask, state: State) ?usize {
-    // activeStateIndex -------------------------------------------------------------------------------------- |
-    // Return the compact active-column index for one state, or null when the mask excludes it.                |
-    // --------------------------------------------------------------------------------------------------------|
-    const active_mask = sanitizedMask(mask);
-    const target_index = stateIndex(state);
-    var active_index: usize = 0;
-
-    for (0..state_count) |index| {
-        if ((active_mask & (@as(StateMask, 1) << @intCast(index))) == 0) continue;
-        if (index == target_index) return active_index;
-
-        active_index += 1;
-    }
-
-    return null;
-}
-
-pub fn activeStateAt(mask: StateMask, active_index: usize) ?State {
-    // activeStateAt ----------------------------------------------------------------------------------------- |
-    // Map a compact active-column index back to the fixed state enum.                                         |
-    // --------------------------------------------------------------------------------------------------------|
-    const active_mask = sanitizedMask(mask);
-    var current: usize = 0;
-
-    for (0..state_count) |index| {
-        if ((active_mask & (@as(StateMask, 1) << @intCast(index))) == 0) continue;
-        if (current == active_index) return @enumFromInt(index);
-
-        current += 1;
-    }
-
-    return null;
-}
-
 pub fn get(vector: Vector, state: State) f64 {
     // get --------------------------------------------------------------------------------------------------- |
     // Read one derivative lane by fixed state.                                                                |

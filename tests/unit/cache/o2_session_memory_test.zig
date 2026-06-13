@@ -15,7 +15,6 @@ test "O2SessionMemory groups named reusable memory owners only" {
     try std.testing.expect(@hasField(o2_session_memory.O2SessionMemory, "solar_irradiance"));
     try std.testing.expect(@hasField(o2_session_memory.O2SessionMemory, "worker_pool"));
     try std.testing.expect(@hasField(o2_session_memory.O2SessionMemory, "transport_workers"));
-    try std.testing.expect(@hasField(o2_session_memory.O2SessionMemory, "weak_line_cutoff"));
     try std.testing.expect(!@hasField(o2_session_memory.O2SessionMemory, "scene"));
     try std.testing.expect(!@hasField(o2_session_memory.O2SessionMemory, "request"));
     try std.testing.expect(!@hasField(o2_session_memory.O2SessionMemory, "controls"));
@@ -33,12 +32,12 @@ test "O2SessionMemory layout matches named owner composition" {
     };
     const expected_layout = switch (builtin.mode) {
         .Debug => ExpectedLayout{
-            .size = 432,
+            .size = 400,
             .worker_pool_offset = 248,
             .transport_workers_offset = 384,
         },
         else => ExpectedLayout{
-            .size = 400,
+            .size = 368,
             .worker_pool_offset = 240,
             .transport_workers_offset = 352,
         },
