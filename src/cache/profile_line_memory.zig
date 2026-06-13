@@ -134,7 +134,8 @@ pub const ProfileSupportLineValue = struct {
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   values owns wavelength_count * profile_node_count rows. support_profile_values owns                       |
-//   wavelength_count * support_profile_node_count rows used to interpolate support-row sigma.                 |
+//   wavelength_count * support_profile_node_count rows used to interpolate support-row sigma. Root spectrum   |
+//   runs may set profile_node_count to zero when diagnostics are not requested; support rows still exist.     |
 pub const ProfileLineValues = struct {
     values: []ProfileLineValue = &.{},
     support_profile_values: []ProfileSupportLineValue = &.{},
@@ -256,6 +257,7 @@ pub fn buildO2ProfileLineValuesForWavelengths(
         wavelengths_nm,
         &.{},
         true,
+        true,
         null,
         preferredProfileLineWorkerCount(wavelengths_nm.len),
     );
@@ -266,6 +268,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
     case: o2_case.O2Case,
     wavelengths_nm: []const f64,
     cutoff_grid_wavelengths_nm: []const f64,
+    build_layer_values: bool,
     include_temperature_derivatives: bool,
     pool: ?*std.Thread.Pool,
     worker_count: usize,
@@ -281,6 +284,8 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
     // row contract                                                                                            |
     //   Output rows stay wavelength-major and preserve the input wavelength order exactly. Dense spectrum     |
     //   prefetch can therefore use its `RadianceWavelengthList` index as the ProfileLineValues index.         |
+    //   `build_layer_values` keeps the WP2 diagnostic layer rows for evidence paths. The public spectrum      |
+    //   route uses only support_profile_values, so root skips preparing unused layer rows.                    |
     // --------------------------------------------------------------------------------------------------------|
     var layers = try atmosphere_layers.build(allocator, case);
     defer layers.deinit(allocator);
@@ -288,7 +293,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
     defer lines.deinit(allocator);
 
     const wavelength_count = wavelengths_nm.len;
-    const profile_node_count = layers.layer_pressures_hpa.len;
+    const profile_node_count = if (build_layer_values) layers.layer_pressures_hpa.len else 0;
     const support_profile_node_count = layers.spectroscopy_profile.rows.len;
     const values = try allocator.alloc(ProfileLineValue, wavelength_count * profile_node_count);
     errdefer allocator.free(values);
@@ -306,24 +311,48 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
         .cutoff_grid_wavelengths_nm = cutoff_grid.wavelengths_nm,
         .cutoff_grid_wavenumbers_cm1 = cutoff_grid.wavenumbers_cm1,
     };
-    const line_strength_threshold = thresholdStrength(lines.rows, lines.threshold_line_sim);
-    const active_lines = try collectActiveLines(
-        allocator,
-        lines.rows,
-        lines.isotopes_sim,
-        line_strength_threshold,
-    );
-    defer allocator.free(active_lines);
     const total_lines = try collectRuntimeLines(allocator, lines.rows, lines.isotopes_sim);
     defer allocator.free(total_lines);
-    const weak_states = try prepareLayerWeakLineStates(
-        allocator,
-        active_lines,
-        layers.layer_temperatures_k,
-        layers.layer_pressures_hpa,
-        0.0,
-    );
-    defer deinitWeakLineStates(allocator, weak_states);
+    var active_lines: []readers.O2LineAssetRow = &.{};
+    var weak_states: []WeakLinePreparedState = &.{};
+    var total_weak_states: []WeakLinePreparedState = &.{};
+    var strong_states: []StrongLinePreparedState = &.{};
+    if (build_layer_values) {
+        const line_strength_threshold = thresholdStrength(lines.rows, lines.threshold_line_sim);
+        active_lines = try collectActiveLines(
+            allocator,
+            lines.rows,
+            lines.isotopes_sim,
+            line_strength_threshold,
+        );
+        weak_states = try prepareLayerWeakLineStates(
+            allocator,
+            active_lines,
+            layers.layer_temperatures_k,
+            layers.layer_pressures_hpa,
+            0.0,
+        );
+        total_weak_states = try prepareLayerWeakLineStates(
+            allocator,
+            total_lines,
+            layers.layer_temperatures_k,
+            layers.layer_pressures_hpa,
+            0.0,
+        );
+        strong_states = try prepareLayerStrongLineStates(
+            allocator,
+            lines.strong_lines,
+            lines.relaxation_matrix,
+            layers.layer_temperatures_k,
+            layers.layer_pressures_hpa,
+        );
+    }
+    defer if (build_layer_values) {
+        allocator.free(strong_states);
+        deinitWeakLineStates(allocator, total_weak_states);
+        deinitWeakLineStates(allocator, weak_states);
+        allocator.free(active_lines);
+    };
 
     // The old-route temperature derivative is a centered finite difference at T +/- 0.5 K. The public WP4
     // Jacobian states are surface/aerosol controls, so root spectrum runs do not read d_sigma/dT and skip
@@ -331,7 +360,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
     // directly, and the reuse stamp records the choice so incompatible session caches cannot mix.
     var upper_weak_states: []WeakLinePreparedState = &.{};
     var lower_weak_states: []WeakLinePreparedState = &.{};
-    if (include_temperature_derivatives) {
+    if (build_layer_values and include_temperature_derivatives) {
         upper_weak_states = try prepareLayerWeakLineStates(
             allocator,
             active_lines,
@@ -348,32 +377,16 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
             -0.5,
         );
     }
-    defer if (include_temperature_derivatives) {
+    defer if (build_layer_values and include_temperature_derivatives) {
         deinitWeakLineStates(allocator, lower_weak_states);
         deinitWeakLineStates(allocator, upper_weak_states);
     };
-    const total_weak_states = try prepareLayerWeakLineStates(
-        allocator,
-        total_lines,
-        layers.layer_temperatures_k,
-        layers.layer_pressures_hpa,
-        0.0,
-    );
-    defer deinitWeakLineStates(allocator, total_weak_states);
     const support_total_weak_states = try prepareProfileWeakLineStates(
         allocator,
         total_lines,
         layers.spectroscopy_profile.rows,
     );
     defer deinitWeakLineStates(allocator, support_total_weak_states);
-    const strong_states = try prepareLayerStrongLineStates(
-        allocator,
-        lines.strong_lines,
-        lines.relaxation_matrix,
-        layers.layer_temperatures_k,
-        layers.layer_pressures_hpa,
-    );
-    defer allocator.free(strong_states);
     const support_strong_states = try prepareProfileStrongLineStates(
         allocator,
         lines.strong_lines,
@@ -389,7 +402,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
         layers,
         lines,
         runtime,
-        include_temperature_derivatives,
+        build_layer_values and include_temperature_derivatives,
         active_lines,
         total_lines,
         weak_states,
@@ -409,7 +422,12 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
         .wavelength_count = wavelength_count,
         .profile_node_count = profile_node_count,
         .support_profile_node_count = support_profile_node_count,
-        .reuse_stamp = profileLineReuseStamp(case.id, wavelengths_nm, include_temperature_derivatives),
+        .reuse_stamp = profileLineReuseStamp(
+            case.id,
+            wavelengths_nm,
+            build_layer_values,
+            include_temperature_derivatives,
+        ),
     };
 }
 
@@ -509,7 +527,7 @@ fn buildProfileLineValuesByWavelength(
     if (worker_count == 0 or worker_count > worker_partition.max_workers) return error.InvalidShape;
     if (wavelengths_nm.len == 0) return;
 
-    const profile_node_count = layers.layer_pressures_hpa.len;
+    const profile_node_count = if (values.len != 0) layers.layer_pressures_hpa.len else 0;
     const support_profile_node_count = layers.spectroscopy_profile.rows.len;
     if (values.len != wavelengths_nm.len * profile_node_count) return error.InvalidShape;
     if (support_profile_values.len != wavelengths_nm.len * support_profile_node_count) return error.InvalidShape;
@@ -596,7 +614,7 @@ fn profileLineBuildWorkerMain(worker: *ProfileLineBuildWorker) void {
         // end instrumentation: trace zone: profile spectroscopy cache build chunk ----------------------------|
 
         for (chunk.start..chunk.end) |wavelength_index| {
-            fillProfileLineValueRowsAtWavelength(worker, wavelength_index);
+            if (worker.values.len != 0) fillProfileLineValueRowsAtWavelength(worker, wavelength_index);
             fillSupportProfileLineValueRowsAtWavelength(worker, wavelength_index);
         }
     }
@@ -723,17 +741,20 @@ fn preferredProfileLineStateWorkerCount(profile_count: usize) usize {
     );
 }
 
-fn profileLineReuseStamp(
+pub fn profileLineReuseStamp(
     case_id: []const u8,
     wavelengths_nm: []const f64,
+    build_layer_values: bool,
     include_temperature_derivatives: bool,
 ) hashing.ReuseStamp {
     // profileLineReuseStamp ----------------------------------------------------------------------------------|
-    // Include exact wavelength bits and derivative-row presence in the retained line-value stamp.             |
+    // Include exact wavelength bits, layer-row presence, and derivative-row presence in the retained stamp.   |
     // --------------------------------------------------------------------------------------------------------|
     var hasher = std.hash.Wyhash.init(0);
     hasher.update(case_id);
     hasher.update(std.mem.sliceAsBytes(wavelengths_nm));
+    const layer_byte = [_]u8{if (build_layer_values) 1 else 0};
+    hasher.update(&layer_byte);
     const derivative_byte = [_]u8{if (include_temperature_derivatives) 1 else 0};
     hasher.update(&derivative_byte);
     return .{ .value = hasher.final() };

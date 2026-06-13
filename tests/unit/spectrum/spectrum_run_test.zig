@@ -396,6 +396,7 @@ test "runO2ASpectrum matches old-route Stage 3 full spectrum" {
             exact_wavelengths_nm,
             exact_wavelengths_nm,
             true,
+            true,
             null,
             1,
         );

@@ -267,6 +267,7 @@ test "ProfileLineValues parallel wavelength build matches serial rows" {
         wavelengths_nm[0..],
         wavelengths_nm[0..],
         true,
+        true,
         null,
         1,
     );
@@ -277,6 +278,7 @@ test "ProfileLineValues parallel wavelength build matches serial rows" {
         internal.input.defaults.referenceCase(),
         wavelengths_nm[0..],
         wavelengths_nm[0..],
+        true,
         true,
         null,
         2,

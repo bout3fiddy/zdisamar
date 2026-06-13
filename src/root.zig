@@ -341,12 +341,15 @@ fn prepareSessionRows(
     const worker_count = spectrum_run.preferredRadianceWorkerCount(dense_count);
     const worker_pool = session.worker_pool.poolForWorkerCount(allocator, worker_count);
 
-    // Public WP4 Jacobian states are surface/aerosol controls and do not read profile-line d_sigma/dT rows.
-    // The derivative-row bit remains in the reuse stamp so a future temperature-profile state can split caches.
+    // Public WP4 spectrum runs read support-profile sigma rows through optics interpolation. They do not read
+    // diagnostic layer-node rows or profile-line d_sigma/dT rows for the current surface/aerosol Jacobian set.
+    // Both mode bits remain in the reuse stamp so future diagnostic or temperature-profile paths split caches.
+    const build_layer_values = false;
     const needs_temperature_derivatives = false;
-    const profile_stamp = profileLineReuseStamp(
+    const profile_stamp = profile_lines.profileLineReuseStamp(
         prepared.case.id,
         exact_wavelengths,
+        build_layer_values,
         needs_temperature_derivatives,
     );
 
@@ -371,6 +374,7 @@ fn prepareSessionRows(
                 prepared.case,
                 exact_wavelengths,
                 exact_wavelengths,
+                build_layer_values,
                 needs_temperature_derivatives,
                 worker_pool,
                 worker_count,
@@ -575,22 +579,6 @@ fn updateHashValue(hasher: *std.hash.Wyhash, value: anytype) void {
     // --------------------------------------------------------------------------------------------------------|
     const stored = value;
     hasher.update(std.mem.asBytes(&stored));
-}
-
-fn profileLineReuseStamp(
-    case_id: []const u8,
-    wavelengths_nm: []const f64,
-    include_temperature_derivatives: bool,
-) hashing.ReuseStamp {
-    // profileLineReuseStamp ----------------------------------------------------------------------------------|
-    // Match the profile-line builder's retained-cache identity for one exact radiance wavelength list.        |
-    // --------------------------------------------------------------------------------------------------------|
-    var hasher = std.hash.Wyhash.init(0);
-    hasher.update(case_id);
-    hasher.update(std.mem.sliceAsBytes(wavelengths_nm));
-    const derivative_byte = [_]u8{if (include_temperature_derivatives) 1 else 0};
-    hasher.update(&derivative_byte);
-    return .{ .value = hasher.final() };
 }
 
 fn viewAngles(case: O2Case) solve.ViewAngles {
