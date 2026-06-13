@@ -31,3 +31,16 @@ test "O2 isotope 67 preserves DISAMAR default-real partition literals" {
     const ratio = internal.input.hitran_partition_tables.ratioT0OverT(67, 190.5, 296.0) orelse unreachable;
     try std.testing.expectApproxEqAbs(@as(f64, 1.5610005510908784), ratio, 1.0e-14);
 }
+
+test "vendor partition tables sample prepared curvature like endpoint rebuild" {
+    const codes = [_]i32{ 66, 67, 161, 626, 4111, 5111 };
+    const temperatures_k = [_]f64{ 60.0, 165.1, 190.5, 296.0, 760.0, 3010.0 };
+
+    for (codes) |code| {
+        for (temperatures_k) |temperature_k| {
+            try std.testing.expect(
+                internal.input.hitran_partition_tables.partitionSampleMatchesEndpointSecant(code, temperature_k).?,
+            );
+        }
+    }
+}

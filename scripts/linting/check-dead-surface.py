@@ -15,6 +15,7 @@ PUB_FN_RE = re.compile(r"^\s*pub\s+(?:inline\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b
 ALLOWLIST: dict[tuple[str, str], str] = {
     ("src/common/math/gauss_legendre.zig", "fillDisamarDivPointsIntervalNodes"): "test oracle for canonical DISAMAR node split; production uses retained canonical rows plus scaleIntervalNodes",
     ("src/common/worker_partition.zig", "preferredWorkerCountForCpuCount"): "worker-count oracle for preferredWorkerCount tests; production uses preferredWorkerCount",
+    ("src/input/hitran_partition_tables.zig", "partitionSampleMatchesEndpointSecant"): "test oracle for prepared HITRAN partition spline state; production uses ratioT0OverT",
     ("src/root.zig", "runO2A"): "public Zig one-shot facade; C/Python uses runO2AWithSessionMemory through the context-owned session path",
     ("src/setup/atmosphere_layers.zig", "intervalNodes"): "same-file production helper; buildWithQuadrature calls it while tests assert retained canonical row lookup",
     ("src/setup/phase_table.zig", "zeroPhaseCoefficients"): "test oracle for phase coefficient storage; keep until HG phase lane is wired",
