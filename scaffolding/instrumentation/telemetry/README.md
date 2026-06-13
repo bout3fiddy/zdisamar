@@ -10,15 +10,15 @@ irrelevant.
 
 Product builds compile the calculation telemetry away:
 
-- `src/forward_model/instrumentation/telemetry.zig` is a tiny facade at the math call
+- `src/instrumentation/telemetry.zig` is a tiny facade at the math call
   sites.
 - Normal library, CLI, test, benchmark, and Tracy trace modules import
-  `src/forward_model/instrumentation/stubs/calculation_telemetry_sink.zig`; `Telemetry.enabled` is a
+  `src/instrumentation/stubs/calculation_telemetry_sink.zig`; `Telemetry.enabled` is a
   comptime false value there.
 - The only build module that imports the real sink is the explicit
   `calculation-telemetry` executable.
 - The real sink lives under `scaffolding/instrumentation/`, not under
-  `src/forward_model/`, so file I/O and mutable capture state stay out of the
+  `src/`, so file I/O and mutable capture state stay out of the
   RTM routines.
 
 The capture path is intentionally opt-in:

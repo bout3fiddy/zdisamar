@@ -301,6 +301,7 @@ test "support-row optics reproduce atmospheric-budget components at probe wavele
             tables.cia,
             zero_aerosol,
             support_rows,
+            null,
         );
 
         const actual = support_rows[support_index];
@@ -338,11 +339,12 @@ test "layer optics reduce active support rows and skip boundary rows" {
         tables.cia,
         zero_aerosol,
         support_rows,
+        null,
     );
 
     const layers = try allocator.alloc(layer_depths.LayerOptics, tables.layers.layer_pressures_hpa.len);
     defer allocator.free(layers);
-    try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, support_rows, layers);
+    try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, support_rows, layers, null);
 
     try std.testing.expectEqual(@as(usize, 0), layers[0].support_start);
     try std.testing.expectEqual(@as(usize, 6), layers[0].support_count);
@@ -370,11 +372,12 @@ test "layer optics place aerosol optical depth on the configured explicit interv
         tables.cia,
         tables.aerosol,
         support_rows,
+        null,
     );
 
     const layers = try allocator.alloc(layer_depths.LayerOptics, tables.layers.layer_pressures_hpa.len);
     defer allocator.free(layers);
-    try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, support_rows, layers);
+    try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, support_rows, layers, null);
 
     for (aerosol_layers_758) |expected| {
         const layer_index: usize = @intCast(expected.layer_index);
@@ -413,11 +416,12 @@ test "layer optics fill aerosol optical-depth jacobian lanes from current route 
         tables.cia,
         tables.aerosol,
         support_rows,
+        null,
     );
 
     const layers = try allocator.alloc(layer_depths.LayerOptics, tables.layers.layer_pressures_hpa.len);
     defer allocator.free(layers);
-    try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, support_rows, layers);
+    try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, support_rows, layers, null);
     layer_depths.fillLayerAerosolJacobians(
         tables.aerosol,
         jacobian.stateMask(.aerosol_optical_depth),

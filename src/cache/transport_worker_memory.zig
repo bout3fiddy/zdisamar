@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const memory = @import("../common/memory.zig");
+const CostTiming = @import("../instrumentation/cost_timing.zig");
 const curved_sun_path = @import("../optics/curved_sun_path.zig");
 const layer_depths = @import("../optics/layer_depths.zig");
 const source_levels = @import("../optics/source_levels.zig");
@@ -38,7 +39,8 @@ pub const Error = error{
 // Allocation owner for one worker-local optics and LABOS solve path.                                          |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 3272 B (3.195 KiB), align: 8 B                                                                        |
+// normal build: size 3272 B (3.195 KiB), align: 8 B                                                           |
+// cost build  : size 3736 B (3.648 KiB), align: 8 B                                                           |
 //                                                                                                             |
 // memory                                                                                                      |
 // [   0..  15] attenuation_data                         : []f64                                               |
@@ -70,7 +72,9 @@ pub const Error = error{
 // [ 416.. 431] curved_level_altitudes_km         : []f64                                                      |
 // [ 432..3263] cached_geometry                   : GaussGeometry                                              |
 // [3264..3264] cached_geometry_valid             : bool                                                       |
-// [3265..3271] trailing padding                  : 7 B                                                        |
+// [3265..3271] normal build trailing padding     : 7 B                                                        |
+// [3272..3727] cost build: stage_cost            : WorkerStageCost                                            |
+// [3728..3735] cost build: cost_timing_state     : WorkspaceState                                             |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Every slice owns heap storage and is released by deinit. Optics rows are borrowed by spectrum prefetch;   |
@@ -106,6 +110,8 @@ pub const TransportWorkerMemory = struct {
     curved_level_altitudes_km: []f64 = &.{},
     cached_geometry: gauss_angles.GaussGeometry = undefined,
     cached_geometry_valid: bool = false,
+    stage_cost: CostTiming.WorkerStageCost = .{},
+    cost_timing_state: CostTiming.WorkspaceState = .{},
 
     pub fn deinit(self: *TransportWorkerMemory, allocator: Allocator) void {
         // TransportWorkerMemory.deinit ---------------------------------------------------------------------- |
@@ -139,6 +145,34 @@ pub const TransportWorkerMemory = struct {
         allocator.free(self.curved_level_starts);
         allocator.free(self.curved_level_altitudes_km);
         self.* = .{};
+    }
+
+    pub inline fn resetCostTiming(self: *TransportWorkerMemory) void {
+        // TransportWorkerMemory.resetCostTiming ------------------------------------------------------------- |
+        // Reset and attach the worker-local cost row for one enabled forward run.                             |
+        // ----------------------------------------------------------------------------------------------------|
+        if (comptime !CostTiming.enabled) return;
+
+        CostTiming.resetWorkerStageCost(&self.stage_cost);
+        CostTiming.setWorkerWorkspaceState(&self.cost_timing_state, &self.stage_cost);
+    }
+
+    pub inline fn clearCostTiming(self: *TransportWorkerMemory) void {
+        // TransportWorkerMemory.clearCostTiming ------------------------------------------------------------- |
+        // Detach the optional cost row after the merged run summary has been emitted.                         |
+        // ----------------------------------------------------------------------------------------------------|
+        if (comptime !CostTiming.enabled) return;
+
+        CostTiming.clearWorkspaceState(&self.cost_timing_state);
+    }
+
+    pub inline fn mergeCostTimingInto(self: *const TransportWorkerMemory, merged: *CostTiming.StageCost) void {
+        // TransportWorkerMemory.mergeCostTimingInto --------------------------------------------------------- |
+        // Merge this worker's retained row into the caller-owned run summary when cost timing is enabled.     |
+        // ----------------------------------------------------------------------------------------------------|
+        if (comptime !CostTiming.enabled) return;
+
+        CostTiming.mergeWorkerStageCost(merged, &self.stage_cost);
     }
 
     pub fn ensureOpticsCapacity(
@@ -300,6 +334,7 @@ pub const TransportWorkerMemory = struct {
             .source_phase_max_indices = self.source_phase_max_indices[0..level_count],
             .phase_row_cache = self.layer_phase_rows[0..level_count],
             .phase_row_valid = self.layer_phase_row_valid[0..level_count],
+            .cost_timing_state = self.cost_timing_state,
             .curved_level_starts = &.{},
             .curved_level_altitudes_km = &.{},
             .orders = .{
@@ -376,6 +411,7 @@ pub const TransportWorkerMemoryCollection = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 comptime {
-    std.debug.assert(@sizeOf(TransportWorkerMemory) == 3272);
+    const expected_worker_size: usize = if (CostTiming.enabled) 3736 else 3272;
+    std.debug.assert(@sizeOf(TransportWorkerMemory) == expected_worker_size);
     std.debug.assert(@sizeOf(TransportWorkerMemoryCollection) == 16);
 }

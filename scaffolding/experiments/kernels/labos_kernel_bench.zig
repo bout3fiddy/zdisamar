@@ -1,19 +1,41 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const labos = internal.forward_model.radiative_transfer.labos_basis;
+const labos = struct {
+    const max_phase_coef = internal.setup.phase_table.coefficient_count;
+    const Mat = internal.rtm.rows.Mat;
+    const Vec = internal.rtm.rows.Vec;
+    const Geometry = internal.rtm.gauss_angles.GaussGeometry;
+    const FourierPlmBasis = internal.rtm.phase_basis.FourierPlmBasis;
+    const PhaseKernel = internal.rtm.phase_basis.PhaseKernel;
+
+    const qseries = internal.rtm.matrix_12x10.qseries;
+    const qseriesKnownNonzeroProduct = internal.rtm.matrix_12x10.qseriesKnownNonzeroProduct;
+    const smul = internal.rtm.matrix_12x10.smul;
+    const smulAddSemul3 = internal.rtm.matrix_12x10.smulAddSemul3;
+    const smulAddSemul3KnownRightTrace = internal.rtm.matrix_12x10.smulAddSemul3KnownRightTrace;
+    const matAddSemul3 = internal.rtm.matrix_12x10.matAddSemul3;
+    const matAddEsmul3 = internal.rtm.matrix_12x10.matAddEsmul3;
+    const matAddEsmul = internal.rtm.matrix_12x10.matAddEsmul;
+    const semul = internal.rtm.matrix_12x10.semul;
+    const semulAdd = internal.rtm.matrix_12x10.semulAdd;
+    const esmulSemul = internal.rtm.matrix_12x10.esmulSemul;
+    const esmulSemulAdd = internal.rtm.matrix_12x10.esmulSemulAdd;
+    const fillZplusZminFromWeightedPhaseLimited =
+        internal.rtm.phase_basis.fillZplusZminFromWeightedPhaseLimited;
+};
 
 const n = 12;
 const n_gauss = 10;
 const threshold_mul = 1.0e-12;
 const phase_scan_max = 15;
-const beta_reciprocal = blk: {
+const beta_reciprocal = build_beta_reciprocal: {
     var values: [labos.max_phase_coef]f64 = undefined;
     for (&values, 0..) |*value, idx| {
         const idx_f: f64 = @floatFromInt(idx);
         value.* = 1.0 / (2.0 * idx_f + 1.0);
     }
-    break :blk values;
+    break :build_beta_reciprocal values;
 };
 
 pub fn main() !void {
@@ -21,7 +43,7 @@ pub fn main() !void {
     var t = matrixSeed(0.41, 0.0008);
     var c = matrixSeed(0.19, 0.0005);
     var e = vecSeed();
-    var geo = labos.Geometry.init(n_gauss, 0.58, 0.64);
+    var geo = try labos.Geometry.init(n_gauss, 0.58, 0.64);
     var phase_coefs = phaseCoeffSeed();
     const phase_max_index = phase_scan_max;
     const plm_basis = labos.FourierPlmBasis.init(0, phase_max_index, &geo);
@@ -199,7 +221,12 @@ fn benchSmulAddSemul3(r: *const labos.Mat, t: *const labos.Mat, _: *const labos.
     return labos.smulAddSemul3(n, n_gauss, threshold_mul, r, e, t);
 }
 
-fn benchSmulAddSemul3KnownRightTrace(r: *const labos.Mat, e: *const labos.Vec, t: *const labos.Mat, trace_t: f64) labos.Mat {
+fn benchSmulAddSemul3KnownRightTrace(
+    r: *const labos.Mat,
+    e: *const labos.Vec,
+    t: *const labos.Mat,
+    trace_t: f64,
+) labos.Mat {
     return labos.smulAddSemul3KnownRightTrace(n, n_gauss, threshold_mul, r, e, t, trace_t);
 }
 
@@ -236,8 +263,10 @@ fn benchPhaseFill(
     geo: *const labos.Geometry,
     plm_basis: *const labos.FourierPlmBasis,
 ) labos.PhaseKernel {
-    return labos.fillZplusZminFromBasisLimited(
+    return labos.fillZplusZminFromWeightedPhaseLimited(
         0,
+        1.0,
+        0.0,
         phase_coefs,
         phase_scan_max,
         geo,
@@ -266,13 +295,16 @@ fn benchBetaScanRecip(phase_coefs: *const [labos.max_phase_coef]f64) f64 {
 
 fn matrixSeed(base: f64, delta: f64) labos.Mat {
     var mat = labos.Mat{ .data = undefined, .n = n };
+
     for (0..n) |i| {
         for (0..n) |j| {
             const linear = @as(f64, @floatFromInt(i * n + j + 1));
             const diagonal: f64 = if (i == j and i < n_gauss) base else 0.0;
+
             mat.data[i * n + j] = diagonal + delta * linear;
         }
     }
+
     return mat;
 }
 
@@ -316,5 +348,5 @@ fn checksum(mat: *const labos.Mat) f64 {
 }
 
 fn checksumPhase(kernel: *const labos.PhaseKernel) f64 {
-    return checksum(&kernel.Zplus) + 1.7 * checksum(&kernel.Zmin);
+    return checksum(&kernel.zplus) + 1.7 * checksum(&kernel.zmin);
 }

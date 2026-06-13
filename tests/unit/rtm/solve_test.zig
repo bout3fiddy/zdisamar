@@ -400,12 +400,14 @@ test "scattering route propagates AOD tangent and rejects pressure lane" {
 }
 
 test "solve route rows keep explicit layout" {
-    const expected_work_size: usize =
-        if (@sizeOf(internal.rtm.scattering_orders.OrdersWorkArrays) == 120) 376 else 368;
+    const expected_layout = if (internal.instrumentation.cost_timing.enabled)
+        .{ .work_size = 384, .orders_offset = 224 }
+    else
+        .{ .work_size = 368, .orders_offset = 216 };
 
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(solve.ViewAngles));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(solve.ReflectanceResult));
-    try std.testing.expectEqual(expected_work_size, @sizeOf(solve.TransportWorkArrays));
+    try std.testing.expectEqual(@as(usize, expected_layout.work_size), @sizeOf(solve.TransportWorkArrays));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(solve.ViewAngles, "solar_mu"));
     try std.testing.expectEqual(@as(usize, 8), @offsetOf(solve.ViewAngles, "view_mu"));
     try std.testing.expectEqual(@as(usize, 16), @offsetOf(solve.ViewAngles, "relative_azimuth_rad"));
@@ -415,8 +417,14 @@ test "solve route rows keep explicit layout" {
         @as(usize, 24),
         @offsetOf(solve.TransportWorkArrays, "dynamic_attenuation_tangent_data"),
     );
-    try std.testing.expectEqual(@as(usize, 216), @offsetOf(solve.TransportWorkArrays, "orders"));
-    try std.testing.expectEqual(expected_work_size - 8, @offsetOf(solve.TransportWorkArrays, "geometry_valid"));
+    try std.testing.expectEqual(
+        @as(usize, expected_layout.orders_offset),
+        @offsetOf(solve.TransportWorkArrays, "orders"),
+    );
+    try std.testing.expectEqual(
+        @as(usize, expected_layout.work_size - 8),
+        @offsetOf(solve.TransportWorkArrays, "geometry_valid"),
+    );
 }
 
 // TestSolveWorkStorage -------------------------------------------------------------------------------------  |
@@ -441,6 +449,7 @@ const TestSolveWorkStorage = struct {
     source_phase_max_indices: [3]usize = undefined,
     phase_row_cache: [3]phase_basis.PhaseKernelRow = undefined,
     phase_row_valid: [3]bool = .{ false, false, false },
+    cost_timing_state: internal.instrumentation.cost_timing.WorkspaceState = .{},
     order_ud: [3]rows.UDField = undefined,
     order_ud_sum_local: [3]rows.UDLocal = undefined,
     order_ud_orde: [3]rows.UDLocal = undefined,
@@ -468,6 +477,7 @@ const TestSolveWorkStorage = struct {
             .source_phase_max_indices = self.source_phase_max_indices[0..],
             .phase_row_cache = self.phase_row_cache[0..],
             .phase_row_valid = self.phase_row_valid[0..],
+            .cost_timing_state = self.cost_timing_state,
             .curved_level_starts = &.{},
             .curved_level_altitudes_km = &.{},
             .orders = .{

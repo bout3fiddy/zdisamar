@@ -90,7 +90,7 @@ decision rows. This keeps the product path compact while still giving the
 analysis enough data to distinguish a base skip decision from its downstream
 work gates.
 
-The sink must remain outside `src/forward_model/`. File I/O, row buffering, and
+The sink must remain outside product `src/` modules. File I/O, row buffering, and
 run manifests belong to validation or research code.
 
 ## Writer Boundary

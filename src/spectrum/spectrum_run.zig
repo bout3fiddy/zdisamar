@@ -21,6 +21,7 @@ const solar_table = @import("../setup/solar_table.zig");
 const source_levels = @import("../optics/source_levels.zig");
 const transport_worker_memory = @import("../cache/transport_worker_memory.zig");
 const controls = @import("../rtm/controls.zig");
+const CostTiming = @import("../instrumentation/cost_timing.zig");
 const Trace = @import("../instrumentation/trace.zig");
 const Telemetry = @import("../instrumentation/telemetry.zig");
 
@@ -228,10 +229,12 @@ pub fn radianceAtWavelength(
         defer optics_zone.end();
         // end instrumentation: trace zone: configured optical rows ------------------------------------------ |
 
+        const stage_cost = CostTiming.activeWorkspaceState(&worker_memory.cost_timing_state);
         try profile_lines.fillSupportLineSigmaAtWavelengthIndex(
             layer_grid,
             wavelength_index,
             work_rows.line_sigma_cm2_per_molecule,
+            stage_cost,
         );
         try layer_depths.fillSupportOpticsAtWavelength(
             wavelength_nm,
@@ -240,8 +243,9 @@ pub fn radianceAtWavelength(
             cia,
             aerosol,
             work_rows.support,
+            stage_cost,
         );
-        try layer_depths.reduceLayerOpticsFromSupportRows(layer_grid, work_rows.support, work_rows.layers);
+        try layer_depths.reduceLayerOpticsFromSupportRows(layer_grid, work_rows.support, work_rows.layers, stage_cost);
         layer_depths.fillLayerAerosolJacobians(aerosol, prepared_solve_config.derivative_state_mask, work_rows.layers);
     }
 
@@ -330,6 +334,7 @@ fn prefetchO2ARadianceRows(
     prepared_solve_config: controls.SolveConfig,
     pool: ?*std.Thread.Pool,
     worker_count: usize,
+    reset_cost_timing: bool,
     out_dense_radiance: []radiance_results.RadianceResult,
     transport_workers: []transport_worker_memory.TransportWorkerMemory,
 ) !void {
@@ -363,6 +368,7 @@ fn prefetchO2ARadianceRows(
         if (!transportWorkerShapeMatches(worker_memory, support_count, layer_count)) {
             return error.ShapeMismatch;
         }
+        if (reset_cost_timing) worker_memory.resetCostTiming();
     }
 
     if (wavelengths.wavelengths.len == 0) return;
@@ -421,6 +427,14 @@ fn prefetchO2ARadianceRows(
     }
 
     worker_partition.runWorkers(pool, worker_storage[0..worker_count], radiancePrefetchWorkerMain);
+    if (comptime CostTiming.enabled) {
+        var merged_stage_cost = CostTiming.StageCost{};
+        for (transport_workers[0..worker_count]) |*worker_memory| {
+            worker_memory.mergeCostTimingInto(&merged_stage_cost);
+            worker_memory.clearCostTiming();
+        }
+        CostTiming.dumpMergedStageCostToStderr(merged_stage_cost);
+    }
     if (error_state.err) |err| return err;
 }
 
@@ -550,6 +564,7 @@ pub fn runO2ASpectrum(
     prefetch_dense_radiance: bool,
     pool: ?*std.Thread.Pool,
     worker_count: usize,
+    reset_cost_timing: bool,
     product_rows: ProductRows,
     transport_workers: []transport_worker_memory.TransportWorkerMemory,
     solar_memory: *solar_irradiance_memory.SolarIrradianceMemory,
@@ -607,6 +622,7 @@ pub fn runO2ASpectrum(
             prepared_solve_config,
             pool,
             worker_count,
+            reset_cost_timing,
             product_rows.dense_radiance,
             transport_workers,
         );

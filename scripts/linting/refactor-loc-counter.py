@@ -10,10 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 COUNTED_EXCLUSIONS = (
-    "src/forward_model/instrumentation/",
     "src/instrumentation/",
     "src/validation/",
-    "src/input/o2a_reference/metrics.zig",
     "src/internal.zig",
 )
 

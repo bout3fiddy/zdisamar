@@ -1,10 +1,14 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const InstrumentGrid = internal.forward_model.instrument_grid;
+const CostTiming = internal.instrumentation.cost_timing;
+const InstrumentGrid = internal.spectrum;
 const o2a_reference = internal.o2a_reference;
-const RadiativeTransfer = internal.forward_model.radiative_transfer;
-const Trace = internal.forward_model.performance_trace;
+const RadiativeTransfer = struct {
+    const Jacobian = internal.rtm.jacobian_states;
+    const SolveConfig = internal.rtm.controls.SolveConfig;
+};
+const Trace = internal.instrumentation.trace;
 
 // migration note: Zig 0.15.2 trace CLI -----------------------------------------------------------|
 // This retained trace harness intentionally uses the Zig 0.15.2 process, timer, and file APIs.    |
@@ -33,7 +37,7 @@ const TraceCase = enum {
 //   size: 32 B, align: 8 B
 //   field storage:
 //     output_dir=16 B, cached_repeats=8 B, output_dir_set=1 B, derivative_sweep=1 B, jacobian=1 B,
-//     phase_timing=1 B, trace_case=1 B; padding: 3 B (24 bits)
+//     cost_timing=1 B, trace_case=1 B; padding: 3 B (24 bits)
 //   unused bits: 24 padding + 28 bool-storage slack = 52 bits
 //   out-of-line: output_dir carry references/descriptors; referenced storage is not included in size
 //   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
@@ -44,7 +48,7 @@ const Config = struct {
     output_dir_set: bool = false,
     derivative_sweep: bool = false,
     jacobian: bool = false,
-    phase_timing: bool = true,
+    cost_timing: bool = true,
     trace_case: TraceCase = .default,
 };
 
@@ -93,7 +97,7 @@ const ProductRunSummary = struct {
     forward_ns: u64,
     result_copy_ns: u64,
     summary: InstrumentGrid.InstrumentGridSummary,
-    phase_timing: InstrumentGrid.storage.TracePhaseTiming,
+    cost_timing: CostTiming.StageCost,
 
     fn totalWithCopyNs(self: ProductRunSummary) u64 {
         return self.forward_ns + self.result_copy_ns;
@@ -168,7 +172,7 @@ fn mainInner() !void {
         config.trace_case.label(),
         config.jacobian,
         config.cached_repeats,
-        config.phase_timing,
+        config.cost_timing,
     );
 }
 
@@ -180,7 +184,7 @@ fn runSingleTrace(
     case_label: []const u8,
     include_jacobian: bool,
     cached_repeats: usize,
-    phase_timing_enabled: bool,
+    cost_timing_enabled: bool,
 ) !void {
 
     // instrumentation: trace zone
@@ -208,7 +212,7 @@ fn runSingleTrace(
         rtm_config,
         &prepared_case.prepared,
         output_states,
-        phase_timing_enabled,
+        cost_timing_enabled,
     );
 
     const cached_runs = try allocator.alloc(ProductRunSummary, cached_repeats);
@@ -222,7 +226,7 @@ fn runSingleTrace(
             rtm_config,
             &prepared_case.prepared,
             output_states,
-            phase_timing_enabled,
+            cost_timing_enabled,
         );
     }
 
@@ -233,7 +237,7 @@ fn runSingleTrace(
         cached_runs,
         case_label,
         derivative_states,
-        phase_timing_enabled,
+        cost_timing_enabled,
     );
 
     std.debug.print(
@@ -255,17 +259,17 @@ fn runProductTrace(
     rtm_config: RadiativeTransfer.SolveConfig,
     prepared: anytype,
     output_states: []const RadiativeTransfer.Jacobian.State,
-    phase_timing_enabled: bool,
+    cost_timing_enabled: bool,
 ) !ProductRunSummary {
 
     // instrumentation: trace phase clock
     // captures: simulation phases plus owned-result copy for one product run
     // why: match the session benchmark boundary while keeping the phase clock opt-in.
-    var phase_timing: InstrumentGrid.storage.TracePhaseTiming = .{};
-    if (phase_timing_enabled) {
-        storage.setTracePhaseTiming(&phase_timing);
+    var cost_timing: CostTiming.StageCost = .{};
+    if (cost_timing_enabled) {
+        storage.setStageCost(&cost_timing);
     }
-    defer storage.clearTracePhaseTiming();
+    defer storage.clearStageCost();
 
     var forward_timer = try std.time.Timer.start();
     const product = product: {
@@ -297,7 +301,7 @@ fn runProductTrace(
         .forward_ns = forward_ns,
         .result_copy_ns = result_copy_ns,
         .summary = product.summary,
-        .phase_timing = phase_timing,
+        .cost_timing = cost_timing,
     };
 }
 
@@ -416,8 +420,8 @@ fn parseArgs(args: []const []const u8) !Config {
             continue;
         }
 
-        if (std.mem.eql(u8, arg, "--no-phase-timing")) {
-            config.phase_timing = false;
+        if (std.mem.eql(u8, arg, "--no-cost-timing")) {
+            config.cost_timing = false;
             continue;
         }
 
@@ -513,7 +517,7 @@ fn writeSummary(
     cached_runs: []const ProductRunSummary,
     case_label: []const u8,
     derivative_states: []const u8,
-    phase_timing_enabled: bool,
+    cost_timing_enabled: bool,
 ) !void {
     var file = try openOutputFile(std.heap.page_allocator, output_dir, "summary.json");
     defer file.close();
@@ -523,7 +527,7 @@ fn writeSummary(
     try writer.interface.print(
         \\{{
         \\  "trace_enabled": {},
-        \\  "phase_timing_enabled": {},
+        \\  "cost_timing_enabled": {},
         \\  "case": "{s}",
         \\  "derivative_states": "{s}",
         \\  "prepare_ns": {},
@@ -551,7 +555,7 @@ fn writeSummary(
     ,
         .{
             Trace.enabled,
-            phase_timing_enabled,
+            cost_timing_enabled,
             case_label,
             derivative_states,
             prepare_ns,
@@ -617,7 +621,7 @@ fn writeProductRunSummary(
         \\    "mean_radiance": {e:.17},
         \\    "mean_irradiance": {e:.17},
         \\    "mean_reflectance": {e:.17},
-        \\    "phase_timing_ns": {{
+        \\    "cost_timing_ns": {{
         \\
     ,
         .{
@@ -636,19 +640,13 @@ fn writeProductRunSummary(
             run.summary.mean_reflectance,
         },
     );
-    try writePhaseTiming(writer, run.phase_timing);
+    try writeStageCostCounters(writer, run.cost_timing);
     try writer.writeAll(
         \\    },
-        \\    "labos_phase_timing": {
+        \\    "labos_cost_counts": {
         \\
     );
-    try writeLabosPhaseTiming(writer, run.phase_timing.labos);
-    try writer.writeAll(
-        \\    },
-        \\    "labos_phase_counts": {
-        \\
-    );
-    try writeLabosPhaseCounts(writer, run.phase_timing.labos);
+    try writeStageCostCounts(writer, run.cost_timing);
     try writer.print(
         \\    }}
         \\  }}{s}
@@ -678,7 +676,7 @@ fn writeCachedRuns(
             \\      "result_copy_s": {d:.9},
             \\      "total_with_copy_ns": {},
             \\      "total_with_copy_s": {d:.9},
-            \\      "phase_timing_ns": {{
+            \\      "cost_timing_ns": {{
             \\
         ,
             .{
@@ -691,19 +689,13 @@ fn writeCachedRuns(
                 @as(f64, @floatFromInt(run.totalWithCopyNs())) / 1.0e9,
             },
         );
-        try writePhaseTiming(writer, run.phase_timing);
+        try writeStageCostCounters(writer, run.cost_timing);
         try writer.writeAll(
             \\      },
-            \\      "labos_phase_timing": {
+            \\      "labos_cost_counts": {
             \\
         );
-        try writeLabosPhaseTiming(writer, run.phase_timing.labos);
-        try writer.writeAll(
-            \\      },
-            \\      "labos_phase_counts": {
-            \\
-        );
-        try writeLabosPhaseCounts(writer, run.phase_timing.labos);
+        try writeStageCostCounts(writer, run.cost_timing);
         try writer.writeAll(
             \\      }
             \\    }
@@ -716,47 +708,52 @@ fn writeCachedRuns(
     );
 }
 
-fn writeLabosPhaseTiming(
+fn writeStageCostCounters(
     writer: *std.Io.Writer,
-    labos_timing: RadiativeTransfer.labos.PhaseTiming,
+    labos_timing: CostTiming.StageCost,
 ) !void {
-    try writeLabosPhaseCounter(writer, "execute", labos_timing.execute, true);
-    try writeLabosPhaseCounter(writer, "attenuation_fill", labos_timing.attenuation_fill, true);
-    try writeLabosPhaseCounter(writer, "fourier_loop", labos_timing.fourier_loop, true);
-    try writeLabosPhaseCounter(writer, "plm_basis", labos_timing.plm_basis, true);
-    try writeLabosPhaseCounter(writer, "rt_layer_build", labos_timing.rt_layer_build, true);
-    try writeLabosPhaseCounter(writer, "rt_layer_phase_matrix", labos_timing.rt_layer_phase_matrix, true);
-    try writeLabosPhaseCounter(writer, "rt_layer_doubling", labos_timing.rt_layer_doubling, true);
-    try writeLabosPhaseCounter(writer, "fixed_qseries_work", labos_timing.fixed_qseries_work, true);
-    try writeLabosPhaseCounter(writer, "fixed_rd_update", labos_timing.fixed_rd_update, true);
-    try writeLabosPhaseCounter(writer, "fixed_tu_update", labos_timing.fixed_tu_update, true);
-    try writeLabosPhaseCounter(writer, "fixed_td_update", labos_timing.fixed_td_update, true);
-    try writeLabosPhaseCounter(writer, "orders_total", labos_timing.orders_total, true);
-    try writeLabosPhaseCounter(writer, "orders_initial_sources", labos_timing.orders_initial_sources, true);
-    try writeLabosPhaseCounter(writer, "orders_initial_transport", labos_timing.orders_initial_transport, true);
-    try writeLabosPhaseCounter(writer, "orders_local_down", labos_timing.orders_local_down, true);
-    try writeLabosPhaseCounter(writer, "orders_local_up", labos_timing.orders_local_up, true);
-    try writeLabosPhaseCounter(writer, "orders_transport", labos_timing.orders_transport, true);
-    try writeLabosPhaseCounter(writer, "orders_accumulate", labos_timing.orders_accumulate, true);
-    try writeLabosPhaseCounter(writer, "reflectance_integral", labos_timing.reflectance_integral, false);
+    try writeStageCostCounter(writer, "execute", labos_timing.execute, true);
+    try writeStageCostCounter(writer, "attenuation_fill", labos_timing.attenuation_fill, true);
+    try writeStageCostCounter(writer, "fourier_loop", labos_timing.fourier_loop, true);
+    try writeStageCostCounter(writer, "plm_basis", labos_timing.plm_basis, true);
+    try writeStageCostCounter(writer, "rt_layer_build", labos_timing.rt_layer_build, true);
+    try writeStageCostCounter(writer, "rt_layer_phase_matrix", labos_timing.rt_layer_phase_matrix, true);
+    try writeStageCostCounter(writer, "rt_layer_doubling", labos_timing.rt_layer_doubling, true);
+    try writeStageCostCounter(writer, "fixed_qseries_work", labos_timing.fixed_qseries_work, true);
+    try writeStageCostCounter(writer, "fixed_rd_update", labos_timing.fixed_rd_update, true);
+    try writeStageCostCounter(writer, "fixed_tu_update", labos_timing.fixed_tu_update, true);
+    try writeStageCostCounter(writer, "fixed_td_update", labos_timing.fixed_td_update, true);
+    try writeStageCostCounter(writer, "orders_total", labos_timing.orders_total, true);
+    try writeStageCostCounter(writer, "orders_initial_sources", labos_timing.orders_initial_sources, true);
+    try writeStageCostCounter(writer, "orders_initial_transport", labos_timing.orders_initial_transport, true);
+    try writeStageCostCounter(writer, "orders_local_down", labos_timing.orders_local_down, true);
+    try writeStageCostCounter(writer, "orders_local_up", labos_timing.orders_local_up, true);
+    try writeStageCostCounter(writer, "orders_transport", labos_timing.orders_transport, true);
+    try writeStageCostCounter(writer, "orders_accumulate", labos_timing.orders_accumulate, true);
+    try writeStageCostCounter(writer, "reflectance_integral", labos_timing.reflectance_integral, true);
+    try writeStageCostCounter(writer, "optics_assembly", labos_timing.optics_assembly, true);
+    try writeStageCostCounter(writer, "spectroscopy_sigma", labos_timing.spectroscopy_sigma, true);
+    try writeStageCostCounter(writer, "partition_interp", labos_timing.partition_interp, true);
+    try writeStageCostCounter(writer, "profile_interp", labos_timing.profile_interp, true);
+    try writeStageCostCounter(writer, "quadrature_build", labos_timing.quadrature_build, false);
 }
 
-fn writeLabosPhaseCounts(
+fn writeStageCostCounts(
     writer: *std.Io.Writer,
-    labos_timing: RadiativeTransfer.labos.PhaseTiming,
+    labos_timing: CostTiming.StageCost,
 ) !void {
-    try writeLabosPhaseCount(writer, "fixed_doubling_steps", labos_timing.fixed_doubling_steps, true);
-    try writeLabosPhaseCount(writer, "fixed_qseries_skipped", labos_timing.fixed_qseries_skipped, true);
-    try writeLabosPhaseCount(writer, "fixed_qseries_retained", labos_timing.fixed_qseries_retained, true);
-    try writeLabosPhaseCount(writer, "fixed_rd_skipped", labos_timing.fixed_rd_skipped, true);
-    try writeLabosPhaseCount(writer, "fixed_rd_retained", labos_timing.fixed_rd_retained, true);
-    try writeLabosPhaseCount(writer, "fixed_tu_skipped", labos_timing.fixed_tu_skipped, true);
-    try writeLabosPhaseCount(writer, "fixed_tu_retained", labos_timing.fixed_tu_retained, true);
-    try writeLabosPhaseCount(writer, "fixed_td_skipped", labos_timing.fixed_td_skipped, true);
-    try writeLabosPhaseCount(writer, "fixed_td_retained", labos_timing.fixed_td_retained, false);
+    try writeStageCostCount(writer, "fixed_doubling_steps", labos_timing.fixed_doubling_steps, true);
+    try writeStageCostCount(writer, "fixed_qseries_skipped", labos_timing.fixed_qseries_skipped, true);
+    try writeStageCostCount(writer, "fixed_qseries_retained", labos_timing.fixed_qseries_retained, true);
+    try writeStageCostCount(writer, "fixed_rd_skipped", labos_timing.fixed_rd_skipped, true);
+    try writeStageCostCount(writer, "fixed_rd_retained", labos_timing.fixed_rd_retained, true);
+    try writeStageCostCount(writer, "fixed_tu_skipped", labos_timing.fixed_tu_skipped, true);
+    try writeStageCostCount(writer, "fixed_tu_retained", labos_timing.fixed_tu_retained, true);
+    try writeStageCostCount(writer, "fixed_td_skipped", labos_timing.fixed_td_skipped, true);
+    try writeStageCostCount(writer, "fixed_td_retained", labos_timing.fixed_td_retained, false);
 }
 
-fn writeLabosPhaseCount(
+fn writeStageCostCount(
     writer: *std.Io.Writer,
     name: []const u8,
     counter: anytype,
@@ -774,7 +771,7 @@ fn writeLabosPhaseCount(
     );
 }
 
-fn writeLabosPhaseCounter(
+fn writeStageCostCounter(
     writer: *std.Io.Writer,
     name: []const u8,
     counter: anytype,
@@ -794,54 +791,6 @@ fn writeLabosPhaseCounter(
             counter.count,
             mean_ns,
             if (needs_comma) "," else "",
-        },
-    );
-}
-
-fn writePhaseTiming(
-    writer: *std.Io.Writer,
-    phase_timing: InstrumentGrid.storage.TracePhaseTiming,
-) !void {
-    const radiance_fill_ns =
-        phase_timing.radiance_cache_integration_ns +
-        phase_timing.radiance_convolution_ns +
-        phase_timing.radiance_postprocess_ns;
-    const irradiance_fill_ns =
-        phase_timing.irradiance_sampling_ns +
-        phase_timing.irradiance_convolution_ns +
-        phase_timing.irradiance_postprocess_ns;
-    try writer.print(
-        \\      "wavelength_sampling": {},
-        \\      "forward_miss_collection": {},
-        \\      "profile_spectroscopy_cache": {},
-        \\      "forward_prefetch": {},
-        \\      "radiance_cache_integration": {},
-        \\      "radiance_convolution": {},
-        \\      "radiance_postprocess": {},
-        \\      "radiance_fill": {},
-        \\      "irradiance_sampling": {},
-        \\      "irradiance_convolution": {},
-        \\      "irradiance_postprocess": {},
-        \\      "irradiance_fill": {},
-        \\      "reflectance_assembly": {},
-        \\      "jacobian_processing": {}
-        \\
-    ,
-        .{
-            phase_timing.wavelength_sampling_ns,
-            phase_timing.forward_miss_collection_ns,
-            phase_timing.profile_spectroscopy_cache_ns,
-            phase_timing.forward_prefetch_ns,
-            phase_timing.radiance_cache_integration_ns,
-            phase_timing.radiance_convolution_ns,
-            phase_timing.radiance_postprocess_ns,
-            radiance_fill_ns,
-            phase_timing.irradiance_sampling_ns,
-            phase_timing.irradiance_convolution_ns,
-            phase_timing.irradiance_postprocess_ns,
-            irradiance_fill_ns,
-            phase_timing.reflectance_assembly_ns,
-            phase_timing.jacobian_processing_ns,
         },
     );
 }

@@ -280,6 +280,41 @@ pub fn build(b: *std.Build) void {
         "Run retained C ABI tests with the default O2 A product case",
     ).dependOn(&run_c_api_retained_tests.step);
 
+    const cost_timing_smoke_module = addSourceModule(
+        b,
+        target,
+        optimize,
+        enabled_instrumentation,
+        "src/root.zig",
+    );
+    const cost_timing_smoke = b.addExecutable(.{
+        .name = "cost-timing-forward-smoke",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("scaffolding/instrumentation/cost_timing/zig/cost_timing_forward_smoke.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "zdisamar", .module = cost_timing_smoke_module },
+            },
+        }),
+    });
+    const run_cost_timing_smoke = b.addRunArtifact(cost_timing_smoke);
+    b.step(
+        "cost-timing-forward-smoke",
+        "Run one enabled O2 A forward and emit merged cost timing",
+    ).dependOn(&run_cost_timing_smoke.step);
+    const run_cost_timing_fast_analysis = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "python",
+        "scaffolding/instrumentation/cost_timing/analysis/run_cost_timing_fast_analysis.py",
+    });
+    run_cost_timing_fast_analysis.addArtifactArg(cost_timing_smoke);
+    b.step(
+        "cost-timing-fast-analysis",
+        "Run fast cost-timing analysis gate for one enabled O2 A forward",
+    ).dependOn(&run_cost_timing_fast_analysis.step);
+
     const no_inline_src_tests_cmd = b.addSystemCommand(&.{"scripts/check-no-inline-src-tests.sh"});
     const fmt_check_cmd = b.addFmt(.{
         .check = true,

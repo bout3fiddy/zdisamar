@@ -2,10 +2,13 @@ const std = @import("std");
 const internal = @import("internal");
 const TelemetrySink = @import("calculation_telemetry_sink");
 
-const InstrumentGrid = internal.forward_model.instrument_grid;
+const InstrumentGrid = internal.spectrum;
 const o2a_reference = internal.o2a_reference;
-const RadiativeTransfer = internal.forward_model.radiative_transfer;
-const CalculationTelemetry = internal.forward_model.calculation_telemetry;
+const RadiativeTransfer = struct {
+    const Jacobian = internal.rtm.jacobian_states;
+    const SolveConfig = internal.rtm.controls.SolveConfig;
+};
+const CalculationTelemetry = internal.instrumentation.telemetry;
 
 const default_output_dir = "out/calculation-telemetry-staging/o2a-default";
 const default_start_nm: f64 = 760.0;

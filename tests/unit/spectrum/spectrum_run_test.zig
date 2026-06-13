@@ -85,7 +85,7 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
         },
     };
 
-    try profile_lines.fillSupportLineSigmaAtWavelengthIndex(tables.layers, 0, line_sigma);
+    try profile_lines.fillSupportLineSigmaAtWavelengthIndex(tables.layers, 0, line_sigma, null);
     try layer_depths.fillSupportOpticsAtWavelength(
         wavelength_nm,
         tables.layers,
@@ -93,8 +93,9 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
         tables.cia,
         tables.aerosol,
         expected_support,
+        null,
     );
-    try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, expected_support, expected_layers);
+    try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, expected_support, expected_layers, null);
     layer_depths.fillLayerAerosolJacobians(tables.aerosol, solve_config.derivative_state_mask, expected_layers);
 
     const expected_reflectance = solve.directSurfaceOnly(
@@ -401,6 +402,7 @@ test "runO2ASpectrum matches canonical full spectrum" {
             true,
             null,
             1,
+            &.{},
         );
     defer profile_lines.deinit(allocator);
 
@@ -655,6 +657,7 @@ test "runO2ASpectrum assembles direct-route product reflectance across workers" 
         true,
         null,
         2,
+        true,
         .{
             .dense_radiance = dense[0..],
             .wavelengths_nm = product_wavelengths[0..],
@@ -675,6 +678,7 @@ test "runO2ASpectrum assembles direct-route product reflectance across workers" 
             tables.layers,
             wavelength_index,
             expected_line_sigma,
+            null,
         );
         try layer_depths.fillSupportOpticsAtWavelength(
             wavelength_nm,
@@ -683,8 +687,9 @@ test "runO2ASpectrum assembles direct-route product reflectance across workers" 
             tables.cia,
             tables.aerosol,
             expected_support,
+            null,
         );
-        try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, expected_support, expected_layers);
+        try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, expected_support, expected_layers, null);
         layer_depths.fillLayerAerosolJacobians(tables.aerosol, solve_config.derivative_state_mask, expected_layers);
 
         const expected_transport = solve.directSurfaceOnly(

@@ -8,6 +8,7 @@ const o2_case = @import("../input/o2_case.zig");
 const atmosphere_layers = @import("../setup/atmosphere_layers.zig");
 const line_tables = @import("../setup/line_tables.zig");
 const line_physics = @import("../spectrum/line_physics.zig");
+const CostTiming = @import("../instrumentation/cost_timing.zig");
 const Trace = @import("../instrumentation/trace.zig");
 
 const Allocator = std.mem.Allocator;
@@ -135,6 +136,7 @@ pub const ProfileLineValues = struct {
         layer_grid: atmosphere_layers.LayerGrid,
         wavelength_index: usize,
         out_sigma_cm2_per_molecule: []f64,
+        stage_cost: ?CostTiming.Active,
     ) !void {
         // ProfileLineValues.fillSupportLineSigmaAtWavelengthIndex --------------------------------------------|
         // Sample retained canonical sigma_total profile rows onto the setup support grid.                     |
@@ -152,6 +154,9 @@ pub const ProfileLineValues = struct {
         const node_count = self.support_profile_node_count;
         if (node_count < 3 or node_count > max_spectroscopy_profile_nodes) return error.InvalidShape;
         if (layer_grid.spectroscopy_profile.rows.len != node_count) return error.InvalidShape;
+
+        const timing_start = CostTiming.start(stage_cost);
+        defer CostTiming.finish(stage_cost, timing_start, "profile_interp");
 
         const rows = self.support_profile_values[wavelength_index * node_count .. (wavelength_index + 1) * node_count];
         var altitudes_km: [max_spectroscopy_profile_nodes]f64 = undefined;
@@ -235,6 +240,7 @@ pub fn buildO2ProfileLineValuesForWavelengths(
         true,
         null,
         preferredProfileLineWorkerCount(wavelengths_nm.len),
+        &.{},
     );
 }
 
@@ -247,6 +253,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
     include_temperature_derivatives: bool,
     pool: ?*std.Thread.Pool,
     worker_count: usize,
+    cost_timing_active: []const ?CostTiming.Active,
 ) !ProfileLineValues {
     // buildO2ProfileLineValuesForWavelengthsWithCutoffGrid ---------------------------------------------------|
     // Build retained line values over a caller-provided exact wavelength list.                                |
@@ -304,6 +311,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
             layers.layer_temperatures_k,
             layers.layer_pressures_hpa,
             0.0,
+            cost_timing_active,
         );
         total_weak_states = try prepareLayerWeakLineStates(
             allocator,
@@ -311,6 +319,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
             layers.layer_temperatures_k,
             layers.layer_pressures_hpa,
             0.0,
+            cost_timing_active,
         );
         strong_states = try prepareLayerStrongLineStates(
             allocator,
@@ -318,6 +327,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
             lines.relaxation_matrix,
             layers.layer_temperatures_k,
             layers.layer_pressures_hpa,
+            cost_timing_active,
         );
     }
     defer if (build_layer_values) {
@@ -340,6 +350,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
             layers.layer_temperatures_k,
             layers.layer_pressures_hpa,
             0.5,
+            cost_timing_active,
         );
         errdefer deinitWeakLineStates(allocator, upper_weak_states);
         lower_weak_states = try prepareLayerWeakLineStates(
@@ -348,6 +359,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
             layers.layer_temperatures_k,
             layers.layer_pressures_hpa,
             -0.5,
+            cost_timing_active,
         );
     }
     defer if (build_layer_values and include_temperature_derivatives) {
@@ -358,6 +370,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
         allocator,
         total_lines,
         layers.spectroscopy_profile.rows,
+        cost_timing_active,
     );
     defer deinitWeakLineStates(allocator, support_total_weak_states);
     const support_strong_states = try prepareProfileStrongLineStates(
@@ -365,6 +378,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
         lines.strong_lines,
         lines.relaxation_matrix,
         layers.spectroscopy_profile.rows,
+        cost_timing_active,
     );
     defer allocator.free(support_strong_states);
 
@@ -387,6 +401,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
         support_strong_states,
         values,
         support_profile_values,
+        cost_timing_active,
     );
 
     return .{
@@ -440,6 +455,7 @@ const ProfileLineBuildWorker = struct {
     start_index: usize,
     end_index: usize,
     worker_index: usize = 0,
+    cost_timing_active: []const ?CostTiming.Active,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -466,8 +482,20 @@ const ProfileLineStateWorker = struct {
     strong_states: ?[]StrongLinePreparedState = null,
     queue: *worker_partition.ChunkQueue,
     worker_index: usize,
+    cost_timing_active: []const ?CostTiming.Active,
 };
 // ------------------------------------------------------------------------------------------------------------|
+
+fn costTimingForWorker(
+    cost_timing_active: []const ?CostTiming.Active,
+    worker_index: usize,
+) ?CostTiming.Active {
+    // costTimingForWorker ------------------------------------------------------------------------------------|
+    // Borrow the caller-supplied per-worker cost row when this worker group maps to one.                      |
+    // --------------------------------------------------------------------------------------------------------|
+    if (worker_index >= cost_timing_active.len) return null;
+    return cost_timing_active[worker_index];
+}
 
 fn buildProfileLineValuesByWavelength(
     pool: ?*std.Thread.Pool,
@@ -488,6 +516,7 @@ fn buildProfileLineValuesByWavelength(
     support_strong_states: []const StrongLinePreparedState,
     values: []ProfileLineValue,
     support_profile_values: []ProfileSupportLineValue,
+    cost_timing_active: []const ?CostTiming.Active,
 ) !void {
     // buildProfileLineValuesByWavelength ---------------------------------------------------------------------|
     // Fill retained profile-line values over exact wavelengths, partitioned exactly like the profile          |
@@ -540,6 +569,7 @@ fn buildProfileLineValuesByWavelength(
             .start_index = range.start,
             .end_index = range.end,
             .worker_index = worker_index,
+            .cost_timing_active = cost_timing_active,
         };
     }
 
@@ -609,6 +639,7 @@ fn fillProfileLineValueRowsAtWavelength(worker: *ProfileLineBuildWorker, wavelen
         worker.runtime.cutoff_grid_wavelengths_nm,
         worker.runtime.cutoff_grid_wavenumbers_cm1,
     );
+    const stage_cost = costTimingForWorker(worker.cost_timing_active, worker.worker_index);
     for (worker.layer_pressures_hpa, worker.layer_temperatures_k, 0..) |pressure_hpa, temperature_k, node_index| {
         const sigma = line_physics.weakLineSigmaAtPrepared(
             worker.active_lines,
@@ -658,6 +689,7 @@ fn fillProfileLineValueRowsAtWavelength(worker: *ProfileLineBuildWorker, wavelen
             worker.runtime.line_mixing_factor,
             &worker.strong_states[node_index],
             &worker.total_weak_states[node_index],
+            stage_cost,
         );
         const row_index = wavelength_index * worker.layer_pressures_hpa.len + node_index;
         worker.values[row_index] = .{
@@ -687,6 +719,7 @@ fn fillSupportProfileLineValueRowsAtWavelength(worker: *ProfileLineBuildWorker, 
         worker.runtime.cutoff_grid_wavelengths_nm,
         worker.runtime.cutoff_grid_wavenumbers_cm1,
     );
+    const stage_cost = costTimingForWorker(worker.cost_timing_active, worker.worker_index);
     for (worker.support_profile_rows, 0..) |profile_row, node_index| {
         const total = line_physics.totalSpectroscopyAt(
             worker.total_lines,
@@ -703,6 +736,7 @@ fn fillSupportProfileLineValueRowsAtWavelength(worker: *ProfileLineBuildWorker, 
             worker.runtime.line_mixing_factor,
             &worker.support_strong_states[node_index],
             &worker.support_total_weak_states[node_index],
+            stage_cost,
         );
         const row_index = wavelength_index * worker.support_profile_rows.len + node_index;
         worker.support_profile_values[row_index] = .{
@@ -967,6 +1001,7 @@ fn prepareLayerWeakLineStates(
     temperatures_k: []const f64,
     pressures_hpa: []const f64,
     temperature_offset_k: f64,
+    cost_timing_active: []const ?CostTiming.Active,
 ) ![]WeakLinePreparedState {
     // prepareLayerWeakLineStates -----------------------------------------------------------------------------|
     // Prepare one weak-line state per layer profile node for the exact-route setup grid.                      |
@@ -978,6 +1013,7 @@ fn prepareLayerWeakLineStates(
         temperatures_k,
         pressures_hpa,
         temperature_offset_k,
+        cost_timing_active,
     );
 }
 
@@ -985,6 +1021,7 @@ fn prepareProfileWeakLineStates(
     allocator: Allocator,
     lines: []const readers.O2LineAssetRow,
     profile_rows: []const readers.AtmosphereProfileRow,
+    cost_timing_active: []const ?CostTiming.Active,
 ) ![]WeakLinePreparedState {
     // prepareProfileWeakLineStates ---------------------------------------------------------------------------|
     // Prepare one weak-line state per vendor spectroscopy-profile row for support-row interpolation.          |
@@ -1004,6 +1041,7 @@ fn prepareProfileWeakLineStates(
         temperatures_k[0..profile_rows.len],
         pressures_hpa[0..profile_rows.len],
         0.0,
+        cost_timing_active,
     );
 }
 
@@ -1013,6 +1051,7 @@ fn prepareWeakLineStatesForRows(
     temperatures_k: []const f64,
     pressures_hpa: []const f64,
     temperature_offset_k: f64,
+    cost_timing_active: []const ?CostTiming.Active,
 ) ![]WeakLinePreparedState {
     // prepareWeakLineStatesForRows ---------------------------------------------------------------------------|
     // Allocate weak-line row storage serially, then fill thermodynamic state rows through raw worker chunks.  |
@@ -1048,6 +1087,7 @@ fn prepareWeakLineStatesForRows(
         temperature_offset_k,
         states,
         null,
+        cost_timing_active,
     );
     return states;
 }
@@ -1058,6 +1098,7 @@ fn prepareLayerStrongLineStates(
     relaxation_matrix: readers.O2RelaxationMatrixAsset,
     temperatures_k: []const f64,
     pressures_hpa: []const f64,
+    cost_timing_active: []const ?CostTiming.Active,
 ) ![]StrongLinePreparedState {
     // prepareLayerStrongLineStates ---------------------------------------------------------------------------|
     // Prepare one strong-line ConvTP state per layer profile node through the raw worker policy.              |
@@ -1075,6 +1116,7 @@ fn prepareLayerStrongLineStates(
         0.0,
         null,
         states,
+        cost_timing_active,
     );
     return states;
 }
@@ -1084,6 +1126,7 @@ fn prepareProfileStrongLineStates(
     strong_lines: []const readers.O2StrongLineAssetRow,
     relaxation_matrix: readers.O2RelaxationMatrixAsset,
     profile_rows: []const readers.AtmosphereProfileRow,
+    cost_timing_active: []const ?CostTiming.Active,
 ) ![]StrongLinePreparedState {
     // prepareProfileStrongLineStates -------------------------------------------------------------------------|
     // Prepare one strong-line ConvTP state per spectroscopy-profile row through the raw worker policy.        |
@@ -1103,6 +1146,7 @@ fn prepareProfileStrongLineStates(
         relaxation_matrix,
         temperatures_k[0..profile_rows.len],
         pressures_hpa[0..profile_rows.len],
+        cost_timing_active,
     );
 }
 
@@ -1115,6 +1159,7 @@ fn fillProfileLineStates(
     temperature_offset_k: f64,
     weak_states: ?[]WeakLinePreparedState,
     strong_states: ?[]StrongLinePreparedState,
+    cost_timing_active: []const ?CostTiming.Active,
 ) void {
     // fillProfileLineStates ----------------------------------------------------------------------------------|
     // Fill weak and/or strong line states with the profile-line-state worker policy.                          |
@@ -1143,6 +1188,7 @@ fn fillProfileLineStates(
             .strong_states = strong_states,
             .queue = &queue,
             .worker_index = worker_index,
+            .cost_timing_active = cost_timing_active,
         };
     }
 
@@ -1192,6 +1238,7 @@ fn fillProfileLineStateRows(worker: *ProfileLineStateWorker, start: usize, end: 
     // fillProfileLineStateRows -------------------------------------------------------------------------------|
     // Fill one contiguous thermodynamic profile-node range claimed by the raw worker queue.                   |
     // --------------------------------------------------------------------------------------------------------|
+    const stage_cost = costTimingForWorker(worker.cost_timing_active, worker.worker_index);
     for (start..end) |index| {
         const pressure_atm = @max(worker.pressures_hpa[index] / 1013.25, min_spectroscopy_pressure_atm);
         if (worker.weak_states) |states| {
@@ -1200,6 +1247,7 @@ fn fillProfileLineStateRows(worker: *ProfileLineStateWorker, start: usize, end: 
                 worker.lines,
                 @max(worker.temperatures_k[index] + worker.temperature_offset_k, min_hitran_temperature_k),
                 pressure_atm,
+                stage_cost,
             );
         }
         if (worker.strong_states) |states| {
@@ -1208,6 +1256,7 @@ fn fillProfileLineStateRows(worker: *ProfileLineStateWorker, start: usize, end: 
                 worker.relaxation_matrix,
                 worker.temperatures_k[index],
                 pressure_atm,
+                stage_cost,
             );
         }
     }

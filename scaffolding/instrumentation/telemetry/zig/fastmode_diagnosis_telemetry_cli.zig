@@ -2,9 +2,9 @@ const std = @import("std");
 const internal = @import("internal");
 const TelemetrySink = @import("calculation_telemetry_sink");
 
-const CalculationTelemetry = internal.forward_model.calculation_telemetry;
-const InstrumentGrid = internal.forward_model.instrument_grid;
-const OptimalEstimation = internal.optimal_estimation;
+const CalculationTelemetry = internal.instrumentation.telemetry;
+const InstrumentGrid = internal.spectrum;
+const OptimalEstimation = internal.retrieval.root;
 const o2a_reference = internal.o2a_reference;
 
 const default_output_dir = "out/fastmode-diagnosis-telemetry/raw";
@@ -196,24 +196,37 @@ fn flattenStarts(allocator: std.mem.Allocator, starts: [][2]f64) ![]f64 {
 fn parseArgs(args: []const []const u8) !Config {
     var config: Config = .{};
     var index: usize = 1;
+
     while (index < args.len) : (index += 1) {
         const arg = args[index];
+
         if (std.mem.eql(u8, arg, "--input-dir")) {
             index += 1;
             if (index >= args.len) return error.MissingInputDir;
+
             config.input_dir = args[index];
-        } else if (std.mem.eql(u8, arg, "--output-dir")) {
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--output-dir")) {
             index += 1;
             if (index >= args.len) return error.MissingOutputDir;
+
             config.output_dir = args[index];
-        } else if (std.mem.eql(u8, arg, "--batch-workers")) {
+            continue;
+        }
+
+        if (std.mem.eql(u8, arg, "--batch-workers")) {
             index += 1;
             if (index >= args.len) return error.MissingBatchWorkers;
+
             config.batch_workers = try std.fmt.parseInt(usize, args[index], 10);
-        } else {
-            return error.UnsupportedArgument;
+            continue;
         }
+
+        return error.UnsupportedArgument;
     }
+
     if (config.batch_workers == 0) return error.InvalidBatchWorkers;
     return config;
 }
@@ -270,7 +283,19 @@ fn writeSummary(
     for (0..result.run_count) |run_index| {
         const state_offset = run_index * result.state_count;
         try writer.interface.print(
-            \\    {{"start_index": {}, "start_aod": {e:.17}, "start_alh_hpa": {e:.17}, "retrieved_aod": {e:.17}, "retrieved_alh_hpa": {e:.17}, "iterations": {}, "converged": {}, "fast_stage_iterations": {}, "fast_stage_converged": {}, "full_correction_iterations": {}, "full_correction_converged": {}}}{s}
+            \\    {{
+            \\      "start_index": {},
+            \\      "start_aod": {e:.17},
+            \\      "start_alh_hpa": {e:.17},
+            \\      "retrieved_aod": {e:.17},
+            \\      "retrieved_alh_hpa": {e:.17},
+            \\      "iterations": {},
+            \\      "converged": {},
+            \\      "fast_stage_iterations": {},
+            \\      "fast_stage_converged": {},
+            \\      "full_correction_iterations": {},
+            \\      "full_correction_converged": {}
+            \\    }}{s}
             \\
         ,
             .{

@@ -12,7 +12,7 @@ One row per captured expression.
 | `expr_id` | integer | Stable numeric expression identifier used by event rows. |
 | `expr_name` | string | Human-readable expression name. |
 | `row_table` | string | Event table that contains rows for this expression. |
-| `subsystem` | string | Coarse model subsystem, currently `instrument_grid` or `labos`. |
+| `subsystem` | string | Coarse model subsystem, currently `spectrum` or `rtm`. |
 | `equation` | string | Math equation or decision rule being captured. |
 | `result_name` | string | Scientific name of the captured result. |
 | `inputs` | string | Comma-separated input variable names captured in `input_*` or `param_*`. |

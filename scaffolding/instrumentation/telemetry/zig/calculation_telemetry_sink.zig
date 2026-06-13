@@ -231,12 +231,14 @@ const expressions = [_]ExpressionMeta{
         .expr = .sampling_kernel_shape,
         .expr_name = "sampling_kernel_shape",
         .row_table = "reduction_expression_rows",
-        .subsystem = "instrument_grid",
-        .equation = "integrated_rows = count(enabled radiance/irradiance kernels); side_samples = count(non-inline integration samples)",
+        .subsystem = "spectrum",
+        .equation = "integrated_rows = count(enabled radiance/irradiance kernels); " ++
+            "side_samples = count(non-inline integration samples)",
         .result_name = "side_sample_count",
-        .inputs = "row_count,radiance_integrated_rows,irradiance_integrated_rows,radiance_sample_count,irradiance_sample_count",
+        .inputs = "row_count,radiance_integrated_rows,irradiance_integrated_rows," ++
+            "radiance_sample_count,irradiance_sample_count",
         .units = "count",
-        .source_file = "src/forward_model/instrument_grid/grid_calculation/wavelength_sampling.zig",
+        .source_file = "src/spectrum/sampling_table.zig",
         .function = "recordWavelengthSamplingPlan",
         .capture_reason = "Find integration kernels that create side storage and extra forward work.",
     },
@@ -244,12 +246,12 @@ const expressions = [_]ExpressionMeta{
         .expr = .forward_miss_reuse,
         .expr_name = "forward_miss_reuse",
         .row_table = "reduction_expression_rows",
-        .subsystem = "instrument_grid",
+        .subsystem = "spectrum",
         .equation = "unique_fraction = miss_count / sample_index_count",
         .result_name = "unique_fraction",
         .inputs = "sample_index_count,miss_count",
         .units = "fraction",
-        .source_file = "src/forward_model/instrument_grid/grid_calculation/wavelength_sampling.zig",
+        .source_file = "src/spectrum/sampling_table.zig",
         .function = "buildForwardMissPlan",
         .capture_reason = "Quantify wavelength-cache reuse created by spectral integration.",
     },
@@ -257,12 +259,12 @@ const expressions = [_]ExpressionMeta{
         .expr = .reflectance_assembly,
         .expr_name = "reflectance_assembly",
         .row_table = "reduction_expression_rows",
-        .subsystem = "instrument_grid",
+        .subsystem = "spectrum",
         .equation = "rho_i = pi * radiance_i / max(irradiance_i * mu0, 1e-9)",
         .result_name = "max_reflectance",
         .inputs = "sample_count,denominator_clamp_count,min_denominator",
         .units = "reflectance",
-        .source_file = "src/forward_model/instrument_grid/grid_calculation/simulate.zig",
+        .source_file = "src/spectrum/spectrum_run.zig",
         .function = "assembleReflectance",
         .capture_reason = "Detect denominator clamps and reflectance outliers.",
     },
@@ -270,12 +272,12 @@ const expressions = [_]ExpressionMeta{
         .expr = .jacobian_column,
         .expr_name = "jacobian_column",
         .row_table = "reduction_expression_rows",
-        .subsystem = "instrument_grid",
+        .subsystem = "spectrum",
         .equation = "mean_j = sum_i J_i / N",
         .result_name = "mean_jacobian",
         .inputs = "state_index,column_sum,sample_count",
         .units = "state derivative",
-        .source_file = "src/forward_model/instrument_grid/grid_calculation/simulate.zig",
+        .source_file = "src/spectrum/spectrum_run.zig",
         .function = "processJacobianSamples",
         .capture_reason = "Find derivative columns with negligible or extreme contribution.",
     },
@@ -283,12 +285,12 @@ const expressions = [_]ExpressionMeta{
         .expr = .labos_effective_scattering_depth,
         .expr_name = "labos_effective_scattering_depth",
         .row_table = "scalar_expression_rows",
-        .subsystem = "labos",
+        .subsystem = "rtm",
         .equation = "tau_eff = tau * omega0 * max_l(|beta_l| / (2l + 1))",
         .result_name = "effective_scattering_depth",
         .inputs = "optical_depth,single_scatter_albedo,max_beta_eff",
         .units = "optical depth",
-        .source_file = "src/forward_model/radiative_transfer/labos/layers.zig",
+        .source_file = "src/rtm/layer_reflect_transmit.zig",
         .function = "calcRTlayersIntoWithBasis",
         .capture_reason = "Study when LABOS layer-doubling work is physically relevant.",
     },
@@ -296,12 +298,12 @@ const expressions = [_]ExpressionMeta{
         .expr = .labos_doubling_trigger,
         .expr_name = "labos_doubling_trigger",
         .row_table = "decision_rows",
-        .subsystem = "labos",
+        .subsystem = "rtm",
         .equation = "uses_doubling = tau_eff > threshold_doubl",
         .result_name = "uses_doubling",
         .inputs = "effective_scattering_depth,threshold_doubl",
         .units = "boolean",
-        .source_file = "src/forward_model/radiative_transfer/labos/layers.zig",
+        .source_file = "src/rtm/layer_reflect_transmit.zig",
         .function = "calcRTlayersIntoWithBasis",
         .capture_reason = "Measure threshold margins around expensive layer doubling.",
     },
@@ -309,12 +311,12 @@ const expressions = [_]ExpressionMeta{
         .expr = .labos_qseries_skip,
         .expr_name = "labos_qseries_skip",
         .row_table = "decision_rows",
-        .subsystem = "labos",
+        .subsystem = "rtm",
         .equation = "qseries_is_zero = abs(trace(R)^2) <= threshold_mul",
         .result_name = "qseries_is_zero",
         .inputs = "trace_r,threshold_mul",
         .units = "boolean",
-        .source_file = "src/forward_model/radiative_transfer/labos/layers.zig",
+        .source_file = "src/rtm/layer_reflect_transmit.zig",
         .function = "doDouble/doDouble12x10Step",
         .capture_reason = "Identify q-series products whose contribution is below the fast-mode cutoff.",
     },
@@ -322,12 +324,12 @@ const expressions = [_]ExpressionMeta{
         .expr = .labos_qseries_rd_product,
         .expr_name = "labos_qseries_rd_product",
         .row_table = "decision_rows",
-        .subsystem = "labos",
+        .subsystem = "rtm",
         .equation = "rd_nonzero = abs(trace(R) * trace(D)) > threshold_mul",
         .result_name = "rd_nonzero",
         .inputs = "trace_r,trace_d,threshold_mul,qseries_is_zero",
         .units = "boolean",
-        .source_file = "src/forward_model/radiative_transfer/labos/layers.zig",
+        .source_file = "src/rtm/layer_reflect_transmit.zig",
         .function = "doDouble/doDouble12x10Step",
         .capture_reason = "Test whether q-series zero decisions imply downstream R-D products can also be skipped.",
     },
@@ -335,12 +337,12 @@ const expressions = [_]ExpressionMeta{
         .expr = .labos_qseries_tu_product,
         .expr_name = "labos_qseries_tu_product",
         .row_table = "decision_rows",
-        .subsystem = "labos",
+        .subsystem = "rtm",
         .equation = "tu_nonzero = abs(trace(T) * trace(U)) > threshold_mul",
         .result_name = "tu_nonzero",
         .inputs = "trace_t,trace_u,threshold_mul,qseries_is_zero",
         .units = "boolean",
-        .source_file = "src/forward_model/radiative_transfer/labos/layers.zig",
+        .source_file = "src/rtm/layer_reflect_transmit.zig",
         .function = "doDouble/doDouble12x10Step",
         .capture_reason = "Test whether q-series zero decisions imply downstream T-U products can also be skipped.",
     },
@@ -348,12 +350,12 @@ const expressions = [_]ExpressionMeta{
         .expr = .labos_qseries_td_product,
         .expr_name = "labos_qseries_td_product",
         .row_table = "decision_rows",
-        .subsystem = "labos",
+        .subsystem = "rtm",
         .equation = "td_nonzero = abs(trace(T) * trace(D)) > threshold_mul",
         .result_name = "td_nonzero",
         .inputs = "trace_t,trace_d,threshold_mul,qseries_is_zero",
         .units = "boolean",
-        .source_file = "src/forward_model/radiative_transfer/labos/layers.zig",
+        .source_file = "src/rtm/layer_reflect_transmit.zig",
         .function = "doDouble/doDouble12x10Step",
         .capture_reason = "Test whether q-series zero decisions imply downstream T-D products can also be skipped.",
     },
@@ -361,12 +363,12 @@ const expressions = [_]ExpressionMeta{
         .expr = .orders_convergence,
         .expr_name = "orders_convergence",
         .row_table = "decision_rows",
-        .subsystem = "labos",
+        .subsystem = "rtm",
         .equation = "stop_orders = max_outgoing_upward < threshold_conv",
         .result_name = "stop_orders",
         .inputs = "max_outgoing_upward,threshold_conv",
         .units = "boolean",
-        .source_file = "src/forward_model/radiative_transfer/labos/orders.zig",
+        .source_file = "src/rtm/scattering_orders.zig",
         .function = "ordersScatIntoWithWorkspace",
         .capture_reason = "Study scattering-order convergence margins and iteration caps.",
     },
@@ -374,12 +376,12 @@ const expressions = [_]ExpressionMeta{
         .expr = .fourier_weighted_reflectance,
         .expr_name = "fourier_weighted_reflectance",
         .row_table = "scalar_expression_rows",
-        .subsystem = "labos",
+        .subsystem = "rtm",
         .equation = "rho_m_weighted = c_m * rho_m, c_0=1, c_m=2*cos(m*relative_azimuth)",
         .result_name = "weighted_reflectance",
         .inputs = "term_reflectance,fourier_weight",
         .units = "reflectance",
-        .source_file = "src/forward_model/radiative_transfer/labos/execute.zig",
+        .source_file = "src/rtm/solve.zig",
         .function = "layerResolvedLabosWithWorkspace",
         .capture_reason = "Find Fourier terms that add no meaningful reflectance.",
     },
@@ -387,12 +389,12 @@ const expressions = [_]ExpressionMeta{
         .expr = .fourier_tail_break,
         .expr_name = "fourier_tail_break",
         .row_table = "decision_rows",
-        .subsystem = "labos",
+        .subsystem = "rtm",
         .equation = "tail_break = m >= fourier_floor_scalar and abs(rho_m) <= fourier_tail_reflectance_epsilon",
         .result_name = "tail_break",
         .inputs = "term_reflectance,tail_threshold",
         .units = "boolean",
-        .source_file = "src/forward_model/radiative_transfer/labos/execute.zig",
+        .source_file = "src/rtm/solve.zig",
         .function = "layerResolvedLabosWithWorkspace",
         .capture_reason = "Quantify how early Fourier expansion can terminate.",
     },
@@ -400,12 +402,12 @@ const expressions = [_]ExpressionMeta{
         .expr = .labos_reflectance_clamp,
         .expr_name = "labos_reflectance_clamp",
         .row_table = "scalar_expression_rows",
-        .subsystem = "labos",
+        .subsystem = "rtm",
         .equation = "rho_out = clamp(rho_raw, 0, 2)",
         .result_name = "clamped_reflectance",
         .inputs = "raw_reflectance",
         .units = "reflectance",
-        .source_file = "src/forward_model/radiative_transfer/labos/execute.zig",
+        .source_file = "src/rtm/solve.zig",
         .function = "layerResolvedLabosWithWorkspace",
         .capture_reason = "Detect physically suspicious raw reflectance values.",
     },
@@ -413,12 +415,12 @@ const expressions = [_]ExpressionMeta{
         .expr = .labos_jacobian_norm1,
         .expr_name = "labos_jacobian_norm1",
         .row_table = "scalar_expression_rows",
-        .subsystem = "labos",
+        .subsystem = "rtm",
         .equation = "jacobian_norm1 = sum_s abs(d rho / d state_s)",
         .result_name = "jacobian_norm1",
         .inputs = "jacobian_vector",
         .units = "reflectance derivative",
-        .source_file = "src/forward_model/radiative_transfer/labos/execute.zig",
+        .source_file = "src/rtm/solve.zig",
         .function = "layerResolvedLabosWithWorkspace",
         .capture_reason = "Find forward samples with negligible derivative signal.",
     },
@@ -602,6 +604,7 @@ var active_collector_ptr = std.atomic.Value(usize).init(0);
 // instrumentation: telemetry activation
 // captures: active collector pointer
 // why: bound row capture to the current harness process.
+
 pub fn setCollector(collector: *Collector) void {
     active_collector_ptr.store(@intFromPtr(collector), .release);
 }
@@ -609,6 +612,7 @@ pub fn setCollector(collector: *Collector) void {
 // instrumentation: telemetry activation
 // captures: collector teardown
 // why: stop hooks from writing after the harness closes files.
+
 pub fn clearCollector() void {
     active_collector_ptr.store(0, .release);
 }
@@ -628,6 +632,7 @@ pub fn clearContext() void {
 // instrumentation: calculation telemetry
 // captures: integration kernel counts
 // why: quantify spectral sampling fan-out.
+
 pub fn wavelengthSamplingPlan(
     row_count: usize,
     radiance_integrated_rows: usize,
@@ -659,6 +664,7 @@ pub fn wavelengthSamplingPlan(
 // instrumentation: calculation telemetry
 // captures: unique forward-cache misses
 // why: measure wavelength reuse from integration plans.
+
 pub fn forwardMissPlan(row_count: usize, sample_index_count: usize, miss_count: usize) void {
     recordReduction(
         .forward_miss_reuse,
@@ -678,6 +684,7 @@ pub fn forwardMissPlan(row_count: usize, sample_index_count: usize, miss_count: 
 // instrumentation: calculation telemetry
 // captures: reflectance denominator clamps and maxima
 // why: detect unstable output assembly.
+
 pub fn reflectanceAssembly(
     sample_count: usize,
     denominator_clamp_count: usize,
@@ -701,6 +708,7 @@ pub fn reflectanceAssembly(
 // instrumentation: calculation telemetry
 // captures: Jacobian column sums and maxima
 // why: find weak derivative signals for OE pruning.
+
 pub fn jacobianColumn(state_index: usize, sum: f64, mean: f64, max_abs: f64) void {
     recordReduction(
         .jacobian_column,
@@ -717,6 +725,7 @@ pub fn jacobianColumn(state_index: usize, sum: f64, mean: f64, max_abs: f64) voi
 // instrumentation: calculation telemetry
 // captures: LABOS layer-doubling threshold inputs
 // why: study which layer/Fourier coordinates need doubling.
+
 pub fn labosLayerDecision(
     i_fourier: usize,
     layer_index: usize,
@@ -765,6 +774,7 @@ pub fn labosLayerDecision(
 // instrumentation: calculation telemetry
 // captures: q-series skip margin per doubling step
 // why: identify coordinates where Q=(I-RR)^-1-I is negligible.
+
 pub fn labosDoublingStep(
     i_fourier: usize,
     layer_index: usize,
@@ -797,6 +807,7 @@ pub fn labosDoublingStep(
 // instrumentation: calculation telemetry
 // captures: downstream R-D/T-U/T-D product gates
 // why: test if q-zero branches imply more matrix work can be skipped.
+
 pub fn labosDoublingDownstreamGates(
     i_fourier: usize,
     layer_index: usize,
@@ -860,6 +871,7 @@ pub fn labosDoublingDownstreamGates(
 // instrumentation: calculation telemetry
 // captures: scattering-order stop margins
 // why: tune order convergence without losing reflectance.
+
 pub fn ordersConvergence(
     iteration_count: usize,
     max_iteration_count: usize,
@@ -868,11 +880,13 @@ pub fn ordersConvergence(
     returned_initial: bool,
     hit_iteration_cap: bool,
 ) void {
+    const branch = if (returned_initial) 1 else 2;
+
     recordDecision(
         .orders_convergence,
         .{
             .order_index = index(iteration_count),
-            .branch = if (returned_initial) 1 else 2,
+            .branch = branch,
         },
         .{
             .lhs = max_outgoing_upward,
@@ -888,6 +902,7 @@ pub fn ordersConvergence(
 // instrumentation: calculation telemetry
 // captures: Fourier term contribution and tail stop
 // why: locate late terms with negligible reflectance.
+
 pub fn fourierContribution(
     i_fourier: usize,
     fourier_weight: f64,
@@ -925,6 +940,7 @@ pub fn fourierContribution(
 // instrumentation: calculation telemetry
 // captures: raw/clamped LABOS reflectance and Jacobian norm
 // why: detect suspicious outputs and weak derivatives.
+
 pub fn labosResult(raw_reflectance: f64, clamped_reflectance: f64, jacobian_norm1: f64) void {
     recordScalar(
         .labos_reflectance_clamp,

@@ -2,6 +2,7 @@ const std = @import("std");
 
 const cia_absorption = @import("cia_absorption.zig");
 const jacobian_states = @import("../rtm/jacobian_states.zig");
+const CostTiming = @import("../instrumentation/cost_timing.zig");
 const rayleigh = @import("rayleigh.zig");
 const spline = @import("../common/math/spline.zig");
 const aerosol_tables = @import("../setup/aerosol_tables.zig");
@@ -203,6 +204,7 @@ pub fn fillSupportOpticsAtWavelength(
     cia: cia_table.O2CiaTable,
     aerosol: aerosol_tables.AerosolLayerTable,
     noalias out_support: []SupportOptics,
+    stage_cost: ?CostTiming.Active,
 ) !void {
     // fillSupportOpticsAtWavelength ------------------------------------------------------------------------- |
     // Fill support-row optical depths for one wavelength without allocation.                                  |
@@ -220,6 +222,9 @@ pub fn fillSupportOpticsAtWavelength(
     if (line_sigma_cm2_per_molecule.len != support_count or out_support.len != support_count) {
         return error.InvalidShape;
     }
+
+    const timing_start = CostTiming.start(stage_cost);
+    defer CostTiming.finish(stage_cost, timing_start, "optics_assembly");
 
     const rayleigh_sigma_cm2 = rayleigh.crossSectionCm2(wavelength_nm);
     const cia_coefficients = cia_absorption.interpolateCoefficients(cia.rows, wavelength_nm);
@@ -510,6 +515,7 @@ pub fn reduceLayerOpticsFromSupportRows(
     layer_grid: atmosphere_layers.LayerGrid,
     support_rows: []const SupportOptics,
     out_layers: []LayerOptics,
+    stage_cost: ?CostTiming.Active,
 ) !void {
     // reduceLayerOpticsFromSupportRows ---------------------------------------------------------------------- |
     // Sum active support rows into one LABOS transport row per layer. Boundary rows mark edges and have zero  |
@@ -519,6 +525,9 @@ pub fn reduceLayerOpticsFromSupportRows(
     {
         return error.InvalidShape;
     }
+
+    const timing_start = CostTiming.start(stage_cost);
+    defer CostTiming.finish(stage_cost, timing_start, "quadrature_build");
 
     for (out_layers, 0..) |*layer, layer_index| {
         const support_start: usize = @intCast(layer_grid.layer_support_starts[layer_index]);

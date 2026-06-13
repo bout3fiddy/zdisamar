@@ -246,7 +246,7 @@ test "ProfileLineValues preserve caller-provided exact wavelength order" {
     const support_sigma = try std.testing.allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);
     defer std.testing.allocator.free(support_sigma);
 
-    try values.fillSupportLineSigmaAtWavelengthIndex(tables.layers, 1, support_sigma);
+    try values.fillSupportLineSigmaAtWavelengthIndex(tables.layers, 1, support_sigma, null);
     const expected_support = support_line_sigma_evidence[0];
     const support_index: usize = @intCast(expected_support.support_index);
     const expected_sigma =
@@ -270,6 +270,7 @@ test "ProfileLineValues parallel wavelength build matches serial rows" {
         true,
         null,
         1,
+        &.{},
     );
     defer serial.deinit(allocator);
 
@@ -282,6 +283,7 @@ test "ProfileLineValues parallel wavelength build matches serial rows" {
         true,
         null,
         2,
+        &.{},
     );
     defer parallel.deinit(allocator);
 
@@ -321,7 +323,7 @@ test "ProfileLineValues fill support-row sigma from atmospheric-budget evidence"
         );
         defer values.deinit(std.testing.allocator);
 
-        try values.fillSupportLineSigmaAtWavelengthIndex(tables.layers, 0, support_sigma);
+        try values.fillSupportLineSigmaAtWavelengthIndex(tables.layers, 0, support_sigma, null);
 
         const support_index: usize = @intCast(expected.support_index);
         const expected_sigma =

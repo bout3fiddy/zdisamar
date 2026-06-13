@@ -1066,6 +1066,9 @@ pub fn doubleLayer(
     //   records the same trace pair so threshold studies can compare dynamic and fixed 12x10 routes.          |
     // --------------------------------------------------------------------------------------------------------|
 
+    const trace_start = CostTiming.start(stage_cost);
+    defer CostTiming.finish(stage_cost, trace_start, "rt_layer_doubling");
+
     if (n == rows.max_stream_count and n_gauss == rows.max_gauss) {
         return doubleLayer12x10(
             doubling_count,

@@ -13,6 +13,7 @@ const reflectance_helpers = @import("reflectance.zig");
 const rows = @import("rows.zig");
 const scattering_orders = @import("scattering_orders.zig");
 const source_levels = @import("../optics/source_levels.zig");
+const CostTiming = @import("../instrumentation/cost_timing.zig");
 const Perturbation = @import("../instrumentation/sensitivity.zig");
 
 const math = std.math;
@@ -101,7 +102,7 @@ pub const ReflectanceResult = struct {
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // normal build: size 368 B (0.359 KiB), align 8                                                               |
-// trace build : size 376 B (0.367 KiB), align 8                                                               |
+// cost build  : size 384 B (0.375 KiB), align 8                                                               |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0..  7] geometry                     : *GaussGeometry                                                    |
@@ -116,16 +117,20 @@ pub const ReflectanceResult = struct {
 // [136..151] source_phase_max_indices     : []usize                                                           |
 // [152..167] phase_row_cache              : []PhaseKernelRow                                                  |
 // [168..183] phase_row_valid              : []bool                                                            |
-// [184..199] curved_level_starts          : []const usize                                                     |
-// [200..215] curved_level_altitudes_km    : []const f64                                                       |
+// [184..183] normal build: cost_timing_state: WorkspaceState                                                  |
+// [184..199] normal build: curved_level_starts: []const usize                                                 |
+// [200..215] normal build: curved_level_altitudes_km: []const f64                                             |
 // [216..327] normal build: orders         : OrdersWorkArrays                                                  |
 // [328..343] normal build: plm_basis_cache: []FourierPlmBasis                                                 |
 // [344..359] normal build: valid flags    : []bool                                                            |
 // [360..367] normal build: geometry_valid : *bool                                                             |
-// [328..335] trace build only: orders extra trace field                                                       |
-// [336..351] trace build : plm_basis_cache: []FourierPlmBasis                                                 |
-// [352..367] trace build : valid flags    : []bool                                                            |
-// [368..375] trace build : geometry_valid : *bool                                                             |
+// [184..191] cost build : cost_timing_state : WorkspaceState                                                  |
+// [192..207] cost build : curved_level_starts: []const usize                                                  |
+// [208..223] cost build : curved_level_altitudes_km: []const f64                                              |
+// [224..343] cost build : orders          : OrdersWorkArrays                                                  |
+// [344..359] cost build : plm_basis_cache : []FourierPlmBasis                                                 |
+// [360..375] cost build : valid flags     : []bool                                                            |
+// [376..383] cost build : geometry_valid  : *bool                                                             |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Every slice borrows caller-owned memory, normally from TransportWorkerMemory.                             |
@@ -143,6 +148,7 @@ pub const TransportWorkArrays = struct {
     source_phase_max_indices: []usize,
     phase_row_cache: []phase_basis.PhaseKernelRow,
     phase_row_valid: []bool,
+    cost_timing_state: CostTiming.WorkspaceState,
     curved_level_starts: []const usize,
     curved_level_altitudes_km: []const f64,
     orders: scattering_orders.OrdersWorkArrays,
@@ -306,6 +312,11 @@ fn solveLayerResolvedScattering(
     // --------------------------------------------------------------------------------------------------------|
     if (layers.len == 0) return .{ .reflectance = 0.0 };
 
+    const stage_cost = CostTiming.activeWorkspaceState(&work.cost_timing_state);
+    const execute_start = CostTiming.start(stage_cost);
+    defer CostTiming.finish(stage_cost, execute_start, "execute");
+    work.orders.setCostTiming(stage_cost);
+
     const mu0 = @max(angles.solar_mu, direct_direction_cosine_floor);
     const muv = @max(angles.view_mu, direct_direction_cosine_floor);
     const n_gauss = config.controls.nGauss();
@@ -349,24 +360,29 @@ fn solveLayerResolvedScattering(
 
     var dynamic_attenuation: ?attenuation.DynamicAttenuation = null;
     var runtime_attenuation: ?attenuation.RuntimeAttenuation = null;
-    if (use_integrated_source) {
-        runtime_attenuation = try attenuation.fillRuntimeInBuffers(
-            work.layer_transmittance,
-            work.top_to_level_attenuation,
-            layers,
-            curved_grid,
-            geometry,
-            config.controls.use_spherical_correction,
-        );
-    } else {
-        dynamic_attenuation = try attenuation.fillDynamicWithLayerCache(
-            work.dynamic_attenuation_data,
-            work.layer_transmittance,
-            layers,
-            curved_grid,
-            geometry,
-            config.controls.use_spherical_correction,
-        );
+    {
+        const timing_start = CostTiming.start(stage_cost);
+        defer CostTiming.finish(stage_cost, timing_start, "attenuation_fill");
+
+        if (use_integrated_source) {
+            runtime_attenuation = try attenuation.fillRuntimeInBuffers(
+                work.layer_transmittance,
+                work.top_to_level_attenuation,
+                layers,
+                curved_grid,
+                geometry,
+                config.controls.use_spherical_correction,
+            );
+        } else {
+            dynamic_attenuation = try attenuation.fillDynamicWithLayerCache(
+                work.dynamic_attenuation_data,
+                work.layer_transmittance,
+                layers,
+                curved_grid,
+                geometry,
+                config.controls.use_spherical_correction,
+            );
+        }
     }
 
     const layer_phase_max_indices = work.layer_phase_max_indices[0..layer_count];
@@ -418,34 +434,46 @@ fn solveLayerResolvedScattering(
     var aerosol_optical_depth_tangent: f64 = 0.0;
     var aerosol_layer_pressure_tangent: f64 = 0.0;
     for (0..fourier_max + 1) |fourier_index| {
-        const plm_basis = try cachedPlmBasis(
-            fourier_index,
-            phase_max,
-            geometry,
-            work.plm_basis_cache,
-            work.plm_basis_cache_valid,
-        );
+        const fourier_start = CostTiming.start(stage_cost);
+        defer CostTiming.finish(stage_cost, fourier_start, "fourier_loop");
 
-        layer_reflect_transmit.fillLayerReflectTransmitRowsWithBasis(
-            rt_layers,
-            layers,
-            fourier_index,
-            geometry,
-            config.controls,
-            phase,
-            rayleigh_phase_coefficient2,
-            plm_basis,
-            layer_phase_max_indices,
-            effective_scattering_suffixes,
-            phase_suffix_stride,
-            if (use_integrated_source) layer_phase_row_cache else null,
-            if (use_integrated_source) layer_phase_row_valid else null,
-            work.orders.rt_active,
-            null,
-        );
+        const plm_basis = timed_plm_basis: {
+            const timing_start = CostTiming.start(stage_cost);
+            defer CostTiming.finish(stage_cost, timing_start, "plm_basis");
+            break :timed_plm_basis try cachedPlmBasis(
+                fourier_index,
+                phase_max,
+                geometry,
+                work.plm_basis_cache,
+                work.plm_basis_cache_valid,
+            );
+        };
+
+        {
+            const timing_start = CostTiming.start(stage_cost);
+            defer CostTiming.finish(stage_cost, timing_start, "rt_layer_build");
+            layer_reflect_transmit.fillLayerReflectTransmitRowsWithBasis(
+                rt_layers,
+                layers,
+                fourier_index,
+                geometry,
+                config.controls,
+                phase,
+                rayleigh_phase_coefficient2,
+                plm_basis,
+                layer_phase_max_indices,
+                effective_scattering_suffixes,
+                phase_suffix_stride,
+                if (use_integrated_source) layer_phase_row_cache else null,
+                if (use_integrated_source) layer_phase_row_valid else null,
+                work.orders.rt_active,
+                stage_cost,
+            );
+        }
         rt_layers[0] = layer_reflect_transmit.fillSurface(fourier_index, surface_albedo, geometry);
         work.orders.rt_active[0] = fourier_index == 0 and surface_albedo != 0.0;
 
+        const orders_start = CostTiming.start(stage_cost);
         const orders_view = choose_orders_view: {
             if (use_integrated_source) {
                 if (wants_any_jacobian) {
@@ -484,33 +512,39 @@ fn solveLayerResolvedScattering(
                 order_count,
             );
         };
-        const rho_m = choose_reflectance_coefficient: {
-            if (use_integrated_source) {
-                break :choose_reflectance_coefficient reflectance_helpers.integratedSourceCoefficient(
-                    layers,
-                    level_sources,
+        CostTiming.finish(stage_cost, orders_start, "orders_total");
+
+        const contribution = timed_reflectance_integral: {
+            const timing_start = CostTiming.start(stage_cost);
+            defer CostTiming.finish(stage_cost, timing_start, "reflectance_integral");
+            const rho_m = choose_reflectance_coefficient: {
+                if (use_integrated_source) {
+                    break :choose_reflectance_coefficient reflectance_helpers.integratedSourceCoefficient(
+                        layers,
+                        level_sources,
+                        orders_view.ud,
+                        layer_count,
+                        fourier_index,
+                        geometry,
+                        plm_basis,
+                        phase,
+                        source_phase_max_indices,
+                    );
+                }
+
+                break :choose_reflectance_coefficient reflectance_helpers.topReflectanceCoefficient(
                     orders_view.ud,
                     layer_count,
-                    fourier_index,
                     geometry,
-                    plm_basis,
-                    phase,
-                    source_phase_max_indices,
                 );
-            }
-
-            break :choose_reflectance_coefficient reflectance_helpers.topReflectanceCoefficient(
-                orders_view.ud,
-                layer_count,
-                geometry,
+            };
+            break :timed_reflectance_integral reflectance_helpers.weightedFourierContribution(
+                fourier_index,
+                angles.relative_azimuth_rad,
+                rho_m,
+                config.controls.performance_thresholds,
             );
         };
-        const contribution = reflectance_helpers.weightedFourierContribution(
-            fourier_index,
-            angles.relative_azimuth_rad,
-            rho_m,
-            config.controls.performance_thresholds,
-        );
         result_reflectance += contribution.weighted;
 
         const evaluate_aerosol_tangent =
@@ -770,7 +804,7 @@ fn totalScatteringOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {
 }
 
 comptime {
-    const expected_work_size: usize = if (@sizeOf(scattering_orders.OrdersWorkArrays) == 120) 376 else 368;
+    const expected_work_size: usize = if (CostTiming.enabled) 384 else 368;
     std.debug.assert(@sizeOf(ViewAngles) == 24);
     std.debug.assert(@sizeOf(ReflectanceResult) == 24);
     std.debug.assert(@sizeOf(TransportWorkArrays) == expected_work_size);

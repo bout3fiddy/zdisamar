@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const readers = @import("../assets/readers.zig");
+const CostTiming = @import("../instrumentation/cost_timing.zig");
 const hitran_partition_tables = @import("../input/hitran_partition_tables.zig");
 
 const Allocator = std.mem.Allocator;
@@ -161,6 +162,7 @@ pub fn fillWeakLineStateInto(
     lines: []const readers.O2LineAssetRow,
     temperature_k: f64,
     pressure_atm: f64,
+    stage_cost: ?CostTiming.Active,
 ) void {
     // fillWeakLineStateInto --------------------------------------------------------------------------------- |
     // Fill canonical weak-line constants for one already-allocated thermodynamic state row.                   |
@@ -172,7 +174,7 @@ pub fn fillWeakLineStateInto(
     state.safe_temperature = safe_temperature;
     state.safe_pressure = safe_pressure;
     for (lines, state.lines) |line, *prepared_line| {
-        prepared_line.* = prepareWeakLinePreparedLineState(line, safe_temperature, safe_pressure);
+        prepared_line.* = prepareWeakLinePreparedLineState(line, safe_temperature, safe_pressure, stage_cost);
     }
 }
 
@@ -180,6 +182,7 @@ fn prepareWeakLinePreparedLineState(
     line: readers.O2LineAssetRow,
     safe_temperature: f64,
     safe_pressure: f64,
+    stage_cost: ?CostTiming.Active,
 ) WeakLinePreparedLineState {
     // prepareWeakLinePreparedLineState ---------------------------------------------------------------------- |
     // Precompute the temperature/pressure terms shared by all wavelength evaluations for one HITRAN line.     |
@@ -201,7 +204,7 @@ fn prepareWeakLinePreparedLineState(
     const cte = @sqrt(@log(2.0)) / doppler_width_cm1;
 
     var converted_strength = line.line_strength_cm2_per_molecule *
-        partitionRatioT0OverT(line, safe_temperature) *
+        partitionRatioT0OverT(line, safe_temperature, stage_cost) *
         @exp(
             hitran_hc_over_kb_cm_k * line.lower_state_energy_cm1 *
                 ((1.0 / hitran_reference_temperature_k) - (1.0 / safe_temperature)),
@@ -242,11 +245,15 @@ pub fn totalSpectroscopyAt(
     line_mixing_factor: f64,
     strong_state: *const StrongLinePreparedState,
     prepared_weak_state: ?*const WeakLinePreparedState,
+    stage_cost: ?CostTiming.Active,
 ) SpectroscopyComponents {
     // totalSpectroscopyAt ----------------------------------------------------------------------------------- |
     // Sum canonical weak, strong-line, and line-mixing sigma for one profile-node row.                        |
     // --------------------------------------------------------------------------------------------------------|
     if (runtime_lines.len == 0) return .{};
+
+    const timing_start = CostTiming.start(stage_cost);
+    defer CostTiming.finish(stage_cost, timing_start, "spectroscopy_sigma");
 
     const safe_temperature = @max(temperature_k, min_hitran_temperature_k);
     const pressure_atm = @max(pressure_hpa / 1013.25, min_spectroscopy_pressure_atm);
@@ -298,6 +305,7 @@ pub fn totalSpectroscopyAt(
             cutoff_cm1,
             cutoff_grid_wavelengths_nm,
             cutoff_grid_wavenumbers_cm1,
+            stage_cost,
         );
     }
 
@@ -525,6 +533,7 @@ pub fn weakLineContribution(
     cutoff_cm1: f64,
     cutoff_grid_wavelengths_nm: []const f64,
     cutoff_grid_wavenumbers_cm1: []const f64,
+    stage_cost: ?CostTiming.Active,
 ) f64 {
     // weakLineContribution ---------------------------------------------------------------------------------- |
     // Evaluate one HITRAN weak-line contribution with the scalar fallback cutoff and CPF route.               |
@@ -563,7 +572,7 @@ pub fn weakLineContribution(
     const line_shape_y = half_width_cm1_at_t * pressure_atm * cte;
 
     var converted_strength = line.line_strength_cm2_per_molecule *
-        partitionRatioT0OverT(line, temperature_k) *
+        partitionRatioT0OverT(line, temperature_k, stage_cost) *
         @exp(
             hitran_hc_over_kb_cm_k * line.lower_state_energy_cm1 *
                 ((1.0 / hitran_reference_temperature_k) - (1.0 / temperature_k)),
@@ -706,6 +715,7 @@ pub fn prepareStrongLineState(
     relaxation_matrix: readers.O2RelaxationMatrixAsset,
     temperature_k: f64,
     pressure_atm: f64,
+    stage_cost: ?CostTiming.Active,
 ) StrongLinePreparedState {
     // prepareStrongLineState -------------------------------------------------------------------------------- |
     // Prepare O2 ConvTP line-mixing state for one profile-node temperature and pressure.                      |
@@ -716,6 +726,7 @@ pub fn prepareStrongLineState(
         66,
         safe_temperature,
         hitran_reference_temperature_k,
+        stage_cost,
     ) orelse temperature_ratio;
     const line_count = @min(@min(strong_lines.len, relaxation_matrix.line_count), max_strong_line_sidecars);
     var state = StrongLinePreparedState{ .line_count = line_count };
@@ -1181,7 +1192,11 @@ fn dopplerWidthCm1(temperature_k: f64, wavenumber_cm1: f64, molecular_weight_g_p
         wavenumber_cm1;
 }
 
-fn partitionRatioT0OverT(line: readers.O2LineAssetRow, temperature_k: f64) f64 {
+fn partitionRatioT0OverT(
+    line: readers.O2LineAssetRow,
+    temperature_k: f64,
+    stage_cost: ?CostTiming.Active,
+) f64 {
     // partitionRatioT0OverT --------------------------------------------------------------------------------- |
     // Return HITRAN partition Q(T0) / Q(T) from the retained TIPS tables, with canonical fallback exponents.  |
     // --------------------------------------------------------------------------------------------------------|
@@ -1190,6 +1205,7 @@ fn partitionRatioT0OverT(line: readers.O2LineAssetRow, temperature_k: f64) f64 {
         isotopologue_code,
         temperature_k,
         hitran_reference_temperature_k,
+        stage_cost,
     )) |ratio| {
         return ratio;
     }

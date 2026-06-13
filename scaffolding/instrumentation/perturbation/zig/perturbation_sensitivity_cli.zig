@@ -2,10 +2,10 @@ const std = @import("std");
 const internal = @import("internal");
 const Sink = @import("perturbation_sensitivity_sink");
 
-const InstrumentGrid = internal.forward_model.instrument_grid;
-const Jacobian = internal.forward_model.radiative_transfer.Jacobian;
-const OptimalEstimation = internal.optimal_estimation;
-const Perturbation = internal.forward_model.perturbation_sensitivity;
+const InstrumentGrid = internal.spectrum;
+const Jacobian = internal.rtm.jacobian_states;
+const OptimalEstimation = internal.retrieval.root;
+const Perturbation = internal.instrumentation.sensitivity;
 const o2a_reference = internal.o2a_reference;
 
 const default_output_dir = "out/scaffolding/perturbation/data/o2a-default";

@@ -280,6 +280,7 @@ fn appendRowsForState(
         tables.lines.relaxation_matrix,
         safe_temperature,
         pressure_atm,
+        null,
     );
     for (tables.lines.strong_lines[0..strong_state.line_count], 0..) |strong_line, strong_index| {
         total_row_count.* += 1;
@@ -331,6 +332,7 @@ fn weakLineRow(
             runtime.cutoff_cm1,
             &.{},
             &.{},
+            null,
         );
 
         status = if (weak_sigma == 0.0) .weak_zero_after_cutoff else .weak_included;

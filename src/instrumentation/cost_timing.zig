@@ -19,7 +19,7 @@ const build_options = @import("build_options");
 //   wrap elapsed-time or event totals.                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
-//   StageCost is 376 B: 19 elapsed-time Counter rows plus 9 event Count rows. WorkspaceState is 0 B normally  |
+//   StageCost is 456 B: 24 elapsed-time Counter rows plus 9 event Count rows. WorkspaceState is 0 B normally  |
 //   and one 8 B optional StageCost pointer in the trace build. Active is a borrowed 8 B pointer handle        |
 //   threaded through measured calls; no cost-timing type owns heap storage.                                   |
 // ----------------------------------------------------------------------------------------------------------- |
@@ -97,7 +97,7 @@ pub const Count = struct {
 // Per-worker LABOS trace payload merged into the product-level trace summary after forward prefetch.          |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 376 B (0.367 KiB), align: 8 B                                                                         |
+// size: 456 B (0.445 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0.. 15] execute                  : Counter                                                               |
@@ -119,19 +119,24 @@ pub const Count = struct {
 // [256..271] orders_transport         : Counter                                                               |
 // [272..287] orders_accumulate        : Counter                                                               |
 // [288..303] reflectance_integral     : Counter                                                               |
-// [304..311] fixed_doubling_steps     : Count                                                                 |
-// [312..319] fixed_qseries_skipped    : Count                                                                 |
-// [320..327] fixed_qseries_retained   : Count                                                                 |
-// [328..335] fixed_rd_skipped         : Count                                                                 |
-// [336..343] fixed_rd_retained        : Count                                                                 |
-// [344..351] fixed_tu_skipped         : Count                                                                 |
-// [352..359] fixed_tu_retained        : Count                                                                 |
-// [360..367] fixed_td_skipped         : Count                                                                 |
-// [368..375] fixed_td_retained        : Count                                                                 |
+// [304..319] optics_assembly          : Counter                                                               |
+// [320..335] spectroscopy_sigma       : Counter                                                               |
+// [336..351] partition_interp         : Counter                                                               |
+// [352..367] profile_interp           : Counter                                                               |
+// [368..383] quadrature_build         : Counter                                                               |
+// [384..391] fixed_doubling_steps     : Count                                                                 |
+// [392..399] fixed_qseries_skipped    : Count                                                                 |
+// [400..407] fixed_qseries_retained   : Count                                                                 |
+// [408..415] fixed_rd_skipped         : Count                                                                 |
+// [416..423] fixed_rd_retained        : Count                                                                 |
+// [424..431] fixed_tu_skipped         : Count                                                                 |
+// [432..439] fixed_tu_retained        : Count                                                                 |
+// [440..447] fixed_td_skipped         : Count                                                                 |
+// [448..455] fixed_td_retained        : Count                                                                 |
 //                                                                                                             |
 // unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
-// cache span: 6 cache lines at 64 B per line                                                                  |
-// footprint: per instance = 376 B (0.367 KiB); total = one per active forward worker in trace builds          |
+// cache span: 8 cache lines at 64 B per line                                                                  |
+// footprint: per instance = 456 B (0.445 KiB); total = one per active forward worker in trace builds          |
 pub const StageCost = struct {
     execute: Counter = .{},
     attenuation_fill: Counter = .{},
@@ -152,6 +157,11 @@ pub const StageCost = struct {
     orders_transport: Counter = .{},
     orders_accumulate: Counter = .{},
     reflectance_integral: Counter = .{},
+    optics_assembly: Counter = .{},
+    spectroscopy_sigma: Counter = .{},
+    partition_interp: Counter = .{},
+    profile_interp: Counter = .{},
+    quadrature_build: Counter = .{},
     fixed_doubling_steps: Count = .{},
     fixed_qseries_skipped: Count = .{},
     fixed_qseries_retained: Count = .{},
@@ -192,6 +202,11 @@ pub const StageCost = struct {
         self.orders_transport.merge(other.orders_transport);
         self.orders_accumulate.merge(other.orders_accumulate);
         self.reflectance_integral.merge(other.reflectance_integral);
+        self.optics_assembly.merge(other.optics_assembly);
+        self.spectroscopy_sigma.merge(other.spectroscopy_sigma);
+        self.partition_interp.merge(other.partition_interp);
+        self.profile_interp.merge(other.profile_interp);
+        self.quadrature_build.merge(other.quadrature_build);
         self.fixed_doubling_steps.merge(other.fixed_doubling_steps);
         self.fixed_qseries_skipped.merge(other.fixed_qseries_skipped);
         self.fixed_qseries_retained.merge(other.fixed_qseries_retained);
@@ -204,6 +219,38 @@ pub const StageCost = struct {
     }
 };
 // ----------------------------------------------------------------------------------------------------------- |
+
+pub const WorkerStageCost = if (enabled) StageCost else struct {};
+
+pub inline fn resetWorkerStageCost(worker_stage_cost: *WorkerStageCost) void {
+    // resetWorkerStageCost ---------------------------------------------------------------------------------- |
+    // Reset the per-worker row only in enabled cost-timing builds.                                            |
+    // ------------------------------------------------------------------------------------------------------- |
+
+    if (comptime !enabled) return;
+
+    worker_stage_cost.reset();
+}
+
+pub inline fn setWorkerWorkspaceState(state: *WorkspaceState, worker_stage_cost: *WorkerStageCost) void {
+    // setWorkerWorkspaceState ------------------------------------------------------------------------------- |
+    // Attach the per-worker row while keeping disabled worker storage zero-size.                              |
+    // ------------------------------------------------------------------------------------------------------- |
+
+    if (comptime !enabled) return;
+
+    setWorkspaceState(state, worker_stage_cost);
+}
+
+pub inline fn mergeWorkerStageCost(merged: *StageCost, worker_stage_cost: *const WorkerStageCost) void {
+    // mergeWorkerStageCost ---------------------------------------------------------------------------------- |
+    // Merge one enabled worker row into the caller-owned summary row.                                         |
+    // ------------------------------------------------------------------------------------------------------- |
+
+    if (comptime !enabled) return;
+
+    merged.merge(worker_stage_cost.*);
+}
 
 // Active ---------------------------------------------------------------------------------------------------- |
 // Small non-owning handle threaded through measured calls that can record stage cost.                         |
@@ -329,4 +376,62 @@ pub inline fn count(active: ?Active, comptime field_name: []const u8, amount: u6
 
     const resolved = active orelse return;
     @field(resolved.stage_cost, field_name).add(amount);
+}
+
+pub inline fn dumpMergedStageCostToStderr(stage_cost: StageCost) void {
+    // dumpMergedStageCostToStderr --------------------------------------------------------------------------- |
+    // Emit one fixed-field merged row from the instrumentation facade, never from the product path.           |
+    // ------------------------------------------------------------------------------------------------------- |
+
+    if (comptime !enabled) return;
+
+    std.debug.print("cost_timing", .{});
+    dumpCounter("execute", stage_cost.execute);
+    dumpCounter("attenuation_fill", stage_cost.attenuation_fill);
+    dumpCounter("fourier_loop", stage_cost.fourier_loop);
+    dumpCounter("plm_basis", stage_cost.plm_basis);
+    dumpCounter("rt_layer_build", stage_cost.rt_layer_build);
+    dumpCounter("rt_layer_phase_matrix", stage_cost.rt_layer_phase_matrix);
+    dumpCounter("rt_layer_doubling", stage_cost.rt_layer_doubling);
+    dumpCounter("fixed_qseries_work", stage_cost.fixed_qseries_work);
+    dumpCounter("fixed_rd_update", stage_cost.fixed_rd_update);
+    dumpCounter("fixed_tu_update", stage_cost.fixed_tu_update);
+    dumpCounter("fixed_td_update", stage_cost.fixed_td_update);
+    dumpCounter("orders_total", stage_cost.orders_total);
+    dumpCounter("orders_initial_sources", stage_cost.orders_initial_sources);
+    dumpCounter("orders_initial_transport", stage_cost.orders_initial_transport);
+    dumpCounter("orders_local_down", stage_cost.orders_local_down);
+    dumpCounter("orders_local_up", stage_cost.orders_local_up);
+    dumpCounter("orders_transport", stage_cost.orders_transport);
+    dumpCounter("orders_accumulate", stage_cost.orders_accumulate);
+    dumpCounter("reflectance_integral", stage_cost.reflectance_integral);
+    dumpCounter("optics_assembly", stage_cost.optics_assembly);
+    dumpCounter("spectroscopy_sigma", stage_cost.spectroscopy_sigma);
+    dumpCounter("partition_interp", stage_cost.partition_interp);
+    dumpCounter("profile_interp", stage_cost.profile_interp);
+    dumpCounter("quadrature_build", stage_cost.quadrature_build);
+    dumpCount("fixed_doubling_steps", stage_cost.fixed_doubling_steps);
+    dumpCount("fixed_qseries_skipped", stage_cost.fixed_qseries_skipped);
+    dumpCount("fixed_qseries_retained", stage_cost.fixed_qseries_retained);
+    dumpCount("fixed_rd_skipped", stage_cost.fixed_rd_skipped);
+    dumpCount("fixed_rd_retained", stage_cost.fixed_rd_retained);
+    dumpCount("fixed_tu_skipped", stage_cost.fixed_tu_skipped);
+    dumpCount("fixed_tu_retained", stage_cost.fixed_tu_retained);
+    dumpCount("fixed_td_skipped", stage_cost.fixed_td_skipped);
+    dumpCount("fixed_td_retained", stage_cost.fixed_td_retained);
+    std.debug.print("\n", .{});
+}
+
+fn dumpCounter(comptime name: []const u8, counter: Counter) void {
+    // dumpCounter ------------------------------------------------------------------------------------------- |
+    // Append one elapsed-time field pair to the current stderr row.                                           |
+    // ------------------------------------------------------------------------------------------------------- |
+    std.debug.print(" {s}.ns={} {s}.count={}", .{ name, counter.ns, name, counter.count });
+}
+
+fn dumpCount(comptime name: []const u8, counter: Count) void {
+    // dumpCount --------------------------------------------------------------------------------------------- |
+    // Append one event-count field to the current stderr row.                                                 |
+    // ------------------------------------------------------------------------------------------------------- |
+    std.debug.print(" {s}.count={}", .{ name, counter.count });
 }

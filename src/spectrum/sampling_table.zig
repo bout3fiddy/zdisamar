@@ -564,9 +564,8 @@ pub fn buildO2SpectrumSamplingTable(
     // buildO2SpectrumSamplingTable -------------------------------------------------------------------------- |
     // Build the O2 A spectrum sampling plan from explicit setup tables.                                       |
     //                                                                                                         |
-    //   `instrument_grid/grid_calculation/wavelength_sampling.zig`                                            |
-    //   `forward_model/implementations/instrument/integration.zig`                                            |
-    //   `forward_model/implementations/instrument/adaptive_plan.zig`                                          |
+    //   This module owns the sampling, integration-kernel, and adaptive-interval rows that feed spectrum      |
+    //   transport.                                                                                            |
     //                                                                                                         |
     // route                                                                                                   |
     //   spectral grid -> strong-line adaptive interval plan -> radiance/irradiance kernels -> compact rows    |

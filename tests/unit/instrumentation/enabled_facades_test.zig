@@ -23,6 +23,8 @@ fn exerciseEnabledCostTiming() !void {
     try std.testing.expectEqual(true, cost_timing.enabled);
     try std.testing.expectEqual(@as(usize, 8), @sizeOf(cost_timing.WorkspaceState));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(cost_timing.WorkspaceState));
+    try std.testing.expectEqual(@as(usize, 456), @sizeOf(cost_timing.WorkerStageCost));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(cost_timing.WorkerStageCost));
 
     var timing = cost_timing.StageCost{};
     var state = cost_timing.WorkspaceState{};

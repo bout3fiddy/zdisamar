@@ -155,6 +155,7 @@ pub fn build(
             tables.layers,
             wavelength_index,
             support_sigma,
+            null,
         );
         try layer_depths.fillSupportOpticsAtWavelength(
             wavelength_nm,
@@ -163,6 +164,7 @@ pub fn build(
             tables.cia,
             tables.aerosol,
             support_optics,
+            null,
         );
 
         const row_start = wavelength_index * support_count;

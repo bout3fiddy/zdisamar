@@ -20,10 +20,10 @@
     "allowed_to_fail": true,
     "summary": "This lane is intentionally allowed to fail until the stored vendor residual collapses to numerical zero. It uses a coarsened vendor-shaped execution grid so the assessment stays usable in the local development loop; use the full vendor plot bundle for deeper full-band inspection. Agents should focus on whether mean/rms/max differences improved, regressed, or stayed flat relative to the committed baseline, and only treat regressions as urgent when the change touched forward-physics code or O2A reference assets.",
     "expect_improvement_when_touched": [
-      "src/forward_model/radiative_transfer",
-      "src/forward_model/optical_properties",
-      "src/input/reference_data",
-      "src/input/reference",
+      "src/rtm",
+      "src/optics",
+      "data/reference_data",
+      "src/input/o2_case.zig",
       "data/reference_data/cross_sections",
       "validation/reference_data/spectra/o2a_with_cia_disamar_reference.csv"
     ]

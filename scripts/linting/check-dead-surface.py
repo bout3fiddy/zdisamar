@@ -54,8 +54,6 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     ("src/rtm/phase_basis.zig", "minusParitySign"): "transport test oracle for old LABOS Z- parity",
     ("src/rtm/reflectance.zig", "fourierWeight"): "transport test oracle for old Fourier accumulation weight",
     ("src/rtm/reflectance.zig", "fourierTailBreak"): "transport test oracle for old Fourier tail stop rule",
-    ("src/rtm/scattering_orders.zig", "setCostTiming"): "cost-timing public hook; wired when the forward path owns worker rows",
-    ("src/rtm/scattering_orders.zig", "activeCostTiming"): "cost-timing public hook; wired when the forward path owns worker rows",
     ("src/retrieval/root.zig", "altitudeDerivativeAtPressure"): "wp5-staged pressure-profile hook; retrieval tests pin old finite-difference route before solver wiring",
 }
 
@@ -72,8 +70,6 @@ def git_files(patterns: list[str]) -> list[str]:
 
 def counted_src_file(path: str) -> bool:
     if not path.startswith("src/") or not path.endswith(".zig"):
-        return False
-    if path.startswith("src/forward_model/instrumentation/"):
         return False
     if path.startswith("src/instrumentation/"):
         return False

@@ -2,9 +2,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 const internal = @import("internal");
 
-const InstrumentGrid = internal.forward_model.instrument_grid;
-const OptimalEstimation = internal.optimal_estimation;
-const Trace = internal.forward_model.performance_trace;
+const InstrumentGrid = internal.spectrum;
+const OptimalEstimation = internal.retrieval.root;
+const Trace = internal.instrumentation.trace;
 const o2a_reference = internal.o2a_reference;
 
 const default_output_dir = "out/optimal-estimation-trace";

@@ -7,8 +7,8 @@ pub const Error = error{
 // o2a_band_metrics.zig -------------------------------------------------------------------------------------  |
 // Validation-only O2 A spectrum comparison metrics.                                                           |
 //                                                                                                             |
-//   `src/input/o2a_reference/metrics.zig`. The runtime-case wrappers stay out of O2 A because they depend     |
-//   on broad pre-refactor scene, prepared-optics, and product owners.                                         |
+//   Replaces the removed broad runtime-case metrics helper with explicit validation vectors.                  |
+//   Runtime-case wrappers stay out of O2 A because they depend on broad pre-refactor owner shapes.            |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   Callers pass explicit wavelength/reflectance vectors and reference rows. This module performs no file     |

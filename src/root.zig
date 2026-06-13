@@ -18,6 +18,7 @@ const retrieval = @import("retrieval/root.zig");
 const retrieval_algebra = @import("retrieval/algebra.zig");
 const radiance_results = @import("spectrum/radiance_results.zig");
 const radiance_wavelengths = @import("spectrum/radiance_wavelengths.zig");
+const worker_partition = @import("common/worker_partition.zig");
 const aerosol_tables = @import("setup/aerosol_tables.zig");
 const atmosphere_layers = @import("setup/atmosphere_layers.zig");
 const cia_table = @import("setup/cia_table.zig");
@@ -29,6 +30,7 @@ const profile_lines = @import("cache/profile_line_memory.zig");
 const sampling_table = @import("spectrum/sampling_table.zig");
 const solve = @import("rtm/solve.zig");
 const spectrum_run = @import("spectrum/spectrum_run.zig");
+const CostTiming = @import("instrumentation/cost_timing.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -201,6 +203,7 @@ pub fn runO2AWithSessionMemory(
         !prepared_rows.dense_radiance_results_match,
         worker_pool,
         worker_count,
+        !prepared_rows.profile_cache_rebuilt,
         .{
             .dense_radiance = session.radiance.resultRows(),
             .wavelengths_nm = result.spectrum.wavelength_nm,
@@ -967,6 +970,7 @@ const PreparedSessionRows = struct {
     table: sampling_table.SpectrumSamplingTable,
     worker_count: usize,
     dense_radiance_results_match: bool,
+    profile_cache_rebuilt: bool,
     dense_radiance_result_stamp: hashing.ReuseStamp,
 };
 
@@ -1040,30 +1044,6 @@ fn prepareSessionRows(
     }
     try session.radiance.ensureResultCapacity(allocator, dense_count);
 
-    const cache_matches = session.profile_lines.reuse_stamp.eql(profile_stamp) and
-        session.profile_lines.wavelength_count == dense_count;
-    if (!cache_matches) {
-        session.profile_lines.deinit(allocator);
-        session.profile_lines =
-            try profile_lines.buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
-                allocator,
-                prepared.case,
-                exact_wavelengths,
-                exact_wavelengths,
-                build_layer_values,
-                needs_temperature_derivatives,
-                worker_pool,
-                worker_count,
-            );
-    }
-    const dense_radiance_result_stamp = radianceResultReuseStamp(
-        prepared,
-        exact_wavelengths,
-        prepared_solve_config,
-        profile_stamp,
-    );
-    const dense_radiance_results_match = session.radiance.resultsValid(dense_radiance_result_stamp);
-
     const layer_count = prepared.tables.layers.layer_pressures_hpa.len;
     const support_count = prepared.tables.layers.support_mid_altitudes_km.len;
     const phase_max_index = @max(prepared.tables.phase.aerosol_phase_max_index, @as(usize, 2));
@@ -1080,10 +1060,46 @@ fn prepareSessionRows(
             true,
         );
     }
+
+    const cache_matches = session.profile_lines.reuse_stamp.eql(profile_stamp) and
+        session.profile_lines.wavelength_count == dense_count;
+    const profile_cache_rebuilt = !cache_matches;
+    var cost_timing_active = [_]?CostTiming.Active{null} ** worker_partition.max_workers;
+    if (profile_cache_rebuilt) {
+        if (comptime CostTiming.enabled) {
+            for (session.transport_workers.workers[0..worker_count], 0..) |*worker_memory, worker_index| {
+                worker_memory.resetCostTiming();
+                cost_timing_active[worker_index] = CostTiming.activeWorkspaceState(&worker_memory.cost_timing_state);
+            }
+        }
+
+        session.profile_lines.deinit(allocator);
+        session.profile_lines =
+            try profile_lines.buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
+                allocator,
+                prepared.case,
+                exact_wavelengths,
+                exact_wavelengths,
+                build_layer_values,
+                needs_temperature_derivatives,
+                worker_pool,
+                worker_count,
+                cost_timing_active[0..worker_count],
+            );
+    }
+    const dense_radiance_result_stamp = radianceResultReuseStamp(
+        prepared,
+        exact_wavelengths,
+        prepared_solve_config,
+        profile_stamp,
+    );
+    const dense_radiance_results_match = session.radiance.resultsValid(dense_radiance_result_stamp);
+
     return .{
         .table = table,
         .worker_count = worker_count,
         .dense_radiance_results_match = dense_radiance_results_match,
+        .profile_cache_rebuilt = profile_cache_rebuilt,
         .dense_radiance_result_stamp = dense_radiance_result_stamp,
     };
 }

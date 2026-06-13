@@ -134,7 +134,7 @@ scope_ok = serial_instructions >= 1.0e9 and scope_ratio >= 0.5
 summary = {
     "schema": 1,
     "tool": "lauka",
-    "boundary": "o2a_forward_model",
+    "boundary": "o2a_forward",
     "build": "zig build labos-bottleneck-trace-bin -Doptimize=ReleaseFast",
     "measurements": measurements.split(","),
     "warmup": warmup,

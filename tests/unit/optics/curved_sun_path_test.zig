@@ -166,6 +166,7 @@ test "curved sun-path samples reuse active support rows in evidence order" {
                 tables.cia,
                 tables.aerosol,
                 support_rows,
+                null,
             );
             const sample_count = try curved_sun_path.fillCurvedSunPathSamples(
                 tables.layers,

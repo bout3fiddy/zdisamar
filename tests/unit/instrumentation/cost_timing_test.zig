@@ -16,9 +16,11 @@ test "cost timing rows keep LABOS memory layout" {
     try std.testing.expectEqual(@as(usize, 8), @alignOf(cost_timing.Count));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(cost_timing.Count, "count"));
 
-    try std.testing.expectEqual(@as(usize, 376), @sizeOf(cost_timing.StageCost));
+    try std.testing.expectEqual(@as(usize, 456), @sizeOf(cost_timing.StageCost));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(cost_timing.StageCost));
     try expectStageCostOffsets();
+    try std.testing.expectEqual(@as(usize, 0), @sizeOf(cost_timing.WorkerStageCost));
+    try std.testing.expectEqual(@as(usize, 1), @alignOf(cost_timing.WorkerStageCost));
 
     try std.testing.expectEqual(@as(usize, 8), @sizeOf(cost_timing.Active));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(cost_timing.Active));
@@ -70,6 +72,19 @@ test "disabled cost timing workspace calls are no-ops" {
     try std.testing.expectEqual(@as(u64, 0), timing.fixed_qseries_work.count);
 }
 
+test "disabled worker cost storage is zero-size and no-op" {
+    var merged = cost_timing.StageCost{};
+    var worker_stage_cost = cost_timing.WorkerStageCost{};
+    var state = cost_timing.WorkspaceState{};
+
+    cost_timing.resetWorkerStageCost(&worker_stage_cost);
+    cost_timing.setWorkerWorkspaceState(&state, &worker_stage_cost);
+    cost_timing.mergeWorkerStageCost(&merged, &worker_stage_cost);
+
+    try std.testing.expectEqual(null, cost_timing.activeWorkspaceState(&state));
+    try std.testing.expectEqual(@as(u64, 0), merged.execute.count);
+}
+
 fn expectStageCostOffsets() !void {
     // expectStageCostOffsets -------------------------------------------------------------------------------- |
     // Pin the cost-timing StageCost field order used by retained trace JSON.                                  |
@@ -93,13 +108,18 @@ fn expectStageCostOffsets() !void {
     try std.testing.expectEqual(@as(usize, 256), @offsetOf(cost_timing.StageCost, "orders_transport"));
     try std.testing.expectEqual(@as(usize, 272), @offsetOf(cost_timing.StageCost, "orders_accumulate"));
     try std.testing.expectEqual(@as(usize, 288), @offsetOf(cost_timing.StageCost, "reflectance_integral"));
-    try std.testing.expectEqual(@as(usize, 304), @offsetOf(cost_timing.StageCost, "fixed_doubling_steps"));
-    try std.testing.expectEqual(@as(usize, 312), @offsetOf(cost_timing.StageCost, "fixed_qseries_skipped"));
-    try std.testing.expectEqual(@as(usize, 320), @offsetOf(cost_timing.StageCost, "fixed_qseries_retained"));
-    try std.testing.expectEqual(@as(usize, 328), @offsetOf(cost_timing.StageCost, "fixed_rd_skipped"));
-    try std.testing.expectEqual(@as(usize, 336), @offsetOf(cost_timing.StageCost, "fixed_rd_retained"));
-    try std.testing.expectEqual(@as(usize, 344), @offsetOf(cost_timing.StageCost, "fixed_tu_skipped"));
-    try std.testing.expectEqual(@as(usize, 352), @offsetOf(cost_timing.StageCost, "fixed_tu_retained"));
-    try std.testing.expectEqual(@as(usize, 360), @offsetOf(cost_timing.StageCost, "fixed_td_skipped"));
-    try std.testing.expectEqual(@as(usize, 368), @offsetOf(cost_timing.StageCost, "fixed_td_retained"));
+    try std.testing.expectEqual(@as(usize, 304), @offsetOf(cost_timing.StageCost, "optics_assembly"));
+    try std.testing.expectEqual(@as(usize, 320), @offsetOf(cost_timing.StageCost, "spectroscopy_sigma"));
+    try std.testing.expectEqual(@as(usize, 336), @offsetOf(cost_timing.StageCost, "partition_interp"));
+    try std.testing.expectEqual(@as(usize, 352), @offsetOf(cost_timing.StageCost, "profile_interp"));
+    try std.testing.expectEqual(@as(usize, 368), @offsetOf(cost_timing.StageCost, "quadrature_build"));
+    try std.testing.expectEqual(@as(usize, 384), @offsetOf(cost_timing.StageCost, "fixed_doubling_steps"));
+    try std.testing.expectEqual(@as(usize, 392), @offsetOf(cost_timing.StageCost, "fixed_qseries_skipped"));
+    try std.testing.expectEqual(@as(usize, 400), @offsetOf(cost_timing.StageCost, "fixed_qseries_retained"));
+    try std.testing.expectEqual(@as(usize, 408), @offsetOf(cost_timing.StageCost, "fixed_rd_skipped"));
+    try std.testing.expectEqual(@as(usize, 416), @offsetOf(cost_timing.StageCost, "fixed_rd_retained"));
+    try std.testing.expectEqual(@as(usize, 424), @offsetOf(cost_timing.StageCost, "fixed_tu_skipped"));
+    try std.testing.expectEqual(@as(usize, 432), @offsetOf(cost_timing.StageCost, "fixed_tu_retained"));
+    try std.testing.expectEqual(@as(usize, 440), @offsetOf(cost_timing.StageCost, "fixed_td_skipped"));
+    try std.testing.expectEqual(@as(usize, 448), @offsetOf(cost_timing.StageCost, "fixed_td_retained"));
 }

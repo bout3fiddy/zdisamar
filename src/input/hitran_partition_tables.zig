@@ -1,5 +1,6 @@
 const std = @import("std");
 const spline = @import("../common/math/spline.zig");
+const CostTiming = @import("../instrumentation/cost_timing.zig");
 
 // hitran_partition_tables.zig ------------------------------------------------------------------------------- |
 // Embedded HITRAN TIPS partition-sum tables used by line-strength temperature scaling.                        |
@@ -559,11 +560,19 @@ const prepared_q_67 = preparePartitionTable(q_67_f64);
 const prepared_q_4111 = preparePartitionTable(q_4111);
 const prepared_q_5111 = preparePartitionTable(q_5111);
 
-pub fn ratioT0OverT(isotopologue_code: i32, temperature_k: f64, reference_temperature_k: f64) ?f64 {
+pub fn ratioT0OverT(
+    isotopologue_code: i32,
+    temperature_k: f64,
+    reference_temperature_k: f64,
+    stage_cost: ?CostTiming.Active,
+) ?f64 {
     // ratioT0OverT ------------------------------------------------------------------------------------------ |
     // Return Q(reference_temperature_k) / Q(temperature_k) for a retained HITRAN isotopologue table.          |
     // ------------------------------------------------------------------------------------------------------- |
     const table = preparedPartitionTable(isotopologue_code) orelse return null;
+
+    const timing_start = CostTiming.start(stage_cost);
+    defer CostTiming.finish(stage_cost, timing_start, "partition_interp");
 
     const q_t = interpolatePartitionTable(table, temperature_k);
     const q_ref = if (reference_temperature_k == hitran_reference_temperature_k)
