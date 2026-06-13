@@ -30,6 +30,13 @@ from suite.db import BenchmarkDb  # noqa: E402
 from suite.progress import Progress  # noqa: E402
 from suite.timing import elapsed_since, timing_start  # noqa: E402
 
+WP5_RETRIEVAL_ERRORS = (
+    "UnsupportedOptimalEstimation",
+    "UnsupportedOptimalEstimationCorrection",
+    "UnsupportedOptimalEstimationBatch",
+    "UnsupportedFastmodeOptimalEstimationBatch",
+)
+
 
 def configure_runtime_defaults() -> None:
 
@@ -74,7 +81,7 @@ def main() -> int:
 
         started = timing_start()
         forward_result = forward.run(db, progress, run_id)
-        retrieval_result = retrieval.run(db, progress, run_id)
+        retrieval_result = run_retrieval_or_skip(db, progress, run_id, retrieval)
         total_timing = elapsed_since(started)
         db.finish_run(run_id, "complete")
         results = build_fast_results(total_timing, forward_result, retrieval_result)
@@ -89,21 +96,79 @@ def main() -> int:
         db.close()
 
 
+def run_retrieval_or_skip(
+    db: BenchmarkDb,
+    progress: Progress,
+    run_id: str,
+    retrieval_module: Any,
+) -> dict[str, Any] | None:
+
+    try:
+        return retrieval_module.run(db, progress, run_id)
+    except RuntimeError as exc:
+        reason = str(exc)
+        if reason not in WP5_RETRIEVAL_ERRORS:
+            raise
+
+        payload = {
+            "status": "skipped",
+            "reason": reason,
+            "owner": "WP5",
+        }
+        db.summary(run_id, "retrieval_skipped", payload)
+        progress.log("retrieval", f"skipped until WP5: {reason}")
+        return None
+
+
 def build_fast_results(
     total_timing: Any,
     forward_result: dict[str, Any],
-    retrieval_result: dict[str, Any],
+    retrieval_result: dict[str, Any] | None,
 ) -> dict[str, Any]:
 
     no_session = forward_result["no_session"]
     session = forward_result["session"]
     fast_forward = forward_result["fast_mode"]
-    retrieval_session = retrieval_result["single"]["session"]
-    retrieval_sweep = retrieval_result["sweep"]
 
     session_delta = session["residuals"]["vs_no_session"]
     fast_forward_residuals = fast_forward["residuals"]
-    sweep_delta = retrieval_sweep["fast_minus_session"]
+    retrieval_cases: dict[str, Any] = {
+        "oe_session": {
+            "status": "skipped",
+            "reason": "WP5 retrieval path not run",
+        },
+        "oe_sweep": {
+            "status": "skipped",
+            "reason": "WP5 retrieval path not run",
+        },
+    }
+    if retrieval_result is not None:
+        retrieval_session = retrieval_result["single"]["session"]
+        retrieval_sweep = retrieval_result["sweep"]
+        sweep_delta = retrieval_sweep["fast_minus_session"]
+        retrieval_cases = {
+            "oe_session": {
+                "n": retrieval_session["timing_s"]["retrieval_s"]["runs"],
+                "median_retrieval_s": rounded(
+                    retrieval_session["timing_s"]["retrieval_s"]["median"]
+                ),
+                "aod_abs_diff": retrieval_session["residuals"][
+                    "aerosol_optical_depth_abs_diff"
+                ],
+            },
+            "oe_sweep": {
+                "cases": list(OE_SWEEP_CASE_INDICES),
+                "session_total_s": rounded(
+                    retrieval_sweep["session"]["timing_s"]["retrieval_s"]["total"]
+                ),
+                "fast_total_s": rounded(
+                    retrieval_sweep["fast_mode"]["timing_s"]["retrieval_s"]["total"]
+                ),
+                "fast_vs_session_aod_max_abs": sweep_delta["aerosol_optical_depth_delta"][
+                    "max_abs"
+                ],
+            },
+        }
 
     return {
         "schema": 1,
@@ -132,25 +197,7 @@ def build_fast_results(
                 ),
                 "worst_residual_max_abs": fast_forward_residuals["worst_scene"]["max_abs_residual"],
             },
-            "oe_session": {
-                "n": retrieval_session["timing_s"]["retrieval_s"]["runs"],
-                "median_retrieval_s": rounded(
-                    retrieval_session["timing_s"]["retrieval_s"]["median"]
-                ),
-                "aod_abs_diff": retrieval_session["residuals"]["aerosol_optical_depth_abs_diff"],
-            },
-            "oe_sweep": {
-                "cases": list(OE_SWEEP_CASE_INDICES),
-                "session_total_s": rounded(
-                    retrieval_sweep["session"]["timing_s"]["retrieval_s"]["total"]
-                ),
-                "fast_total_s": rounded(
-                    retrieval_sweep["fast_mode"]["timing_s"]["retrieval_s"]["total"]
-                ),
-                "fast_vs_session_aod_max_abs": sweep_delta["aerosol_optical_depth_delta"][
-                    "max_abs"
-                ],
-            },
+            **retrieval_cases,
         },
     }
 
