@@ -11,7 +11,7 @@ pub const vendor_hg_truncation_threshold: f64 = 1.0e-8;
 //                                                                                                             |
 // provenance                                                                                                  |
 //   Ports main:`src/forward_model/optical_properties/shared/phase_functions.zig` HG coefficient preparation:  |
-//   fixed [151] coefficient storage, vendor max phase index 150, and the vendor 1.0e-8 truncation threshold.  |
+//   fixed [151] coefficient storage, vendor max phase index 150, and case truncation threshold.               |
 //                                                                                                             |
 // math                                                                                                        |
 //   coefficient[0] = 1                                                                                        |
@@ -56,7 +56,10 @@ pub fn build(case: o2_case.O2Case) PhaseTable {
         case.aerosol.asymmetry_factor
     else
         profileEquivalentAsymmetryFactor(case);
-    const coefficients = hgPhaseCoefficients(asymmetry_factor);
+    const coefficients = hgPhaseCoefficientsWithThreshold(
+        asymmetry_factor,
+        case.rtm.performance_thresholds.phase_function_truncation_threshold,
+    );
     return .{
         .aerosol_phase_coefficients = coefficients,
         .aerosol_phase_max_index = maxPhaseCoefficientIndex(&coefficients),

@@ -34,6 +34,19 @@ test "PhaseTable build retains reference aerosol phase support" {
     try std.testing.expect(table.aerosol_phase_coefficients[40] == 0.0);
 }
 
+test "PhaseTable build consumes case phase truncation threshold" {
+    var case = internal.input.defaults.referenceCase();
+    case.rtm.performance_thresholds.phase_function_truncation_threshold = 1.0e-6;
+
+    const table = phase_table.build(case);
+    const expected = scalarHgCoefficients(0.7, 1.0e-6);
+
+    try std.testing.expectEqual(@as(usize, 27), table.aerosol_phase_max_index);
+    for (0..phase_table.coefficient_count) |index| {
+        try std.testing.expectApproxEqAbs(expected[index], table.aerosol_phase_coefficients[index], 1.0e-14);
+    }
+}
+
 test "zero and isotropic aerosol phase rows keep only l0 active" {
     const zero = phase_table.zeroPhaseCoefficients();
     try std.testing.expectEqual(@as(usize, 0), phase_table.maxPhaseCoefficientIndex(&zero));

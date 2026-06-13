@@ -815,7 +815,11 @@ fn runSpectrum(
 
     if (selection.state_count != 0) {
         const selected_ids = selection.ids[0..selection.state_count];
-        result.compact_jacobian = compactJacobian(result.native.spectrum.jacobian, selected_ids) catch |err| {
+        result.compact_jacobian = compactRadianceJacobian(
+            result.native.spectrum,
+            selected_ids,
+            solarMu0(prepared.case),
+        ) catch |err| {
             resolved.setError(@errorName(err));
             return @intFromEnum(ZdsStatus.failure);
         };
@@ -885,18 +889,39 @@ fn jacobianSelection(
     return selection;
 }
 
-fn compactJacobian(jacobian: []const zdisamar.JacobianVector, state_ids: []const u8) ![]f64 {
-    // compactJacobian ----------------------------------------------------------------------------------------|
-    // Copy fixed native Jacobian vectors into Python's compact row-major active-state table.                  |
+fn compactRadianceJacobian(
+    spectrum: zdisamar.O2Spectrum,
+    state_ids: []const u8,
+    solar_mu0: f64,
+) ![]f64 {
+    // compactRadianceJacobian --------------------------------------------------------------------------------|
+    // Convert native reflectance Jacobian rows into Python's compact radiance-Jacobian ABI table.             |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   Python `Spectrum.reflectance_jacobian()` treats the C `jacobian` pointer as dL/dx and divides by      |
+    //   mu0 * irradiance / pi. Internal root output already stores dR/dx after reflectance assembly, so the   |
+    //   C boundary inverts that scale exactly once before exposing the fixed ABI buffer.                      |
     // --------------------------------------------------------------------------------------------------------|
     const state_count = state_ids.len;
-    const compact = try allocator.alloc(f64, jacobian.len * state_count);
-    for (jacobian, 0..) |row, sample_index| {
+    if (spectrum.jacobian.len != spectrum.irradiance.len) return error.ShapeMismatch;
+
+    const compact = try allocator.alloc(f64, spectrum.jacobian.len * state_count);
+    for (spectrum.jacobian, spectrum.irradiance, 0..) |row, irradiance, sample_index| {
+        const reflectance_to_radiance_scale = solar_mu0 * irradiance / std.math.pi;
         for (state_ids, 0..) |state_id, compact_index| {
-            compact[sample_index * state_count + compact_index] = row[state_id];
+            compact[sample_index * state_count + compact_index] =
+                row[state_id] * reflectance_to_radiance_scale;
         }
     }
     return compact;
+}
+
+fn solarMu0(case: zdisamar.O2Case) f64 {
+    // solarMu0 -----------------------------------------------------------------------------------------------|
+    // Return cos(solar zenith) for the Python radiance-Jacobian ABI conversion.                               |
+    // --------------------------------------------------------------------------------------------------------|
+    const solar_sin = @sin(std.math.degreesToRadians(case.geometry.solar_zenith_deg));
+    return @sqrt(@max(1.0 - solar_sin * solar_sin, 0.0));
 }
 
 fn spectrumReport(spectrum: zdisamar.O2Spectrum) ZdsDiagnosticReport {
