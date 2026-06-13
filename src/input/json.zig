@@ -3,6 +3,7 @@ const std = @import("std");
 const defaults = @import("defaults.zig");
 const errors = @import("../common/errors.zig");
 const o2_case = @import("o2_case.zig");
+const transport_controls = @import("../transport/controls.zig");
 const validate = @import("validate.zig");
 
 const Allocator = std.mem.Allocator;
@@ -26,11 +27,11 @@ const default_output_isotopes = [_]usize{ 1, 2, 3 };
 // Owns parser arena storage backing one borrowed O2Case.                                                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 1664 B (1.625 KiB), align: 8 B                                                                        |
+// size: 1728 B (1.688 KiB), align: 8 B                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
 // [   0..1039] parsed: std.json.Parsed(NativeO2CaseJson)                                                      |
-// [1040..1663] case  : O2Case                                                                                 |
+// [1040..1727] case  : O2Case                                                                                 |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   case slices and strings point into parsed.arena and stay valid until deinit.                              |
@@ -89,7 +90,8 @@ fn buildCase(native: NativeO2CaseJson) !o2_case.O2Case {
     try validatePlan(native.plan);
     try validateO2Assets(native.inputs);
     try validateObservation(native.observation, native.inputs.raw_solar_reference.id);
-    try validateRtm(native.rtm_controls, native.geometry.model);
+    const performance_thresholds = try performanceThresholdsFromJson(native.rtm_controls.performance_thresholds);
+    try validateRtm(native.rtm_controls, native.geometry.model, performance_thresholds);
     try validateAerosol(native.aerosol);
 
     const line_mixing_factor = native.o2.line_mixing_factor orelse return errors.Error.UnsupportedJsonInput;
@@ -160,6 +162,7 @@ fn buildCase(native: NativeO2CaseJson) !o2_case.O2Case {
         .rtm = .{
             .stream_count = native.rtm_controls.n_streams,
             .fourier_term_limit = rtm_defaults.fourier_term_limit,
+            .performance_thresholds = performance_thresholds,
         },
     };
 }
@@ -202,9 +205,13 @@ fn validateObservation(observation: ObservationJson, solar_reference_asset_id: [
     if (observation.measured_wavelengths_nm.len != 0) return errors.Error.UnsupportedJsonInput;
 }
 
-fn validateRtm(rtm: RtmControlsJson, geometry_model: []const u8) !void {
+fn validateRtm(
+    rtm: RtmControlsJson,
+    geometry_model: []const u8,
+    performance_thresholds: transport_controls.PerformanceThresholds,
+) !void {
     // validateRtm --------------------------------------------------------------------------------------------|
-    // Keep WP4 on the proven Stage 2/3 route: multiple scattering, integrated source, default thresholds.     |
+    // Keep WP4 on the proven Stage 2/3 route while consuming case-owned LABOS threshold controls.             |
     // --------------------------------------------------------------------------------------------------------|
     if (!std.mem.eql(u8, rtm.scattering, "multiple")) return errors.Error.UnsupportedJsonInput;
     if (rtm.n_streams != defaults.referenceCase().rtm.stream_count) return errors.Error.UnsupportedJsonInput;
@@ -216,7 +223,7 @@ fn validateRtm(rtm: RtmControlsJson, geometry_model: []const u8) !void {
     if (!pseudo_spherical and !plane_parallel) return errors.Error.UnsupportedJsonInput;
     if (rtm.use_spherical_correction != pseudo_spherical) return errors.Error.UnsupportedJsonInput;
 
-    try expectDefaultThresholds(rtm.performance_thresholds);
+    try performance_thresholds.validate();
 }
 
 fn validateAerosol(aerosol: AerosolJson) !void {
@@ -299,29 +306,42 @@ fn aerosolProfileRows(aerosol: AerosolJson) []const o2_case.AerosolProfileLayer 
     return if (aerosol.profile.len > 1) aerosol.profile else &.{};
 }
 
-fn expectDefaultThresholds(thresholds: PerformanceThresholdsJson) !void {
-    // expectDefaultThresholds --------------------------------------------------------------------------------|
-    // Validate every Python threshold field because this WP4 slice still builds SolveConfig from defaults.    |
+fn performanceThresholdsFromJson(thresholds: PerformanceThresholdsJson) !transport_controls.PerformanceThresholds {
+    // performanceThresholdsFromJson --------------------------------------------------------------------------|
+    // Convert Python-native LABOS threshold controls into the transport row consumed by root solve config.    |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   Python `with_rtm_optimisation_applied()` writes fastmode RTM thresholds into the native case before   |
+    //   crossing the C ABI. The parser must consume those values; accepting them and then using defaults      |
+    //   would silently ignore a public forward control.                                                       |
     // --------------------------------------------------------------------------------------------------------|
-    const default_order_shape =
-        thresholds.num_orders_max == 0 and
-        thresholds.fourier_floor_scalar == 2 and
-        thresholds.fourier_order_cap == null and
-        thresholds.aerosol_tangent_order_cap == null;
+    return .{
+        .num_orders_max = try u16FromJson(thresholds.num_orders_max),
+        .fourier_floor_scalar = try u16FromJson(thresholds.fourier_floor_scalar),
+        .fourier_order_cap = try optionalU16FromJson(thresholds.fourier_order_cap),
+        .aerosol_tangent_order_cap = try optionalU16FromJson(thresholds.aerosol_tangent_order_cap),
+        .fourier_tail_reflectance_epsilon = thresholds.fourier_tail_reflectance_epsilon,
+        .threshold_conv_first = thresholds.threshold_conv_first,
+        .threshold_conv_mult = thresholds.threshold_conv_mult,
+        .threshold_doubl = thresholds.threshold_doubl,
+        .threshold_mul = thresholds.threshold_mul,
+        .phase_function_truncation_threshold = thresholds.phase_function_truncation_threshold,
+    };
+}
 
-    const default_fourier_and_doubling =
-        thresholds.fourier_tail_reflectance_epsilon == 3.0e-14 and
-        thresholds.threshold_doubl == 1.0e-6 and
-        thresholds.phase_function_truncation_threshold == 1.0e-8;
+fn optionalU16FromJson(value: ?usize) !?u16 {
+    // optionalU16FromJson ------------------------------------------------------------------------------------|
+    // Narrow optional JSON caps to the transport row width and reject overflow before setup is retained.      |
+    // --------------------------------------------------------------------------------------------------------|
+    if (value) |some| return try u16FromJson(some);
+    return null;
+}
 
-    const default_scattering_convergence =
-        thresholds.threshold_conv_first == 1.5e-7 and
-        thresholds.threshold_conv_mult == 1.5e-9 and
-        thresholds.threshold_mul == 1.0e-8;
-
-    if (!default_order_shape) return errors.Error.UnsupportedJsonInput;
-    if (!default_fourier_and_doubling) return errors.Error.UnsupportedJsonInput;
-    if (!default_scattering_convergence) return errors.Error.UnsupportedJsonInput;
+fn u16FromJson(value: usize) !u16 {
+    // u16FromJson --------------------------------------------------------------------------------------------|
+    // Narrow JSON counters to the LABOS control width used by the old route.                                  |
+    // --------------------------------------------------------------------------------------------------------|
+    return std.math.cast(u16, value) orelse errors.Error.UnsupportedJsonInput;
 }
 
 fn expectAsset(asset: o2_case.Asset, id: []const u8, format: []const u8) !void {

@@ -87,6 +87,33 @@ test "public root exposes setup session and spectrum surface" {
     try std.testing.expect(!@hasDecl(zdisamar, "zds_context_create"));
 }
 
+test "public O2 A root surface keeps route-only spectrum knobs internal" {
+    const zdisamar = internal.public;
+
+    // Source: WP1 evidence under scratch/refactor/2026-06-11-explicit-dataflow-refactor/evidence/.
+    // `baseline-main-56605387/internal-dump-baseline.json` pins 701 integrated radiance rows and 701
+    // integrated irradiance rows. `python-reference-case-native.json` exposes no calibration, slit-kernel,
+    // radiance-integration, or irradiance-integration override keys, so the root call keeps those six
+    // `runO2ASpectrum` arguments as fixed route constants rather than public case fields.
+    try std.testing.expect(!@hasDecl(zdisamar, "buildReferenceO2RunTables"));
+    try std.testing.expect(!@hasDecl(zdisamar, "deinitReferenceO2RunTables"));
+    try std.testing.expect(!@hasDecl(zdisamar, "buildReferenceProfileLineValues"));
+    try std.testing.expect(!@hasDecl(zdisamar, "buildReferenceSpectrumSamplingTable"));
+    try std.testing.expect(!@hasDecl(zdisamar, "runReferenceSpectrumSingleWorker"));
+    try std.testing.expect(!@hasDecl(zdisamar, "runReferenceSpectrum"));
+    try std.testing.expect(!@hasDecl(zdisamar, "runO2ASpectrum"));
+
+    const case = zdisamar.defaultO2Case();
+    const Case = @TypeOf(case);
+    const Observation = @TypeOf(case.observation);
+    try std.testing.expect(!@hasField(Case, "radiance_calibration"));
+    try std.testing.expect(!@hasField(Case, "irradiance_calibration"));
+    try std.testing.expect(!@hasField(Case, "radiance_slit_kernel"));
+    try std.testing.expect(!@hasField(Case, "irradiance_slit_kernel"));
+    try std.testing.expect(!@hasField(Observation, "uses_integrated_radiance_sampling"));
+    try std.testing.expect(!@hasField(Observation, "uses_integrated_irradiance_sampling"));
+}
+
 test "runO2AWithSessionMemory reuses profile-line rows across repeated case runs" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
     if (!std.process.hasEnvVarConstant("ZDISAMAR_RUN_ROOT_SESSION_PARITY")) return error.SkipZigTest;

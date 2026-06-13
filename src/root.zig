@@ -65,11 +65,11 @@ pub const buildO2ProfileLineValues = profile_lines.buildO2ProfileLineValues;
 // Public owner for parsed/default O2 A controls and setup tables.                                             |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 2560 B (2.500 KiB), align: 8                                                                          |
+// size: 2624 B (2.562 KiB), align: 8                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [   0.. 623] case  : O2Case                                                                                 |
-// [ 624..2559] tables: O2RunTables                                                                            |
+// [   0.. 687] case  : O2Case                                                                                 |
+// [ 688..2623] tables: O2RunTables                                                                            |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   case borrows control strings/slices. tables owns loaded physical setup arrays and scalar tables.          |
@@ -167,6 +167,12 @@ pub fn runO2AWithSessionMemory(
     const product_radiance = try allocator.alloc(radiance_results.RadianceResult, product_count);
     defer allocator.free(product_radiance);
 
+    // runO2A route constants ---------------------------------------------------------------------------------|
+    // WP1 evidence records every O2 A product row as integrated radiance and irradiance sampling, with no     |
+    // public calibration, slit-kernel, or integration override in `python-reference-case-native.json`.        |
+    // Keep those six `runO2ASpectrum` arguments fixed here; user-configurable controls enter through O2Case   |
+    // and `o2aSolveConfig`.                                                                                   |
+    // --------------------------------------------------------------------------------------------------------|
     const summary = try spectrum_run.runO2ASpectrum(
         table,
         wavelengths,
@@ -280,7 +286,7 @@ pub fn o2aSolveConfig(case: O2Case) SolveConfig {
         .controls = .{
             .scattering = .multiple,
             .n_streams = @intCast(case.rtm.stream_count),
-            .performance_thresholds = controls.PerformanceThresholds.o2a_default,
+            .performance_thresholds = case.rtm.performance_thresholds,
             .use_spherical_correction = case.geometry.pseudo_spherical,
             .integrate_source_function = true,
             .renorm_phase_function = true,

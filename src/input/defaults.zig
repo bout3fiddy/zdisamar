@@ -110,6 +110,7 @@ pub fn referenceCase() o2_case.O2Case {
         .rtm = .{
             .stream_count = 20,
             .fourier_term_limit = 20,
+            .performance_thresholds = .o2a_default,
         },
     };
 }

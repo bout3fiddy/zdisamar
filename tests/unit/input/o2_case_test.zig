@@ -44,6 +44,10 @@ test "Python native O2 case JSON round-trips into typed controls" {
         "data/reference_data/solar/o2a_solar_reference_753_778.csv",
         parsed.case.observation.solar_reference.path,
     );
+    try std.testing.expectEqual(
+        internal.transport.controls.PerformanceThresholds.o2a_default,
+        parsed.case.rtm.performance_thresholds,
+    );
 }
 
 test "Python NaN altitude placeholders are normalized before typed parsing" {
@@ -67,7 +71,7 @@ test "Python NaN altitude placeholders are normalized before typed parsing" {
     try std.testing.expectEqual(@as(f64, 0.3), parsed.case.atmosphere.intervals[0].top_pressure_hpa);
 }
 
-test "unsupported JSON route controls fail at the input boundary" {
+test "Python native fast RTM thresholds are consumed by solve config" {
     const allocator = std.testing.allocator;
 
     const rendered = try internal.input.json.renderDefaultO2CaseJson(allocator);
@@ -81,9 +85,36 @@ test "unsupported JSON route controls fail at the input boundary" {
     );
     defer allocator.free(fast_threshold);
 
+    var parsed = try internal.input.json.parseO2CaseJson(allocator, fast_threshold);
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(
+        @as(?u16, 5),
+        parsed.case.rtm.performance_thresholds.fourier_order_cap,
+    );
+    try std.testing.expectEqual(
+        @as(?u16, 5),
+        internal.public.o2aSolveConfig(parsed.case).controls.performance_thresholds.fourier_order_cap,
+    );
+}
+
+test "unsupported JSON route controls fail at the input boundary" {
+    const allocator = std.testing.allocator;
+
+    const rendered = try internal.input.json.renderDefaultO2CaseJson(allocator);
+    defer allocator.free(rendered);
+    const measured_wavelengths = try std.mem.replaceOwned(
+        u8,
+        allocator,
+        rendered,
+        "\"measured_wavelengths_nm\":[]",
+        "\"measured_wavelengths_nm\":[760.0]",
+    );
+    defer allocator.free(measured_wavelengths);
+
     try std.testing.expectError(
         error.UnsupportedJsonInput,
-        internal.input.json.parseO2CaseJson(allocator, fast_threshold),
+        internal.input.json.parseO2CaseJson(allocator, measured_wavelengths),
     );
 }
 

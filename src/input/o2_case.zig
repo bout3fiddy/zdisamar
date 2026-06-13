@@ -1,4 +1,5 @@
 const std = @import("std");
+const transport_controls = @import("../transport/controls.zig");
 
 // o2_case.zig ----------------------------------------------------------------------------------------------- |
 // Typed O2 A product-case controls consumed by setup tables and forward runs.                                 |
@@ -14,7 +15,7 @@ const std = @import("std");
 //   aerosol              : optical-depth inputs and explicit interval placement                               |
 //   observation          : line-shape and support-grid spacing                                                |
 //   line_gas / cia       : O2 line-list and O2-O2 continuum asset controls                                    |
-//   rtm                  : layer/source/quadrature shape checked against WP1 evidence                         |
+//   rtm                  : stream count, Fourier limit, and LABOS performance thresholds                      |
 // ----------------------------------------------------------------------------------------------------------- |
 
 // Asset ------------------------------------------------------------------------------------------------------|
@@ -248,17 +249,19 @@ pub const CiaControls = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // RtmControls ------------------------------------------------------------------------------------------------|
-// Retained transport-shape controls checked by WP2 but consumed by later packages.                            |
+// Retained transport controls consumed by forward runs.                                                       |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+// size: 80 B (0.078 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [0.. 7] stream_count      : usize                                                                           |
-// [8..15] fourier_term_limit: usize                                                                           |
+// [ 0.. 7] stream_count          : usize                                                                      |
+// [ 8..15] fourier_term_limit    : usize                                                                      |
+// [16..79] performance_thresholds: PerformanceThresholds                                                      |
 pub const RtmControls = struct {
     stream_count: usize,
     fourier_term_limit: usize,
+    performance_thresholds: transport_controls.PerformanceThresholds,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -266,7 +269,7 @@ pub const RtmControls = struct {
 // Borrowed O2 A setup row.                                                                                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 624 B (0.609 KiB), align: 8 B                                                                         |
+// size: 688 B (0.672 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0.. 15] id           : []const u8                                                                        |
@@ -278,7 +281,7 @@ pub const RtmControls = struct {
 // [256..367] observation  : ObservationControls                                                               |
 // [368..551] line_gas     : LineGasControls                                                                   |
 // [552..607] cia          : CiaControls                                                                       |
-// [608..623] rtm          : RtmControls                                                                       |
+// [608..687] rtm          : RtmControls                                                                       |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   id, asset strings, isotope slices, and interval slices are borrowed; table builders own loaded rows.      |

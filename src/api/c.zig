@@ -170,20 +170,20 @@ const CResult = struct {
 // Native owner behind the opaque C handle.                                                                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// Debug build: size 8000 B (7.812 KiB), align 8                                                               |
-// optimized  : size 7992 B (7.805 KiB), align 8                                                               |
+// Debug build: size 8128 B (7.938 KiB), align 8                                                               |
+// optimized  : size 8120 B (7.930 KiB), align 8                                                               |
 //                                                                                                             |
 // memory                                                                                                      |
-// [   0..1671] parsed    : ?ParsedO2CaseJson                                                                  |
-// [1672..4239] prepared  : ?PreparedO2A                                                                       |
-// [4240..7711] session   : O2SessionMemory in Debug                                                           |
-// [4240..7703] session   : O2SessionMemory in optimized builds                                                |
-// [7712..7735] results   : ArrayList(*CResult) in Debug                                                       |
-// [7704..7727] results   : ArrayList(*CResult) in optimized builds                                            |
-// [7736..7991] last_error: [256:0]u8 in Debug                                                                 |
-// [7728..7983] last_error: [256:0]u8 in optimized builds                                                      |
-// [7992..7999] trailing padding: 8 B in Debug                                                                 |
-// [7984..7991] trailing padding: 8 B in optimized builds                                                      |
+// [   0..1735] parsed    : ?ParsedO2CaseJson                                                                  |
+// [1736..4367] prepared  : ?PreparedO2A                                                                       |
+// [4368..7839] session   : O2SessionMemory in Debug                                                           |
+// [4368..7831] session   : O2SessionMemory in optimized builds                                                |
+// [7840..7863] results   : ArrayList(*CResult) in Debug                                                       |
+// [7832..7855] results   : ArrayList(*CResult) in optimized builds                                            |
+// [7864..8119] last_error: [256:0]u8 in Debug                                                                 |
+// [7856..8111] last_error: [256:0]u8 in optimized builds                                                      |
+// [8120..8127] trailing padding: 8 B in Debug                                                                 |
+// [8112..8119] trailing padding: 8 B in optimized builds                                                      |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   parsed owns JSON arena storage borrowed by prepared.case for zds_prepare_o2a_json.                        |

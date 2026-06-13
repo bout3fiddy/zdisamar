@@ -43,6 +43,7 @@ pub fn o2Case(case: o2_case.O2Case) !void {
 
     if (!case.cia.enabled) return errors.Error.InvalidControl;
     if (case.rtm.stream_count == 0) return errors.Error.InvalidControl;
+    case.rtm.performance_thresholds.validate() catch return errors.Error.InvalidControl;
 }
 
 fn aerosolProfile(
