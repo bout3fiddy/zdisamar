@@ -83,7 +83,6 @@ class NativeWheelHook(BuildHookInterface):
         command.append(f"-Doptimize={optimize}")
 
         subprocess.run(command, cwd=self.root, check=True)
-
         library = synced_library_path(self.root)
         build_data["force_include"][str(library)] = f"zdisamar/bindings/{library.name}"
         build_data["tag"] = f"py3-none-{platform_tag(self.build_config)}"
