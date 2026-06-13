@@ -4,6 +4,36 @@ const internal = @import("internal");
 
 const profile_line_test_sample_count = 7;
 
+fn profileLineRow(
+    values: internal.cache.profile_line_memory.ProfileLineValues,
+    wavelength_index: usize,
+    profile_node_index: usize,
+) ?internal.cache.profile_line_memory.ProfileLineValue {
+    // profileLineRow -----------------------------------------------------------------------------------------|
+    // Return one test evidence row from the public owned row slice.                                           |
+    // --------------------------------------------------------------------------------------------------------|
+    if (wavelength_index >= values.wavelength_count or profile_node_index >= values.profile_node_count) return null;
+    return values.values[wavelength_index * values.profile_node_count + profile_node_index];
+}
+
+fn supportProfileLineRow(
+    values: internal.cache.profile_line_memory.ProfileLineValues,
+    wavelength_index: usize,
+    profile_node_index: usize,
+) ?internal.cache.profile_line_memory.ProfileSupportLineValue {
+    // supportProfileLineRow ----------------------------------------------------------------------------------|
+    // Return one test evidence row from the public support-profile row slice.                                 |
+    // --------------------------------------------------------------------------------------------------------|
+    if (wavelength_index >= values.wavelength_count or
+        profile_node_index >= values.support_profile_node_count)
+    {
+        return null;
+    }
+    return values.support_profile_values[
+        wavelength_index * values.support_profile_node_count + profile_node_index
+    ];
+}
+
 test "ProfileLineValues keep wavelength-major line values for each layer node" {
     var case = internal.input.defaults.referenceCase();
     case.spectral_grid.sample_count = profile_line_test_sample_count;
@@ -24,10 +54,10 @@ test "ProfileLineValues keep wavelength-major line values for each layer node" {
     );
     try std.testing.expect(values.reuse_stamp.value != 0);
 
-    const first = values.row(0, 0) orelse return error.MissingProfileLineValue;
-    const last = values.row(values.wavelength_count - 1, values.profile_node_count - 1) orelse
+    const first = profileLineRow(values, 0, 0) orelse return error.MissingProfileLineValue;
+    const last = profileLineRow(values, values.wavelength_count - 1, values.profile_node_count - 1) orelse
         return error.MissingProfileLineValue;
-    const support_first = values.supportProfileRow(0, 0) orelse return error.MissingProfileLineValue;
+    const support_first = supportProfileLineRow(values, 0, 0) orelse return error.MissingProfileLineValue;
     try std.testing.expectApproxEqAbs(755.0, first.wavelength_nm, 0.0);
     try std.testing.expectApproxEqAbs(776.0, last.wavelength_nm, 0.0);
     try std.testing.expectApproxEqAbs(755.0, support_first.wavelength_nm, 0.0);
@@ -113,7 +143,8 @@ test "ProfileLineValues match old profile-node line math evidence" {
             profile_line_probe_evidence[probe_index].wavelength_nm == wavelength_nm)
         {
             const expected = profile_line_probe_evidence[probe_index];
-            const actual = values.row(0, expected.profile_node_index) orelse return error.MissingProfileLineValue;
+            const actual = profileLineRow(values, 0, expected.profile_node_index) orelse
+                return error.MissingProfileLineValue;
             try std.testing.expectApproxEqAbs(expected.wavelength_nm, actual.wavelength_nm, 0.0);
             try std.testing.expectApproxEqAbs(expected.pressure_hpa, actual.pressure_hpa, 1.0e-10);
             try std.testing.expectApproxEqAbs(expected.temperature_k, actual.temperature_k, 1.0e-10);
@@ -155,7 +186,8 @@ test "ProfileLineValues match old profile-node total line sidecar evidence" {
             profile_line_total_probe_evidence[probe_index].wavelength_nm == wavelength_nm)
         {
             const expected = profile_line_total_probe_evidence[probe_index];
-            const actual = values.row(0, expected.profile_node_index) orelse return error.MissingProfileLineValue;
+            const actual = profileLineRow(values, 0, expected.profile_node_index) orelse
+                return error.MissingProfileLineValue;
             try std.testing.expectApproxEqRel(
                 expected.strong_line_sigma_cm2_per_molecule,
                 actual.strong_line_sigma_cm2_per_molecule,
@@ -191,9 +223,9 @@ test "ProfileLineValues preserve caller-provided exact wavelength order" {
     try std.testing.expectEqual(@as(usize, 45), values.profile_node_count);
     try std.testing.expectEqual(@as(usize, 47), values.support_profile_node_count);
 
-    const row_760 = values.row(0, 0) orelse return error.MissingProfileLineValue;
-    const row_758 = values.row(1, 0) orelse return error.MissingProfileLineValue;
-    const row_776 = values.row(2, 44) orelse return error.MissingProfileLineValue;
+    const row_760 = profileLineRow(values, 0, 0) orelse return error.MissingProfileLineValue;
+    const row_758 = profileLineRow(values, 1, 0) orelse return error.MissingProfileLineValue;
+    const row_776 = profileLineRow(values, 2, 44) orelse return error.MissingProfileLineValue;
     try std.testing.expectApproxEqAbs(760.0, row_760.wavelength_nm, 0.0);
     try std.testing.expectApproxEqAbs(758.0, row_758.wavelength_nm, 0.0);
     try std.testing.expectApproxEqAbs(776.0, row_776.wavelength_nm, 0.0);
