@@ -360,6 +360,28 @@ pub fn buildFromPreparedProfiles(
     );
 }
 
+pub fn refillFromPreparedProfiles(
+    grid: *LayerGrid,
+    case: o2_case.O2Case,
+    quadrature: LayerQuadrature,
+) !void {
+    // refillFromPreparedProfiles -----------------------------------------------------------------------------|
+    // Recompute pressure-state layer/support rows into caller-owned LayerGrid storage.                        |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : once per OE iteration when retrieval state changes may move interval pressure boundaries   |
+    //   memory   : all layer/support/profile storage is already owned by grid; this function performs no heap |
+    //              allocation and overwrites every computed row slot.                                         |
+    //                                                                                                         |
+    // dataflow                                                                                                |
+    //   reads  : case interval boundaries, retained canonical quadrature, and grid.source_profile rows        |
+    //   writes : only computed layer/support slices inside grid                                               |
+    // --------------------------------------------------------------------------------------------------------|
+    const shape = try layerGridShape(case, quadrature);
+    try requireGridShape(grid.*, shape);
+    try fillLayerGrid(grid, case, quadrature, shape.support_order);
+}
+
 fn buildWithOwnedProfiles(
     allocator: Allocator,
     case: o2_case.O2Case,
@@ -375,22 +397,95 @@ fn buildWithOwnedProfiles(
     var spectroscopy_profile_owned = true;
     errdefer if (spectroscopy_profile_owned) allocator.free(spectroscopy_profile_rows);
 
-    const profile = ProfileView{ .rows = dense_profile_rows };
-    const intervals = case.atmosphere.intervals;
+    const shape = try layerGridShape(case, quadrature);
+
+    var grid = try allocate(
+        allocator,
+        dense_profile_rows,
+        spectroscopy_profile_rows,
+        shape.layer_count,
+        shape.support_count,
+    );
+    dense_profile_owned = false;
+    spectroscopy_profile_owned = false;
+    errdefer grid.deinit(allocator);
+
+    try fillLayerGrid(&grid, case, quadrature, shape.support_order);
+    return grid;
+}
+
+const LayerGridShape = struct {
+    layer_count: usize,
+    support_count: usize,
+    support_order: usize,
+};
+
+fn layerGridShape(case: o2_case.O2Case, quadrature: LayerQuadrature) !LayerGridShape {
+    // layerGridShape -----------------------------------------------------------------------------------------|
+    // Compute the fixed storage shape for one atmosphere interval layout.                                     |
+    // --------------------------------------------------------------------------------------------------------|
     const support_order = @max(case.atmosphere.sublayer_divisions, @as(usize, 1));
     if (quadrature.support_order != support_order) return error.InvalidControl;
+
     var layer_count: usize = 0;
     var support_count: usize = 1;
-    for (intervals) |interval| {
+    for (case.atmosphere.intervals) |interval| {
         const interval_layer_count = interval.altitude_divisions + 1;
         layer_count += interval_layer_count;
         support_count += interval_layer_count * (support_order + 1);
     }
 
-    var grid = try allocate(allocator, dense_profile_rows, spectroscopy_profile_rows, layer_count, support_count);
-    dense_profile_owned = false;
-    spectroscopy_profile_owned = false;
-    errdefer grid.deinit(allocator);
+    return .{
+        .layer_count = layer_count,
+        .support_count = support_count,
+        .support_order = support_order,
+    };
+}
+
+fn requireGridShape(grid: LayerGrid, shape: LayerGridShape) error{InvalidControl}!void {
+    // requireGridShape ---------------------------------------------------------------------------------------|
+    // Reject attempts to refill retained storage with a different structural atmosphere layout.               |
+    // --------------------------------------------------------------------------------------------------------|
+    const layer_count = shape.layer_count;
+    const support_count = shape.support_count;
+    const layer_shape_matches =
+        grid.layer_top_altitudes_km.len == layer_count and
+        grid.layer_bottom_altitudes_km.len == layer_count and
+        grid.layer_top_pressures_hpa.len == layer_count and
+        grid.layer_bottom_pressures_hpa.len == layer_count and
+        grid.layer_mid_altitudes_km.len == layer_count and
+        grid.layer_pressures_hpa.len == layer_count and
+        grid.layer_temperatures_k.len == layer_count and
+        grid.layer_air_number_densities_cm3.len == layer_count and
+        grid.layer_o2_number_densities_cm3.len == layer_count and
+        grid.layer_path_lengths_cm.len == layer_count and
+        grid.layer_interval_indices_1based.len == layer_count and
+        grid.layer_support_starts.len == layer_count and
+        grid.layer_support_counts.len == layer_count;
+    const support_shape_matches =
+        grid.support_mid_altitudes_km.len == support_count and
+        grid.support_pressures_hpa.len == support_count and
+        grid.support_temperatures_k.len == support_count and
+        grid.support_air_number_densities_cm3.len == support_count and
+        grid.support_o2_number_densities_cm3.len == support_count and
+        grid.support_path_lengths_km.len == support_count and
+        grid.support_path_lengths_cm.len == support_count and
+        grid.support_interval_indices_1based.len == support_count;
+
+    if (!layer_shape_matches or !support_shape_matches) return error.InvalidControl;
+}
+
+fn fillLayerGrid(
+    grid: *LayerGrid,
+    case: o2_case.O2Case,
+    quadrature: LayerQuadrature,
+    support_order: usize,
+) !void {
+    // fillLayerGrid ------------------------------------------------------------------------------------------|
+    // Fill all computed layer/support rows from retained profile rows and canonical quadrature.               |
+    // --------------------------------------------------------------------------------------------------------|
+    const profile = ProfileView{ .rows = grid.source_profile.rows };
+    const intervals = case.atmosphere.intervals;
     grid.interval_count = intervals.len;
     grid.configured_layer_count = case.atmosphere.layer_count;
     grid.sublayer_divisions = case.atmosphere.sublayer_divisions;
@@ -426,7 +521,7 @@ fn buildWithOwnedProfiles(
 
         if (layer_cursor == 0) {
             fillSupportRow(
-                &grid,
+                grid,
                 &profile,
                 support_cursor,
                 interval_bottom_altitude_km,
@@ -468,7 +563,7 @@ fn buildWithOwnedProfiles(
                     0.5 * (support_nodes[support_index] + 1.0) * layer_span_km;
                 const support_weight_km = 0.5 * support_weights[support_index] * layer_span_km;
                 fillSupportRow(
-                    &grid,
+                    grid,
                     &profile,
                     global_support_index,
                     support_altitude_km,
@@ -481,7 +576,7 @@ fn buildWithOwnedProfiles(
 
             const upper_boundary_index = support_cursor + support_order + 1;
             fillSupportRow(
-                &grid,
+                grid,
                 &profile,
                 upper_boundary_index,
                 next_boundary_altitude_km,
@@ -511,7 +606,6 @@ fn buildWithOwnedProfiles(
 
     std.debug.assert(layer_cursor == grid.layer_top_altitudes_km.len);
     std.debug.assert(support_cursor + 1 == grid.support_mid_altitudes_km.len);
-    return grid;
 }
 
 fn countDistinctIntervalOrders(intervals: []const o2_case.VerticalInterval) usize {

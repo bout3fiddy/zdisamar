@@ -116,7 +116,7 @@ test "LayerQuadrature rows match per-call quadrature builders" {
     }
 }
 
-test "LayerGrid rebuild from prepared profiles matches full pressure-mutated build" {
+test "LayerGrid refill from prepared profiles matches fresh builds for pressure states" {
     const allocator = std.testing.allocator;
     const atmosphere_layers = internal.setup.atmosphere_layers;
 
@@ -124,42 +124,39 @@ test "LayerGrid rebuild from prepared profiles matches full pressure-mutated bui
     var base_tables = try internal.setup.o2_run_tables.buildO2RunTables(allocator, base_case);
     defer base_tables.deinit(allocator);
 
-    var case = base_case;
-    const intervals = try allocator.dupe(internal.input.o2_case.VerticalInterval, base_case.atmosphere.intervals);
-    defer allocator.free(intervals);
-    case.atmosphere.intervals = intervals;
-    try moveAerosolLayerPressure(&case, intervals, 820.0);
-
-    var full = try atmosphere_layers.build(allocator, case);
-    defer full.deinit(allocator);
-    var refreshed = try atmosphere_layers.buildFromPreparedProfiles(
+    var retained = try atmosphere_layers.buildFromPreparedProfiles(
         allocator,
-        case,
+        base_case,
         base_tables.layers.source_profile.rows,
         base_tables.layers.spectroscopy_profile.rows,
         base_tables.quadrature,
     );
-    defer refreshed.deinit(allocator);
+    defer retained.deinit(allocator);
 
-    try expectEqualF64Slices(full.layer_top_altitudes_km, refreshed.layer_top_altitudes_km);
-    try expectEqualF64Slices(full.layer_bottom_altitudes_km, refreshed.layer_bottom_altitudes_km);
-    try expectEqualF64Slices(full.layer_top_pressures_hpa, refreshed.layer_top_pressures_hpa);
-    try expectEqualF64Slices(full.layer_bottom_pressures_hpa, refreshed.layer_bottom_pressures_hpa);
-    try expectEqualF64Slices(full.layer_pressures_hpa, refreshed.layer_pressures_hpa);
-    try expectEqualF64Slices(full.layer_temperatures_k, refreshed.layer_temperatures_k);
-    try expectEqualF64Slices(full.support_mid_altitudes_km, refreshed.support_mid_altitudes_km);
-    try expectEqualF64Slices(full.support_pressures_hpa, refreshed.support_pressures_hpa);
-    try expectEqualF64Slices(full.support_temperatures_k, refreshed.support_temperatures_k);
-    try std.testing.expectEqualSlices(
-        u32,
-        full.layer_interval_indices_1based,
-        refreshed.layer_interval_indices_1based,
-    );
-    try std.testing.expectEqualSlices(
-        u32,
-        full.support_interval_indices_1based,
-        refreshed.support_interval_indices_1based,
-    );
+    const pressure_states_hpa = [_]f64{ 820.0, 870.0 };
+    for (pressure_states_hpa) |mid_pressure_hpa| {
+        var case = base_case;
+        const intervals = try allocator.dupe(internal.input.o2_case.VerticalInterval, base_case.atmosphere.intervals);
+        defer allocator.free(intervals);
+        case.atmosphere.intervals = intervals;
+        try moveAerosolLayerPressure(&case, intervals, mid_pressure_hpa);
+
+        var full = try atmosphere_layers.build(allocator, case);
+        defer full.deinit(allocator);
+        var fresh = try atmosphere_layers.buildFromPreparedProfiles(
+            allocator,
+            case,
+            base_tables.layers.source_profile.rows,
+            base_tables.layers.spectroscopy_profile.rows,
+            base_tables.quadrature,
+        );
+        defer fresh.deinit(allocator);
+
+        try atmosphere_layers.refillFromPreparedProfiles(&retained, case, base_tables.quadrature);
+
+        try expectLayerGridEqual(full, fresh);
+        try expectLayerGridEqual(fresh, retained);
+    }
 }
 
 fn findLineByWavenumber(
@@ -222,6 +219,66 @@ fn expectEqualF64Slices(expected: []const f64, actual: []const f64) !void {
     try std.testing.expectEqual(expected.len, actual.len);
     for (expected, actual) |expected_value, actual_value| {
         try std.testing.expectEqual(expected_value, actual_value);
+    }
+}
+
+fn expectLayerGridEqual(
+    expected: internal.setup.atmosphere_layers.LayerGrid,
+    actual: internal.setup.atmosphere_layers.LayerGrid,
+) !void {
+    // expectLayerGridEqual -----------------------------------------------------------------------------------|
+    // Compare every retained LayerGrid field so refill coverage cannot hide a stale column.                   |
+    // --------------------------------------------------------------------------------------------------------|
+    try std.testing.expectEqual(expected.interval_count, actual.interval_count);
+    try std.testing.expectEqual(expected.configured_layer_count, actual.configured_layer_count);
+    try std.testing.expectEqual(expected.sublayer_divisions, actual.sublayer_divisions);
+    try std.testing.expectEqual(expected.surface_pressure_hpa, actual.surface_pressure_hpa);
+    try expectAtmosphereProfileRowsEqual(expected.source_profile.rows, actual.source_profile.rows);
+    try expectAtmosphereProfileRowsEqual(expected.spectroscopy_profile.rows, actual.spectroscopy_profile.rows);
+    try expectEqualF64Slices(expected.layer_top_altitudes_km, actual.layer_top_altitudes_km);
+    try expectEqualF64Slices(expected.layer_bottom_altitudes_km, actual.layer_bottom_altitudes_km);
+    try expectEqualF64Slices(expected.layer_top_pressures_hpa, actual.layer_top_pressures_hpa);
+    try expectEqualF64Slices(expected.layer_bottom_pressures_hpa, actual.layer_bottom_pressures_hpa);
+    try expectEqualF64Slices(expected.layer_mid_altitudes_km, actual.layer_mid_altitudes_km);
+    try expectEqualF64Slices(expected.layer_pressures_hpa, actual.layer_pressures_hpa);
+    try expectEqualF64Slices(expected.layer_temperatures_k, actual.layer_temperatures_k);
+    try expectEqualF64Slices(expected.layer_air_number_densities_cm3, actual.layer_air_number_densities_cm3);
+    try expectEqualF64Slices(expected.layer_o2_number_densities_cm3, actual.layer_o2_number_densities_cm3);
+    try expectEqualF64Slices(expected.layer_path_lengths_cm, actual.layer_path_lengths_cm);
+    try std.testing.expectEqualSlices(
+        u32,
+        expected.layer_interval_indices_1based,
+        actual.layer_interval_indices_1based,
+    );
+    try std.testing.expectEqualSlices(u32, expected.layer_support_starts, actual.layer_support_starts);
+    try std.testing.expectEqualSlices(u32, expected.layer_support_counts, actual.layer_support_counts);
+    try expectEqualF64Slices(expected.support_mid_altitudes_km, actual.support_mid_altitudes_km);
+    try expectEqualF64Slices(expected.support_pressures_hpa, actual.support_pressures_hpa);
+    try expectEqualF64Slices(expected.support_temperatures_k, actual.support_temperatures_k);
+    try expectEqualF64Slices(expected.support_air_number_densities_cm3, actual.support_air_number_densities_cm3);
+    try expectEqualF64Slices(expected.support_o2_number_densities_cm3, actual.support_o2_number_densities_cm3);
+    try expectEqualF64Slices(expected.support_path_lengths_km, actual.support_path_lengths_km);
+    try expectEqualF64Slices(expected.support_path_lengths_cm, actual.support_path_lengths_cm);
+    try std.testing.expectEqualSlices(
+        u32,
+        expected.support_interval_indices_1based,
+        actual.support_interval_indices_1based,
+    );
+}
+
+fn expectAtmosphereProfileRowsEqual(
+    expected: []const internal.assets.readers.AtmosphereProfileRow,
+    actual: []const internal.assets.readers.AtmosphereProfileRow,
+) !void {
+    // expectAtmosphereProfileRowsEqual -----------------------------------------------------------------------|
+    // Compare profile rows retained by LayerGrid ownership.                                                   |
+    // --------------------------------------------------------------------------------------------------------|
+    try std.testing.expectEqual(expected.len, actual.len);
+    for (expected, actual) |expected_row, actual_row| {
+        try std.testing.expectEqual(expected_row.altitude_km, actual_row.altitude_km);
+        try std.testing.expectEqual(expected_row.pressure_hpa, actual_row.pressure_hpa);
+        try std.testing.expectEqual(expected_row.temperature_k, actual_row.temperature_k);
+        try std.testing.expectEqual(expected_row.air_number_density_cm3, actual_row.air_number_density_cm3);
     }
 }
 

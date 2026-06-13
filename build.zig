@@ -112,6 +112,7 @@ pub fn build(b: *std.Build) void {
     // -------------------------------------------------------------------------------------------------------|
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const fast_test_optimize: std.builtin.OptimizeMode = .ReleaseFast;
 
     const disabled_instrumentation = InstrumentationModules{
         .build_options = addBuildOptions(b, false, false, false),
@@ -168,6 +169,29 @@ pub fn build(b: *std.Build) void {
     });
     b.installArtifact(c_api_lib);
 
+    const fast_lib_module = addSourceModule(
+        b,
+        target,
+        fast_test_optimize,
+        disabled_instrumentation,
+        "src/root.zig",
+    );
+    const fast_c_api_module = b.createModule(.{
+        .root_source_file = b.path("src/api/c.zig"),
+        .target = target,
+        .optimize = fast_test_optimize,
+        .imports = &.{
+            .{ .name = "zdisamar", .module = fast_lib_module },
+            .{ .name = "build_options", .module = disabled_instrumentation.build_options },
+            .{ .name = "ztracy", .module = disabled_instrumentation.ztracy },
+            .{ .name = "calculation_telemetry_sink", .module = disabled_instrumentation.calculation_telemetry_sink },
+            .{
+                .name = "perturbation_sensitivity_sink",
+                .module = disabled_instrumentation.perturbation_sensitivity_sink,
+            },
+        },
+    });
+
     const internal_module = addSourceModule(b, target, optimize, disabled_instrumentation, "src/internal.zig");
     const enabled_internal_module = addSourceModule(
         b,
@@ -211,9 +235,9 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/unit/api/c_abi_test.zig"),
             .target = target,
-            .optimize = optimize,
+            .optimize = fast_test_optimize,
             .imports = &.{
-                .{ .name = "c_api", .module = c_api_module },
+                .{ .name = "c_api", .module = fast_c_api_module },
                 .{ .name = "build_options", .module = disabled_instrumentation.build_options },
                 .{ .name = "ztracy", .module = disabled_instrumentation.ztracy },
                 .{
@@ -228,7 +252,33 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_c_api_tests = b.addRunArtifact(c_api_tests);
-    b.step("test-api-c", "Run focused C ABI tests").dependOn(&run_c_api_tests.step);
+    b.step("test-api-c", "Run fast C ABI smoke tests").dependOn(&run_c_api_tests.step);
+
+    const c_api_retained_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/unit/api/c_abi_retained_test.zig"),
+            .target = target,
+            .optimize = fast_test_optimize,
+            .imports = &.{
+                .{ .name = "c_api", .module = fast_c_api_module },
+                .{ .name = "build_options", .module = disabled_instrumentation.build_options },
+                .{ .name = "ztracy", .module = disabled_instrumentation.ztracy },
+                .{
+                    .name = "calculation_telemetry_sink",
+                    .module = disabled_instrumentation.calculation_telemetry_sink,
+                },
+                .{
+                    .name = "perturbation_sensitivity_sink",
+                    .module = disabled_instrumentation.perturbation_sensitivity_sink,
+                },
+            },
+        }),
+    });
+    const run_c_api_retained_tests = b.addRunArtifact(c_api_retained_tests);
+    b.step(
+        "test-api-c-retained",
+        "Run retained C ABI tests with the default O2 A product case",
+    ).dependOn(&run_c_api_retained_tests.step);
 
     const no_inline_src_tests_cmd = b.addSystemCommand(&.{"scripts/check-no-inline-src-tests.sh"});
     const fmt_check_cmd = b.addFmt(.{
@@ -252,17 +302,22 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&fmt_check_cmd.step);
     check_step.dependOn(&no_inline_src_tests_cmd.step);
     check_step.dependOn(&lib.step);
-    check_step.dependOn(&c_api_lib.step);
-    check_step.dependOn(&run_unit_tests.step);
     check_step.dependOn(&run_c_api_tests.step);
     check_step.dependOn(&run_enabled_instrumentation_tests.step);
 
     const test_fast_step = b.step("test-fast", "Run fast explicit-dataflow test suite");
-    test_fast_step.dependOn(&run_unit_tests.step);
     test_fast_step.dependOn(&run_c_api_tests.step);
     test_fast_step.dependOn(&run_rtm_tests.step);
     test_fast_step.dependOn(&run_enabled_instrumentation_tests.step);
 
+    const test_retained_step = b.step(
+        "test-retained",
+        "Run retained explicit-dataflow suite, including full default O2 A/OE coverage",
+    );
+    test_retained_step.dependOn(test_fast_step);
+    test_retained_step.dependOn(&run_unit_tests.step);
+    test_retained_step.dependOn(&run_c_api_retained_tests.step);
+
     const test_step = b.step("test", "Run retained explicit-dataflow test suite");
-    test_step.dependOn(test_fast_step);
+    test_step.dependOn(test_retained_step);
 }

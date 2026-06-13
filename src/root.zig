@@ -288,6 +288,15 @@ pub fn runO2AOptimalEstimation(
     const mutable_intervals = try allocator.alloc(o2_case.VerticalInterval, mutable_interval_count);
     defer allocator.free(mutable_intervals);
 
+    var retrieval_layers = try atmosphere_layers.buildFromPreparedProfiles(
+        allocator,
+        prepared.case,
+        prepared.tables.layers.source_profile.rows,
+        prepared.tables.layers.spectroscopy_profile.rows,
+        prepared.tables.quadrature,
+    );
+    defer retrieval_layers.deinit(allocator);
+
     var state = state_space.state;
     var scratch: retrieval.RetrievalIterationScratch = .{};
     try retrieval.preparePriorScales(state_space, state_count, &scratch);
@@ -307,6 +316,7 @@ pub fn runO2AOptimalEstimation(
             previous,
             state_space.derivative_state_mask,
             mutable_intervals,
+            &retrieval_layers,
         );
         defer forward.deinit(allocator);
 
@@ -423,6 +433,15 @@ pub fn runO2AOptimalEstimationCorrection(
     const mutable_intervals = try allocator.alloc(o2_case.VerticalInterval, mutable_interval_count);
     defer allocator.free(mutable_intervals);
 
+    var retrieval_layers = try atmosphere_layers.buildFromPreparedProfiles(
+        allocator,
+        prepared.case,
+        prepared.tables.layers.source_profile.rows,
+        prepared.tables.layers.spectroscopy_profile.rows,
+        prepared.tables.quadrature,
+    );
+    defer retrieval_layers.deinit(allocator);
+
     var scratch: retrieval.RetrievalIterationScratch = .{};
     try retrieval.preparePriorScales(state_space, state_count, &scratch);
 
@@ -434,6 +453,7 @@ pub fn runO2AOptimalEstimationCorrection(
         state_space.state,
         state_space.derivative_state_mask,
         mutable_intervals,
+        &retrieval_layers,
     );
     defer forward.deinit(allocator);
 
@@ -836,13 +856,14 @@ fn evaluateRetrievalState(
     state: retrieval.StateVector,
     derivative_state_mask: jacobian_states.StateMask,
     mutable_intervals: []o2_case.VerticalInterval,
+    retrieval_layers: *atmosphere_layers.LayerGrid,
 ) !O2SpectrumRunResult {
     // evaluateRetrievalState -------------------------------------------------------------------------------- |
     // Apply one retrieval state vector, refresh state-dependent setup rows, and run spectrum reflectance.     |
     //                                                                                                         |
     // boundary                                                                                                |
-    //   The iteration owns only the refreshed LayerGrid. Line, CIA, phase, instrument, and solar tables are   |
-    //   borrowed from the prepared base case and must not be deinitialized through evaluation_prepared.       |
+    //   The retrieval driver owns one retained LayerGrid. This function refills its computed rows for the     |
+    //   current state while borrowing line, CIA, phase, instrument, and solar tables from the prepared case.  |
     //                                                                                                         |
     // refresh                                                                                                 |
     //   aerosol optical depth : rebuild inline AerosolLayerTable                                              |
@@ -860,20 +881,13 @@ fn evaluateRetrievalState(
     try writeRetrievalStateToCase(&case, mutable_intervals, state_specs, state);
     try input_validate.o2Case(case);
 
-    var refreshed_layers = try atmosphere_layers.buildFromPreparedProfiles(
-        allocator,
-        case,
-        prepared.tables.layers.source_profile.rows,
-        prepared.tables.layers.spectroscopy_profile.rows,
-        prepared.tables.quadrature,
-    );
-    defer refreshed_layers.deinit(allocator);
+    try atmosphere_layers.refillFromPreparedProfiles(retrieval_layers, case, prepared.tables.quadrature);
 
     var evaluation_prepared = PreparedO2A{
         .case = case,
         .tables = prepared.tables,
     };
-    evaluation_prepared.tables.layers = refreshed_layers;
+    evaluation_prepared.tables.layers = retrieval_layers.*;
     evaluation_prepared.tables.aerosol = aerosol_tables.build(case);
 
     var solve_config = o2aSolveConfig(case);

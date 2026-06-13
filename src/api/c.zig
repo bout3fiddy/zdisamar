@@ -556,7 +556,7 @@ pub export fn zds_prepare_default_o2a(ctx: ?*Context) c_int {
     return @intFromEnum(ZdsStatus.ok);
 }
 
-export fn zds_prepare_o2a_json(ctx: ?*Context, json_ptr: ?[*]const u8, json_len: usize) c_int {
+pub export fn zds_prepare_o2a_json(ctx: ?*Context, json_ptr: ?[*]const u8, json_len: usize) c_int {
     // zds_prepare_o2a_json -----------------------------------------------------------------------------------|
     // Parse Python's native O2 A JSON shape and prepare the resulting typed case.                             |
     // --------------------------------------------------------------------------------------------------------|
@@ -657,7 +657,7 @@ pub export fn zds_warm_o2a_optimal_estimation(
     return @intFromEnum(ZdsStatus.ok);
 }
 
-export fn zds_default_o2a_input_json(ctx: ?*Context, out: ?[*]u8, buffer_len: usize, out_len: ?*usize) c_int {
+pub export fn zds_default_o2a_input_json(ctx: ?*Context, out: ?[*]u8, buffer_len: usize, out_len: ?*usize) c_int {
     // zds_default_o2a_input_json -----------------------------------------------------------------------------|
     // Render the built-in O2 A case as Python-native JSON, using the two-call ctypes buffer pattern.          |
     // --------------------------------------------------------------------------------------------------------|
