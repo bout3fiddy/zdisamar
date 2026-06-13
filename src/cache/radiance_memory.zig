@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const hashing = @import("../common/hashing.zig");
 const memory = @import("../common/memory.zig");
 const radiance_results = @import("../spectrum/radiance_results.zig");
 const radiance_wavelengths = @import("../spectrum/radiance_wavelengths.zig");
@@ -27,7 +28,7 @@ pub const Error = error{
 // Reusable allocation owner for exact radiance wavelength lists and dense result rows.                        |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 96 B (0.094 KiB), align: 8 B                                                                          |
+// size: 112 B (0.109 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
 // [ 0..15] wavelength_rows : []RadianceSampleIndexRef                                                         |
@@ -35,6 +36,8 @@ pub const Error = error{
 // [32..47] wavelengths     : []RadianceWavelength                                                             |
 // [48..63] results         : []RadianceResult                                                                 |
 // [64..95] active          : RadianceMemoryActive                                                             |
+// [96..103] wavelength_stamp: ReuseStamp                                                                      |
+// [104..111] result_stamp   : ReuseStamp                                                                      |
 //                                                                                                             |
 // owned storage                                                                                               |
 //   all slices own heap arrays and are released by deinit.                                                    |
@@ -44,6 +47,8 @@ pub const RadianceMemory = struct {
     wavelengths: []radiance_wavelengths.RadianceWavelength = &.{},
     results: []radiance_results.RadianceResult = &.{},
     active: RadianceMemoryActive = .{},
+    wavelength_stamp: hashing.ReuseStamp = .{},
+    result_stamp: hashing.ReuseStamp = .{},
 
     pub fn deinit(self: *RadianceMemory, allocator: Allocator) void {
         // RadianceMemory.deinit ----------------------------------------------------------------------------- |
@@ -60,9 +65,10 @@ pub const RadianceMemory = struct {
         self: *RadianceMemory,
         allocator: Allocator,
         list: *radiance_wavelengths.OwnedRadianceWavelengthList,
+        stamp: hashing.ReuseStamp,
     ) void {
         // RadianceMemory.takeWavelengthList ----------------------------------------------------------------- |
-        // Move an owned exact wavelength list into reusable radiance memory without copying its arrays.       |
+        // Move an owned exact wavelength list into reusable radiance memory and invalidate dense results.     |
         // ----------------------------------------------------------------------------------------------------|
         allocator.free(self.wavelength_rows);
         allocator.free(self.sample_indices);
@@ -73,7 +79,25 @@ pub const RadianceMemory = struct {
         self.active.wavelength_row_count = list.rows.len;
         self.active.sample_index_count = list.sample_indices.len;
         self.active.wavelength_count = list.wavelengths.len;
+        self.wavelength_stamp = stamp;
+        self.result_stamp = .{};
         list.* = .{};
+    }
+
+    pub fn hasWavelengthList(
+        self: RadianceMemory,
+        stamp: hashing.ReuseStamp,
+        row_count: usize,
+        sample_index_count: usize,
+        wavelength_count: usize,
+    ) bool {
+        // RadianceMemory.hasWavelengthList ------------------------------------------------------------------ |
+        // Confirm the retained exact-wavelength route still matches the freshly computed sampling table.      |
+        // ----------------------------------------------------------------------------------------------------|
+        return self.wavelength_stamp.eql(stamp) and
+            self.active.wavelength_row_count == row_count and
+            self.active.sample_index_count == sample_index_count and
+            self.active.wavelength_count == wavelength_count;
     }
 
     pub fn ensureResultCapacity(
@@ -85,13 +109,30 @@ pub const RadianceMemory = struct {
         // Ensure dense radiance result storage is large enough. Existing values are not preserved across      |
         // growth because prefetch fills every active result row before nominal gathers read it.               |
         // ----------------------------------------------------------------------------------------------------|
-        _ = try memory.ensureSliceCapacity(
+        const replaced = try memory.ensureSliceCapacity(
             radiance_results.RadianceResult,
             allocator,
             &self.results,
             result_count,
         );
+        if (replaced) self.result_stamp = .{};
         self.active.result_count = result_count;
+    }
+
+    pub fn resultsValid(self: RadianceMemory, stamp: hashing.ReuseStamp) bool {
+        // RadianceMemory.resultsValid ----------------------------------------------------------------------- |
+        // Check whether dense radiance rows were already computed for this exact route and solve controls.    |
+        // ----------------------------------------------------------------------------------------------------|
+        return self.result_stamp.eql(stamp) and
+            self.result_stamp.value != 0 and
+            self.active.result_count == self.active.wavelength_count;
+    }
+
+    pub fn markResultsValid(self: *RadianceMemory, stamp: hashing.ReuseStamp) void {
+        // RadianceMemory.markResultsValid ------------------------------------------------------------------- |
+        // Publish dense radiance rows only after prefetch fills every active exact-wavelength slot.           |
+        // ----------------------------------------------------------------------------------------------------|
+        self.result_stamp = stamp;
     }
 
     pub fn wavelengthList(self: *const RadianceMemory) radiance_wavelengths.RadianceWavelengthList {
@@ -135,5 +176,5 @@ pub const RadianceMemoryActive = struct {
 
 comptime {
     std.debug.assert(@sizeOf(RadianceMemoryActive) == 32);
-    std.debug.assert(@sizeOf(RadianceMemory) == 96);
+    std.debug.assert(@sizeOf(RadianceMemory) == 112);
 }

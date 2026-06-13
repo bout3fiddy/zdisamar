@@ -487,6 +487,7 @@ pub fn runO2ASpectrum(
     irradiance_calibration: instrument_average.Calibration,
     radiance_slit_kernel: []const f64,
     irradiance_slit_kernel: []const f64,
+    prefetch_dense_radiance: bool,
     pool: ?*std.Thread.Pool,
     worker_count: usize,
     out_dense_radiance: []radiance_results.RadianceResult,
@@ -512,6 +513,8 @@ pub fn runO2ASpectrum(
     // data flow                                                                                                |
     //   exact radiance wavelengths -> dense radiance rows -> raw product radiance and irradiance rows          |
     //   -> calibrated product rows -> reflectance and fixed-state Jacobian rows                                |
+    //   Callers with a valid session cache may enter with dense radiance rows already filled; the gather and   |
+    //   product assembly order is unchanged.                                                                   |
     //                                                                                                          |
     // memory                                                                                                   |
     //   Every dense/product/optics row is caller-owned. The wrapper allocates nothing and stores no scene,     |
@@ -535,22 +538,24 @@ pub fn runO2ASpectrum(
     defer run_zone.end();
     // end instrumentation: trace zone: O2 A spectrum run ----------------------------------------------------- |
 
-    try prefetchO2ARadianceRows(
-        wavelengths,
-        angles,
-        surface_albedo,
-        layer_grid,
-        profile_lines,
-        cia,
-        aerosol,
-        phase,
-        solar,
-        solve_config,
-        pool,
-        worker_count,
-        out_dense_radiance,
-        transport_workers,
-    );
+    if (prefetch_dense_radiance) {
+        try prefetchO2ARadianceRows(
+            wavelengths,
+            angles,
+            surface_albedo,
+            layer_grid,
+            profile_lines,
+            cia,
+            aerosol,
+            phase,
+            solar,
+            solve_config,
+            pool,
+            worker_count,
+            out_dense_radiance,
+            transport_workers,
+        );
+    }
 
     try gatherProductRows(
         solve_config,

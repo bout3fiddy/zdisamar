@@ -15,13 +15,6 @@ const std = @import("std");
 pub const ReuseStamp = struct {
     value: u64 = 0,
 
-    pub fn fromBytes(bytes: []const u8) ReuseStamp {
-        // ReuseStamp.fromBytes -------------------------------------------------------------------------------|
-        // Hash stable setup identity bytes into the compact reuse stamp.                                      |
-        // ----------------------------------------------------------------------------------------------------|
-        return .{ .value = std.hash.Wyhash.hash(0, bytes) };
-    }
-
     pub fn eql(self: ReuseStamp, other: ReuseStamp) bool {
         // ReuseStamp.eql -------------------------------------------------------------------------------------|
         // Compare two retained setup/cache stamps.                                                            |

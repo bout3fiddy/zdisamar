@@ -158,6 +158,9 @@ test "runO2AWithSessionMemory reuses profile-line rows across repeated case runs
     defer first.deinit(allocator);
     const profile_values_ptr = session.profile_lines.values.ptr;
     const support_profile_values_ptr = session.profile_lines.support_profile_values.ptr;
+    const dense_radiance_ptr = session.radiance.results.ptr;
+    const dense_radiance_stamp = session.radiance.result_stamp;
+    try std.testing.expect(dense_radiance_stamp.value != 0);
 
     var second = try zdisamar.runO2AWithSessionMemory(
         allocator,
@@ -171,6 +174,8 @@ test "runO2AWithSessionMemory reuses profile-line rows across repeated case runs
     try std.testing.expectEqual(first.spectrum.sampleCount(), second.spectrum.sampleCount());
     try std.testing.expect(session.profile_lines.values.ptr == profile_values_ptr);
     try std.testing.expect(session.profile_lines.support_profile_values.ptr == support_profile_values_ptr);
+    try std.testing.expect(session.radiance.results.ptr == dense_radiance_ptr);
+    try std.testing.expect(session.radiance.result_stamp.eql(dense_radiance_stamp));
 
     for (
         first.spectrum.wavelength_nm,

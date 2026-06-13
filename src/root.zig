@@ -14,6 +14,8 @@ const o2_o2_cia = @import("output/o2_o2_cia.zig");
 const o2_spectrum = @import("output/spectrum.zig");
 const radiance_results = @import("spectrum/radiance_results.zig");
 const radiance_wavelengths = @import("spectrum/radiance_wavelengths.zig");
+const aerosol_tables = @import("setup/aerosol_tables.zig");
+const atmosphere_layers = @import("setup/atmosphere_layers.zig");
 const setup_tables = @import("setup/o2_run_tables.zig");
 const profile_lines = @import("cache/profile_line_memory.zig");
 const sampling_table = @import("spectrum/sampling_table.zig");
@@ -192,6 +194,7 @@ pub fn runO2AWithSessionMemory(
         .{},
         &.{},
         &.{},
+        !prepared_rows.dense_radiance_results_match,
         worker_pool,
         worker_count,
         session.radiance.resultRows(),
@@ -205,6 +208,9 @@ pub fn runO2AWithSessionMemory(
         transport_workers,
         &session.solar_irradiance,
     );
+    if (!prepared_rows.dense_radiance_results_match) {
+        session.radiance.markResultsValid(prepared_rows.dense_radiance_result_stamp);
+    }
 
     for (product_radiance, result.spectrum.radiance) |row, *radiance| {
         radiance.* = row.radiance;
@@ -298,6 +304,8 @@ pub fn o2aSolveConfig(case: O2Case) SolveConfig {
 const PreparedSessionRows = struct {
     table: sampling_table.SpectrumSamplingTable,
     worker_count: usize,
+    dense_radiance_results_match: bool,
+    dense_radiance_result_stamp: hashing.ReuseStamp,
 };
 
 fn prepareSessionRows(
@@ -323,6 +331,7 @@ fn prepareSessionRows(
 
     var owned_wavelengths = try radiance_wavelengths.buildRadianceWavelengthList(allocator, table);
     defer owned_wavelengths.deinit(allocator);
+    const wavelength_list_stamp = radianceWavelengthListReuseStamp(owned_wavelengths.view());
     const dense_count = owned_wavelengths.wavelengths.len;
     const exact_wavelengths = try allocator.alloc(f64, dense_count);
     defer allocator.free(exact_wavelengths);
@@ -338,7 +347,15 @@ fn prepareSessionRows(
         needs_temperature_derivatives,
     );
 
-    session.radiance.takeWavelengthList(allocator, &owned_wavelengths);
+    const wavelength_list_matches = session.radiance.hasWavelengthList(
+        wavelength_list_stamp,
+        owned_wavelengths.rows.len,
+        owned_wavelengths.sample_indices.len,
+        owned_wavelengths.wavelengths.len,
+    );
+    if (!wavelength_list_matches) {
+        session.radiance.takeWavelengthList(allocator, &owned_wavelengths, wavelength_list_stamp);
+    }
     try session.radiance.ensureResultCapacity(allocator, dense_count);
 
     const cache_matches = session.profile_lines.reuse_stamp.eql(profile_stamp) and
@@ -356,6 +373,13 @@ fn prepareSessionRows(
                 worker_count,
             );
     }
+    const dense_radiance_result_stamp = radianceResultReuseStamp(
+        prepared,
+        exact_wavelengths,
+        solve_config,
+        profile_stamp,
+    );
+    const dense_radiance_results_match = session.radiance.resultsValid(dense_radiance_result_stamp);
 
     const layer_count = prepared.tables.layers.layer_pressures_hpa.len;
     const support_count = prepared.tables.layers.support_mid_altitudes_km.len;
@@ -376,7 +400,178 @@ fn prepareSessionRows(
     return .{
         .table = table,
         .worker_count = worker_count,
+        .dense_radiance_results_match = dense_radiance_results_match,
+        .dense_radiance_result_stamp = dense_radiance_result_stamp,
     };
+}
+
+fn radianceWavelengthListReuseStamp(wavelengths: radiance_wavelengths.RadianceWavelengthList) hashing.ReuseStamp {
+    // radianceWavelengthListReuseStamp ---------------------------------------------------------------------- |
+    // Identify the exact forward-miss row/index/wavelength plan that dense radiance results are indexed by.   |
+    // --------------------------------------------------------------------------------------------------------|
+    var hasher = std.hash.Wyhash.init(0);
+    hasher.update(std.mem.sliceAsBytes(wavelengths.rows));
+    hasher.update(std.mem.sliceAsBytes(wavelengths.sample_indices));
+    hasher.update(std.mem.sliceAsBytes(wavelengths.wavelengths));
+    return .{ .value = hasher.final() };
+}
+
+fn radianceResultReuseStamp(
+    prepared: *const PreparedO2A,
+    wavelengths_nm: []const f64,
+    solve_config: SolveConfig,
+    profile_stamp: hashing.ReuseStamp,
+) hashing.ReuseStamp {
+    // radianceResultReuseStamp ------------------------------------------------------------------------------ |
+    // Identify dense radiance rows for one route without letting the stamp enter transport math.              |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   The stamp covers exact wavelengths, active solve controls, view/surface scalars, profile-line cache   |
+    //   identity, and numeric setup rows used by `radianceAtWavelength`. A match permits skipping dense       |
+    //   prefetch; product gather and reflectance assembly still run.                                          |
+    // --------------------------------------------------------------------------------------------------------|
+    var hasher = std.hash.Wyhash.init(0);
+    hasher.update(prepared.case.id);
+    hasher.update(std.mem.sliceAsBytes(wavelengths_nm));
+    updateHashValue(&hasher, profile_stamp.value);
+
+    const angles = viewAngles(prepared.case);
+    for ([_]f64{
+        angles.solar_mu,
+        angles.view_mu,
+        angles.relative_azimuth_rad,
+        prepared.case.surface_albedo,
+    }) |value| updateHashValue(&hasher, value);
+    for ([_]usize{
+        @intFromEnum(solve_config.derivative_mode),
+        solve_config.derivative_state_mask,
+        @intFromEnum(solve_config.controls.scattering),
+        solve_config.controls.n_streams,
+    }) |value| updateHashValue(&hasher, value);
+    updateHashBool(&hasher, solve_config.controls.use_spherical_correction);
+    updateHashBool(&hasher, solve_config.controls.integrate_source_function);
+    updateHashBool(&hasher, solve_config.controls.renorm_phase_function);
+    updateHashThresholds(&hasher, solve_config.controls.performance_thresholds);
+
+    updateLayerGridHash(&hasher, prepared.tables.layers);
+    updateAerosolHash(&hasher, prepared.tables.aerosol);
+    for ([_]f64{prepared.tables.cia.scale_factor_cm5_per_molecule2}) |value| updateHashValue(&hasher, value);
+    hasher.update(std.mem.sliceAsBytes(prepared.tables.cia.rows));
+    for ([_]usize{prepared.tables.phase.aerosol_phase_max_index}) |value| updateHashValue(&hasher, value);
+    for ([_]f64{prepared.tables.phase.aerosol_asymmetry_factor}) |value| updateHashValue(&hasher, value);
+    hasher.update(std.mem.asBytes(&prepared.tables.phase.aerosol_phase_coefficients));
+    hasher.update(std.mem.sliceAsBytes(prepared.tables.solar.rows));
+    hasher.update(std.mem.sliceAsBytes(prepared.tables.solar.spline_second_derivatives));
+
+    return .{ .value = hasher.final() };
+}
+
+fn updateHashThresholds(hasher: *std.hash.Wyhash, thresholds: controls.PerformanceThresholds) void {
+    // updateHashThresholds ---------------------------------------------------------------------------------- |
+    // Hash scalar RTM thresholds field-by-field so padding bytes never affect cache validity.                 |
+    // --------------------------------------------------------------------------------------------------------|
+    for ([_]u16{
+        thresholds.num_orders_max,
+        thresholds.fourier_floor_scalar,
+    }) |value| updateHashValue(hasher, value);
+    updateHashOptionalU16(hasher, thresholds.fourier_order_cap);
+    updateHashOptionalU16(hasher, thresholds.aerosol_tangent_order_cap);
+    for ([_]f64{
+        thresholds.fourier_tail_reflectance_epsilon,
+        thresholds.threshold_conv_first,
+        thresholds.threshold_conv_mult,
+        thresholds.threshold_doubl,
+        thresholds.threshold_mul,
+        thresholds.phase_function_truncation_threshold,
+    }) |value| updateHashValue(hasher, value);
+}
+
+fn updateLayerGridHash(hasher: *std.hash.Wyhash, layers: atmosphere_layers.LayerGrid) void {
+    // updateLayerGridHash ----------------------------------------------------------------------------------- |
+    // Hash the layer/support arrays read while filling optics and source/curved-sun rows.                     |
+    // --------------------------------------------------------------------------------------------------------|
+    for ([_]usize{
+        layers.interval_count,
+        layers.configured_layer_count,
+        layers.sublayer_divisions,
+    }) |value| updateHashValue(hasher, value);
+    for ([_]f64{layers.surface_pressure_hpa}) |value| updateHashValue(hasher, value);
+    for ([_][]const f64{
+        layers.layer_top_altitudes_km,
+        layers.layer_bottom_altitudes_km,
+        layers.layer_top_pressures_hpa,
+        layers.layer_bottom_pressures_hpa,
+        layers.layer_mid_altitudes_km,
+        layers.layer_pressures_hpa,
+        layers.layer_temperatures_k,
+        layers.layer_air_number_densities_cm3,
+        layers.layer_o2_number_densities_cm3,
+        layers.layer_path_lengths_cm,
+        layers.support_mid_altitudes_km,
+        layers.support_pressures_hpa,
+        layers.support_temperatures_k,
+        layers.support_air_number_densities_cm3,
+        layers.support_o2_number_densities_cm3,
+        layers.support_path_lengths_km,
+        layers.support_path_lengths_cm,
+    }) |values| hasher.update(std.mem.sliceAsBytes(values));
+    for ([_][]const u32{
+        layers.layer_interval_indices_1based,
+        layers.layer_support_starts,
+        layers.layer_support_counts,
+        layers.support_interval_indices_1based,
+    }) |values| hasher.update(std.mem.sliceAsBytes(values));
+}
+
+fn updateAerosolHash(hasher: *std.hash.Wyhash, aerosol: aerosol_tables.AerosolLayerTable) void {
+    // updateAerosolHash ------------------------------------------------------------------------------------- |
+    // Hash scalar and explicit-profile aerosol controls used to fill per-wavelength layer optics.             |
+    // --------------------------------------------------------------------------------------------------------|
+    for ([_]f64{
+        aerosol.optical_depth,
+        aerosol.single_scatter_albedo,
+        aerosol.asymmetry_factor,
+        aerosol.angstrom_exponent,
+        aerosol.reference_wavelength_nm,
+        aerosol.top_pressure_hpa,
+        aerosol.bottom_pressure_hpa,
+    }) |value| updateHashValue(hasher, value);
+    for ([_]usize{aerosol.interval_index_1based}) |value| updateHashValue(hasher, value);
+    for (aerosol.profile) |layer| {
+        for ([_]f64{
+            layer.top_pressure_hpa,
+            layer.bottom_pressure_hpa,
+            layer.optical_depth,
+            layer.single_scatter_albedo,
+            layer.asymmetry_factor,
+            layer.angstrom_exponent,
+            layer.reference_wavelength_nm,
+        }) |value| updateHashValue(hasher, value);
+    }
+}
+
+fn updateHashOptionalU16(hasher: *std.hash.Wyhash, value: ?u16) void {
+    // updateHashOptionalU16 --------------------------------------------------------------------------------- |
+    // Hash optional caps with an explicit presence byte.                                                      |
+    // --------------------------------------------------------------------------------------------------------|
+    updateHashBool(hasher, value != null);
+    if (value) |resolved| updateHashValue(hasher, resolved);
+}
+
+fn updateHashBool(hasher: *std.hash.Wyhash, value: bool) void {
+    // updateHashBool ---------------------------------------------------------------------------------------- |
+    // Hash booleans as one stable byte instead of compiler-specific storage.                                  |
+    // --------------------------------------------------------------------------------------------------------|
+    const byte = [_]u8{if (value) 1 else 0};
+    hasher.update(&byte);
+}
+
+fn updateHashValue(hasher: *std.hash.Wyhash, value: anytype) void {
+    // updateHashValue --------------------------------------------------------------------------------------- |
+    // Hash scalar values after the caller has reduced enums/options to padding-free integers.                 |
+    // --------------------------------------------------------------------------------------------------------|
+    const stored = value;
+    hasher.update(std.mem.asBytes(&stored));
 }
 
 fn profileLineReuseStamp(
