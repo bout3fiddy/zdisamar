@@ -99,6 +99,12 @@ test "public O2 A root surface keeps route-only spectrum knobs internal" {
     try std.testing.expect(!@hasDecl(zdisamar, "deinitReferenceO2RunTables"));
     try std.testing.expect(!@hasDecl(zdisamar, "buildReferenceProfileLineValues"));
     try std.testing.expect(!@hasDecl(zdisamar, "buildReferenceSpectrumSamplingTable"));
+    try std.testing.expect(!@hasDecl(zdisamar, "parseReferenceCaseJson"));
+    try std.testing.expect(!@hasDecl(zdisamar, "parseReferenceO2CaseJson"));
+    try std.testing.expect(!@hasDecl(zdisamar, "renderDefaultReferenceCaseJson"));
+    try std.testing.expect(!@hasDecl(zdisamar, "renderDefaultReferenceO2CaseJson"));
+    try std.testing.expect(!@hasDecl(zdisamar, "ParsedReferenceCaseJson"));
+    try std.testing.expect(!@hasDecl(zdisamar, "ParsedReferenceO2CaseJson"));
     try std.testing.expect(!@hasDecl(zdisamar, "runReferenceSpectrumSingleWorker"));
     try std.testing.expect(!@hasDecl(zdisamar, "runReferenceSpectrum"));
     try std.testing.expect(!@hasDecl(zdisamar, "runO2ASpectrum"));

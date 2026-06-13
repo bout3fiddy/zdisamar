@@ -168,10 +168,11 @@ pub fn runO2AWithSessionMemory(
     defer allocator.free(product_radiance);
 
     // runO2A route constants ---------------------------------------------------------------------------------|
-    // WP1 evidence records every O2 A product row as integrated radiance and irradiance sampling, with no     |
-    // public calibration, slit-kernel, or integration override in `python-reference-case-native.json`.        |
-    // Keep those six `runO2ASpectrum` arguments fixed here; user-configurable controls enter through O2Case   |
-    // and `o2aSolveConfig`.                                                                                   |
+    // WP1 `baseline-main-56605387/internal-dump-baseline.json` records the public O2 A route with every       |
+    // product row using integrated radiance and integrated irradiance sampling. WP1                           |
+    // `evidence/python-reference-case-native.json` exposes no Python-native key for calibration arrays, slit  |
+    // kernels, or per-channel integration overrides. Keep these six `runO2ASpectrum` arguments fixed here;    |
+    // user-configurable controls enter through O2Case JSON and `o2aSolveConfig`.                              |
     // --------------------------------------------------------------------------------------------------------|
     const summary = try spectrum_run.runO2ASpectrum(
         table,
