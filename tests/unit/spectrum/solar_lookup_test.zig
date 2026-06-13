@@ -86,7 +86,7 @@ test "integrateIrradianceAtNominalAssumeCapacity weights old cached irradiance s
     try std.testing.expectEqual(@as(u32, 3), memory.values.count());
 }
 
-test "cachedIrradianceAtWavelengthAssumeCapacity keeps exact f64 bit keys" {
+test "integrateIrradianceAtNominalAssumeCapacity keeps exact f64 bit keys" {
     var rows = [_]readers.SolarAssetRow{
         .{ .wavelength_nm = -1.0, .irradiance = 10.0 },
         .{ .wavelength_nm = 0.0, .irradiance = 20.0 },
@@ -101,8 +101,21 @@ test "cachedIrradianceAtWavelengthAssumeCapacity keeps exact f64 bit keys" {
     defer memory.deinit();
     try memory.reserve(2);
 
-    _ = try solar_lookup.cachedIrradianceAtWavelengthAssumeCapacity(table, &memory, 0.0);
-    _ = try solar_lookup.cachedIrradianceAtWavelengthAssumeCapacity(table, &memory, -0.0);
+    const integration = sampling_table.IntegrationKernelRef.disabled();
+    _ = try solar_lookup.integrateIrradianceAtNominalAssumeCapacity(
+        table,
+        &memory,
+        0.0,
+        &integration,
+        .{},
+    );
+    _ = try solar_lookup.integrateIrradianceAtNominalAssumeCapacity(
+        table,
+        &memory,
+        -0.0,
+        &integration,
+        .{},
+    );
 
     try std.testing.expectEqual(@as(u32, 2), memory.values.count());
 }

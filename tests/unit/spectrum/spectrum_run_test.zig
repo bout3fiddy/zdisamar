@@ -844,7 +844,8 @@ test "gatherProductRows resets stale solar memory and rejects malformed shapes" 
     };
     var solar_memory = internal.cache.solar_irradiance_memory.SolarIrradianceMemory.init(std.testing.allocator);
     defer solar_memory.deinit();
-    try solar_memory.put(760.0, 999.0);
+    try solar_memory.reserve(1);
+    solar_memory.putAssumeCapacity(760.0, 999.0);
 
     var out_wavelengths: [1]f64 = undefined;
     var out_radiance: [1]radiance_results.RadianceResult = undefined;

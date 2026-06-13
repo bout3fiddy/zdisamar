@@ -29,7 +29,7 @@ test "SolarIrradianceMemory reserves and reuses exact wavelength values" {
     try std.testing.expectApproxEqAbs(2.5, memory.get(760.01) orelse return error.MissingIrradiance, 0.0);
     try std.testing.expectEqual(@as(?f64, null), memory.get(760.02));
 
-    try memory.put(760.0, 3.0);
+    memory.putAssumeCapacity(760.0, 3.0);
     try std.testing.expectApproxEqAbs(3.0, memory.get(760.0) orelse return error.MissingIrradiance, 0.0);
 }
 
@@ -37,11 +37,12 @@ test "SolarIrradianceMemory reset clears values without destroying the map" {
     var memory = solar_irradiance_memory.SolarIrradianceMemory.init(std.testing.allocator);
     defer memory.deinit();
 
-    try memory.put(760.0, 1.0);
+    try memory.reserve(1);
+    memory.putAssumeCapacity(760.0, 1.0);
     memory.reset();
     try std.testing.expectEqual(@as(?f64, null), memory.get(760.0));
 
-    try memory.put(760.0, 2.0);
+    memory.putAssumeCapacity(760.0, 2.0);
     try std.testing.expectApproxEqAbs(2.0, memory.get(760.0) orelse return error.MissingIrradiance, 0.0);
 }
 

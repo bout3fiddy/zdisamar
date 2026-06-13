@@ -5,7 +5,6 @@ const gauss_legendre = internal.common.math.gauss_legendre;
 const rule = gauss_legendre.rule;
 const fillNodesAndWeights = gauss_legendre.fillNodesAndWeights;
 const fillDisamarDivPoints01 = gauss_legendre.fillDisamarDivPoints01;
-const fillDisamarDivPointsInterval = gauss_legendre.fillDisamarDivPointsInterval;
 const fillDisamarDivPointsIntervalNodes = gauss_legendre.fillDisamarDivPointsIntervalNodes;
 
 test "gauss-legendre rules expose stable nodes and weights" {
@@ -58,15 +57,14 @@ test "disamar gauss division points are scaled to unit interval" {
     try std.testing.expectApproxEqRel(@as(f64, 1.0), sum_weights, 1e-12);
 }
 
-test "disamar interval node-only fill matches full node and weight fill" {
-    var full_nodes = [_]f64{0.0} ** 28;
-    var weights = [_]f64{0.0} ** 28;
+test "disamar interval node-only fill scales nodes" {
     var node_only = [_]f64{0.0} ** 28;
 
-    try fillDisamarDivPointsInterval(28, 2.3, 17.9, full_nodes[0..], weights[0..]);
     try fillDisamarDivPointsIntervalNodes(28, 2.3, 17.9, node_only[0..]);
 
-    for (0..28) |index| {
-        try std.testing.expectApproxEqAbs(full_nodes[index], node_only[index], 0.0);
+    try std.testing.expect(node_only[0] > 2.3);
+    try std.testing.expect(node_only[node_only.len - 1] < 17.9);
+    for (node_only[0 .. node_only.len - 1], node_only[1..]) |left, right| {
+        try std.testing.expect(left < right);
     }
 }

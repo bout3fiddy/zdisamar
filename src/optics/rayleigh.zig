@@ -49,7 +49,7 @@ fn kingFactorAir(wavelength_nm: f64) f64 {
     return weighted_sum / (fraction_n2 + fraction_o2 + fraction_ar + fraction_co2);
 }
 
-pub fn refractiveIndexDryAir(wavelength_nm: f64) f64 {
+fn refractiveIndexDryAir(wavelength_nm: f64) f64 {
     // refractiveIndexDryAir --------------------------------------------------------------------------------- |
     // Evaluate the old dry-air refractive-index fit at one wavelength.                                        |
     // ------------------------------------------------------------------------------------------------------- |
@@ -62,7 +62,7 @@ pub fn refractiveIndexDryAir(wavelength_nm: f64) f64 {
     return 1.0 + refractivity * 1.0e-8;
 }
 
-pub fn depolarizationFactorAir(wavelength_nm: f64) f64 {
+fn depolarizationFactorAir(wavelength_nm: f64) f64 {
     // depolarizationFactorAir ------------------------------------------------------------------------------- |
     // Convert the dry-air King factor to the wavelength-dependent depolarization factor.                      |
     // ------------------------------------------------------------------------------------------------------- |

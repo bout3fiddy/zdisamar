@@ -119,7 +119,7 @@ pub fn keyFor(wavelength_nm: f64) u64 {
     return @as(u64, @bitCast(wavelength_nm));
 }
 
-pub fn radianceSampleIndexCount(table: sampling_table.SpectrumSamplingTable) usize {
+fn radianceSampleIndexCount(table: sampling_table.SpectrumSamplingTable) usize {
     // radianceSampleIndexCount ------------------------------------------------------------------------------ |
     // Count the dense sample-index stream before allocation.                                                  |
     // --------------------------------------------------------------------------------------------------------|

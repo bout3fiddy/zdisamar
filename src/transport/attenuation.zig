@@ -63,7 +63,7 @@ pub const CurvedSunPathGrid = struct {
     level_sample_starts: []const usize = &.{},
     level_altitudes_km: []const f64 = &.{},
 
-    pub fn isValidFor(self: CurvedSunPathGrid, layer_count: usize) bool {
+    fn isValidFor(self: CurvedSunPathGrid, layer_count: usize) bool {
         // CurvedSunPathGrid.isValidFor ---------------------------------------------------------------------- |
         // Validate the level-indexed pseudo-spherical support view.                                           |
         // ----------------------------------------------------------------------------------------------------|

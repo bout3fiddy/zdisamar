@@ -15,7 +15,6 @@ const std = @import("std");
 //   rule                          returns fixed inline tables for ordinary orders 1 through 10                |
 //   fillNodesAndWeights           computes ordinary symmetric nodes and weights from Legendre roots           |
 //   fillDisamarDivPoints01        computes DISAMAR unit-interval division points and weights                  |
-//   fillDisamarDivPointsInterval  computes DISAMAR division points and scales them to an interval             |
 //   fillDisamarDivPointsIntervalNodes computes DISAMAR interval nodes without weights                         |
 //                                                                                                             |
 // route choice                                                                                                |
@@ -129,31 +128,6 @@ pub fn fillDisamarDivPoints01(
     // --------------------------------------------------------------------------------------------------------|
 
     try fillDisamarDivPointsScaled(order, 0.5, 0.5, nodes_out, weights_out, 1.0);
-}
-
-pub fn fillDisamarDivPointsInterval(
-    order: u32,
-    a0: f64,
-    b0: f64,
-    nodes_out: []f64,
-    weights_out: []f64,
-) error{InvalidOrder}!void {
-    // fillDisamarDivPointsInterval ---------------------------------------------------------------------------|
-    // Builds DISAMAR-style division points and scales nodes and weights to one interval.                      |
-    //                                                                                                         |
-    // hot path                                                                                                |
-    //   repeated : RTM shared geometry and adaptive instrument interval sampling                              |
-    //   costly   : same tridiagonal eigen solve as the unit-interval path                                     |
-    //   memory   : three bounded stack arrays, each max 2.000 KiB                                             |
-    //                                                                                                         |
-    // math                                                                                                    |
-    //   x_interval = (x_unit + 1) / 2 * (b0 - a0) + a0                                                        |
-    //   w_interval = w_unit / 2 * (b0 - a0)                                                                   |
-    // --------------------------------------------------------------------------------------------------------|
-
-    const span = b0 - a0;
-    const half_span = span / 2.0;
-    try fillDisamarDivPointsScaled(order, a0 + half_span, half_span, nodes_out, weights_out, half_span);
 }
 
 pub fn fillDisamarDivPointsIntervalNodes(

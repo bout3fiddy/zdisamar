@@ -62,7 +62,7 @@ pub fn irradianceAtWavelength(
     return @max(source_irradiance, minimum_source_irradiance);
 }
 
-pub fn cachedIrradianceAtWavelengthAssumeCapacity(
+fn cachedIrradianceAtWavelengthAssumeCapacity(
     table: solar_table.SolarTable,
     memory: *solar_irradiance_memory.SolarIrradianceMemory,
     wavelength_nm: f64,
@@ -91,7 +91,7 @@ pub fn reserveIrradianceMemory(
     try memory.reserve(irradianceSampleCount(table));
 }
 
-pub fn irradianceSampleCount(table: sampling_table.SpectrumSamplingTable) usize {
+fn irradianceSampleCount(table: sampling_table.SpectrumSamplingTable) usize {
     // irradianceSampleCount ----------------------------------------------------------------------------------|
     // Count irradiance samples using the same direct/inline/side sample contract as the old sampling plan.    |
     // --------------------------------------------------------------------------------------------------------|
@@ -136,7 +136,7 @@ pub fn integrateIrradianceAtNominalAssumeCapacity(
     return integrated;
 }
 
-pub fn interpolateWithinBounds(
+fn interpolateWithinBounds(
     table: solar_table.SolarTable,
     wavelength_nm: f64,
 ) ?f64 {

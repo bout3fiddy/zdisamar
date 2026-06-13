@@ -65,13 +65,6 @@ pub const SolarIrradianceMemory = struct {
         return self.values.get(keyFor(wavelength_nm));
     }
 
-    pub fn put(self: *SolarIrradianceMemory, wavelength_nm: f64, irradiance: f64) Allocator.Error!void {
-        // SolarIrradianceMemory.put ------------------------------------------------------------------------- |
-        // Insert or replace one exact-wavelength irradiance value, growing the map when needed.               |
-        // ----------------------------------------------------------------------------------------------------|
-        try self.values.put(keyFor(wavelength_nm), irradiance);
-    }
-
     pub fn putAssumeCapacity(self: *SolarIrradianceMemory, wavelength_nm: f64, irradiance: f64) void {
         // SolarIrradianceMemory.putAssumeCapacity ----------------------------------------------------------- |
         // Insert or replace one value after reserve has sized the map for the active irradiance workload.     |

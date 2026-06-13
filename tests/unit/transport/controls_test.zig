@@ -50,7 +50,6 @@ test "transport controls keep old route defaults and layout" {
     try std.testing.expectEqual(controls.ScatteringMode.multiple, default_controls.scattering);
     try std.testing.expectEqual(@as(u16, 16), default_controls.n_streams);
     try std.testing.expectEqual(@as(u16, 8), default_controls.nGauss());
-    try std.testing.expectEqual(@as(u32, 10), default_controls.supermatrixSize());
     try std.testing.expect(!default_controls.use_spherical_correction);
     try std.testing.expect(default_controls.integrate_source_function);
     try std.testing.expect(default_controls.renorm_phase_function);

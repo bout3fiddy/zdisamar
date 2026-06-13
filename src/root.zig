@@ -89,13 +89,6 @@ pub const PreparedO2A = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn deinitO2RunTables(allocator: Allocator, tables: *O2RunTables) void {
-    // deinitO2RunTables --------------------------------------------------------------------------------------|
-    // Public teardown wrapper for callers that own O2 A setup tables.                                         |
-    // --------------------------------------------------------------------------------------------------------|
-    tables.deinit(allocator);
-}
-
 pub fn initO2SessionMemory(allocator: Allocator) O2SessionMemory {
     // initO2SessionMemory ------------------------------------------------------------------------------------|
     // Create an empty reusable O2 A session cache.                                                            |

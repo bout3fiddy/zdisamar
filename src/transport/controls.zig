@@ -200,13 +200,6 @@ pub const TransportControls = struct {
         return self.performance_thresholds.resolvedNumOrdersMax(scattering_optical_depth);
     }
 
-    pub fn supermatrixSize(self: TransportControls) u32 {
-        // supermatrixSize ----------------------------------------------------------------------------------- |
-        // LABOS appends viewing and solar streams to the Gaussian stream count.                               |
-        // ----------------------------------------------------------------------------------------------------|
-        return @as(u32, self.nGauss() + 2);
-    }
-
     pub const default_vendor = TransportControls{
         .scattering = .multiple,
         .n_streams = 16,

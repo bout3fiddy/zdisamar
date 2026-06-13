@@ -96,6 +96,7 @@ test "public O2 A root surface keeps route-only spectrum knobs internal" {
     // `runO2ASpectrum` arguments as fixed route constants rather than public case fields.
     try std.testing.expect(!@hasDecl(zdisamar, "buildReferenceO2RunTables"));
     try std.testing.expect(!@hasDecl(zdisamar, "deinitReferenceO2RunTables"));
+    try std.testing.expect(!@hasDecl(zdisamar, "deinitO2RunTables"));
     try std.testing.expect(!@hasDecl(zdisamar, "buildReferenceProfileLineValues"));
     try std.testing.expect(!@hasDecl(zdisamar, "buildReferenceSpectrumSamplingTable"));
     try std.testing.expect(!@hasDecl(zdisamar, "parseReferenceCaseJson"));
