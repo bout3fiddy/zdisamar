@@ -211,7 +211,7 @@ pub fn fillSupportOpticsAtWavelength(
     line_sigma_cm2_per_molecule: []const f64,
     cia: cia_table.O2CiaTable,
     aerosol: aerosol_tables.AerosolLayerTable,
-    out_support: []SupportOptics,
+    noalias out_support: []SupportOptics,
 ) !void {
     // fillSupportOpticsAtWavelength ------------------------------------------------------------------------- |
     // Fill support-row optical depths for one wavelength without allocation.                                  |

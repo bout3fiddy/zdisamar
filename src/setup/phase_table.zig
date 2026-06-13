@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const hashing = @import("../common/hashing.zig");
 const o2_case = @import("../input/o2_case.zig");
 
 pub const coefficient_count: usize = 151;
@@ -41,6 +42,16 @@ pub const PhaseTable = struct {
     aerosol_phase_max_index: usize,
     aerosol_asymmetry_factor: f64,
 };
+// ------------------------------------------------------------------------------------------------------------|
+
+pub fn hashAll(hasher: *std.hash.Wyhash, table: PhaseTable) void {
+    // hashAll ----------------------------------------------------------------------------------------------- |
+    // Hash the active aerosol phase metadata and fixed coefficient row consumed by LABOS phase support.       |
+    // --------------------------------------------------------------------------------------------------------|
+    hashing.updateValue(hasher, table.aerosol_phase_max_index);
+    hashing.updateValue(hasher, table.aerosol_asymmetry_factor);
+    hasher.update(std.mem.asBytes(&table.aerosol_phase_coefficients));
+}
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn build(case: o2_case.O2Case) PhaseTable {

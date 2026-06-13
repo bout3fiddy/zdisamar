@@ -1150,11 +1150,9 @@ fn finalizeAdaptiveKernel(
     sample_raw_weights: []f64,
 ) bool {
     // finalizeAdaptiveKernel -------------------------------------------------------------------------------- |
-    // Sort, merge duplicate wavelengths, normalize raw weights, and write relative offsets.                   |
+    // Merge already-sorted duplicate wavelengths, normalize raw weights, and write relative offsets.          |
     // --------------------------------------------------------------------------------------------------------|
     if (sample_wavelengths_nm.len == 0 or sample_wavelengths_nm.len != sample_raw_weights.len) return false;
-
-    insertionSortSamples(sample_wavelengths_nm, sample_raw_weights);
 
     var merged_count: usize = 0;
     for (sample_wavelengths_nm, sample_raw_weights) |wavelength_nm, raw_weight| {

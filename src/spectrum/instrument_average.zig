@@ -137,7 +137,7 @@ pub fn postprocessSignal(
     calibration: Calibration,
     slit_kernel: []const f64,
     raw_signal: []const f64,
-    out_signal: []f64,
+    noalias out_signal: []f64,
 ) Error!void {
     // postprocessSignal ------------------------------------------------------------------------------------- |
     // Apply the old product-channel order: optional slit convolution, then scalar channel calibration.        |
@@ -149,12 +149,12 @@ pub fn postprocessSignal(
     //                                                                                                         |
     // shape                                                                                                   |
     //   Integrated sampling already applied the instrument response, so this route skips slit convolution.    |
+    //   The output slice is noalias and must not overlap the raw input on either route.                       |
     // --------------------------------------------------------------------------------------------------------|
     if (raw_signal.len != out_signal.len) return error.ShapeMismatch;
 
-    const needs_slit_convolution = !uses_integrated_sampling;
     const storage_overlaps = slicesOverlap(f64, raw_signal, out_signal);
-    if (needs_slit_convolution and storage_overlaps) return error.ShapeMismatch;
+    if (storage_overlaps) return error.ShapeMismatch;
 
     if (uses_integrated_sampling) {
         @memcpy(out_signal, raw_signal);

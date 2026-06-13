@@ -19,8 +19,6 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     ("src/setup/phase_table.zig", "hgPhaseCoefficients"): "wp5-staged HG phase lane, uncalled and untested; WP5 must test before first use",
     ("src/setup/phase_table.zig", "hgPhaseCoefficientsWithThreshold"): "wp5-staged HG phase lane, uncalled and untested; WP5 must test before first use",
     ("src/setup/phase_table.zig", "maxPhaseCoefficientIndex"): "wp5-staged HG phase lane, uncalled and untested; WP5 must test before first use",
-    ("src/setup/refresh_profile_lines.zig", "rebuildO2ProfileLineValues"): "wp5-staged refresh path, uncalled and untested; WP5 must test before first use",
-    ("src/setup/refresh_tables.zig", "rebuildO2RunTables"): "wp5-staged refresh path, uncalled and untested; WP5 must test before first use",
     ("src/spectrum/instrument_average.zig", "applySlitConvolution"): "test oracle for slit-kernel normalization; production reaches it through postprocessSignal in the same file",
     ("src/spectrum/sampling_table.zig", "summarize"): "test oracle for sampling-table shape until runner owns telemetry summary",
     ("src/spectrum/spectrum_run.zig", "gatherProductRows"): "wired same-file stage helper; runO2ASpectrum calls it and tests assert the stage contract",
@@ -62,7 +60,7 @@ ALLOWLIST: dict[tuple[str, str], str] = {
 
 def git_files(patterns: list[str]) -> list[str]:
     result = subprocess.run(
-        ["git", "ls-files", *patterns],
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", *patterns],
         check=True,
         stdout=subprocess.PIPE,
         text=True,
@@ -105,8 +103,9 @@ def main() -> int:
         ).stdout.strip()
     )
     tracked_src = git_files(["src/**/*.zig", "src/*.zig"])
-    counted_files = [path for path in tracked_src if counted_src_file(path)]
-    search_files = [path for path in tracked_src if search_src_file(path)]
+    current_src = [path for path in tracked_src if (repo_root / path).exists()]
+    counted_files = [path for path in current_src if counted_src_file(path)]
+    search_files = [path for path in current_src if search_src_file(path)]
     search_text = {path: (repo_root / path).read_text() for path in search_files}
 
     pub_fn_count = 0

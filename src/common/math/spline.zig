@@ -1,4 +1,6 @@
 const std = @import("std");
+const search = @import("search.zig");
+
 const max_spline_point_count = 256;
 
 // spline.zig -------------------------------------------------------------------------------------------------|
@@ -253,16 +255,8 @@ pub fn sampleWithSecondDerivatives(
     if (x.len < 3) return Error.NotEnoughPoints;
     if (target_x < x[0] or target_x > x[x.len - 1]) return Error.OutOfDomain;
 
-    var klo: usize = 0;
-    var khi: usize = x.len - 1;
-    while (khi - klo > 1) {
-        const mid = (khi + klo) / 2;
-        if (x[mid] > target_x) {
-            khi = mid;
-        } else {
-            klo = mid;
-        }
-    }
+    const klo = search.lowerBound(x, target_x);
+    const khi = @min(klo + 1, x.len - 1);
 
     const h = x[khi] - x[klo];
     const a = (x[khi] - target_x) / h;

@@ -180,7 +180,7 @@ fn interpolatePreparedSplineWithinBounds(
     var lower_index: usize = 0;
     var upper_index: usize = rows.len - 1;
     while (upper_index - lower_index > 1) {
-        const middle_index = (upper_index + lower_index) / 2;
+        const middle_index = lower_index + (upper_index - lower_index) / 2;
         if (rows[middle_index].wavelength_nm > wavelength_nm) {
             upper_index = middle_index;
         } else {

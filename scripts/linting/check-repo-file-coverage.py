@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify every tracked file has an owner row in the refactor coverage matrix."""
+"""Verify every non-ignored repo file has an owner row in the refactor coverage matrix."""
 
 import argparse
 import ast
@@ -21,13 +21,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     patterns = extract_patterns(args.matrix)
-    files = git_ls_files()
+    files = [path for path in git_ls_files() if Path(path).exists()]
     unmatched = [path for path in files if not any(fnmatch(path, pattern) for pattern in patterns)]
     report = {
         "schema_version": 1,
         "tool": "check-repo-file-coverage",
         "matrix": str(args.matrix),
-        "tracked": len(files),
+        "files": len(files),
         "patterns": len(patterns),
         "unmatched": unmatched,
         "unmatched_count": len(unmatched),
@@ -36,7 +36,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.format == "json":
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
-        print(f"tracked={len(files)} unmatched={len(unmatched)} patterns={len(patterns)}")
+        print(f"files={len(files)} unmatched={len(unmatched)} patterns={len(patterns)}")
         if unmatched:
             print("\n".join(unmatched))
 
@@ -63,7 +63,10 @@ def extract_patterns(path: Path) -> list[str]:
 
 
 def git_ls_files() -> list[str]:
-    output = subprocess.check_output(["git", "ls-files"], text=True)
+    output = subprocess.check_output(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+        text=True,
+    )
     return output.splitlines()
 
 

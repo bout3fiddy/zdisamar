@@ -53,7 +53,6 @@ pub const common = struct {
 // footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
 pub const input = struct {
     pub const defaults = @import("input/defaults.zig");
-    pub const fast_mode = @import("input/fast_mode.zig");
     pub const hitran_partition_tables = @import("input/hitran_partition_tables.zig");
     pub const json = @import("input/json.zig");
     pub const o2_case = @import("input/o2_case.zig");
@@ -95,8 +94,6 @@ pub const setup = struct {
     pub const line_tables = @import("setup/line_tables.zig");
     pub const o2_run_tables = @import("setup/o2_run_tables.zig");
     pub const phase_table = @import("setup/phase_table.zig");
-    pub const refresh_profile_lines = @import("setup/refresh_profile_lines.zig");
-    pub const refresh_tables = @import("setup/refresh_tables.zig");
     pub const solar_table = @import("setup/solar_table.zig");
 };
 // ------------------------------------------------------------------------------------------------------------|

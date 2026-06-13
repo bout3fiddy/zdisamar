@@ -40,6 +40,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         path
         for path in git_ls_files()
         if path.startswith("src/") and path.endswith(".zig") and not is_test_path(path)
+        if Path(path).exists()
     ]
     counts = tuple(
         FileCount(
@@ -61,7 +62,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     report = {
         "schema_version": 1,
         "tool": "refactor-loc-counter",
-        "scope": "tracked non-test Zig files under src/",
+        "scope": "non-ignored non-test Zig files under src/",
         "exclusions": list(COUNTED_EXCLUSIONS),
         "summary": {
             "raw_src_loc": raw_loc,
@@ -100,7 +101,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def git_ls_files() -> list[str]:
-    output = subprocess.check_output(["git", "ls-files"], text=True)
+    output = subprocess.check_output(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+        text=True,
+    )
     return output.splitlines()
 
 

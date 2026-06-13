@@ -39,6 +39,15 @@ pub const SolarTable = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
+pub fn hashAll(hasher: *std.hash.Wyhash, table: SolarTable) void {
+    // hashAll ----------------------------------------------------------------------------------------------- |
+    // Hash operational solar rows and prepared endpoint-secant spline state used by irradiance lookup.        |
+    // --------------------------------------------------------------------------------------------------------|
+    hasher.update(std.mem.sliceAsBytes(table.rows));
+    hasher.update(std.mem.sliceAsBytes(table.spline_second_derivatives));
+}
+// ------------------------------------------------------------------------------------------------------------|
+
 pub fn build(allocator: Allocator, case: o2_case.O2Case) !SolarTable {
     // build --------------------------------------------------------------------------------------------------|
     // Load solar reference rows and prepare the old operational-table spline state once during setup.         |

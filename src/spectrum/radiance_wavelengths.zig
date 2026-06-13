@@ -71,6 +71,16 @@ pub const RadianceWavelengthList = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
+pub fn hashAll(hasher: *std.hash.Wyhash, wavelengths: RadianceWavelengthList) void {
+    // hashAll ----------------------------------------------------------------------------------------------- |
+    // Hash the exact forward-miss row/index/wavelength plan that dense radiance results are indexed by.       |
+    // --------------------------------------------------------------------------------------------------------|
+    hasher.update(std.mem.sliceAsBytes(wavelengths.rows));
+    hasher.update(std.mem.sliceAsBytes(wavelengths.sample_indices));
+    hasher.update(std.mem.sliceAsBytes(wavelengths.wavelengths));
+}
+// ------------------------------------------------------------------------------------------------------------|
+
 // OwnedRadianceWavelengthList ------------------------------------------------------------------------------- |
 // Owned row refs, row-local sample-index stream, and exact radiance wavelength rows.                          |
 //                                                                                                             |
@@ -218,18 +228,16 @@ fn appendRadianceSampleIndex(
     // Append the dense result index for one radiance sample; repeated exact bits reuse an existing index.     |
     // --------------------------------------------------------------------------------------------------------|
     const key = keyFor(wavelength_nm);
-    if (index_by_key.get(key)) |wavelength_index| {
-        sample_indices.appendAssumeCapacity(wavelength_index);
-        return;
-    }
-    if (wavelengths.items.len > std.math.maxInt(u32)) return error.OutOfMemory;
-    const wavelength_index: u32 = @intCast(wavelengths.items.len);
-
     const entry = try index_by_key.getOrPut(key);
     if (entry.found_existing) {
         sample_indices.appendAssumeCapacity(entry.value_ptr.*);
         return;
     }
+    if (wavelengths.items.len > std.math.maxInt(u32)) {
+        _ = index_by_key.remove(key);
+        return error.OutOfMemory;
+    }
+    const wavelength_index: u32 = @intCast(wavelengths.items.len);
     wavelengths.append(allocator, .{
         .key = key,
         .wavelength_nm = wavelength_nm,

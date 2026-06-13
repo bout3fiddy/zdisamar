@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const readers = @import("../assets/readers.zig");
+const hashing = @import("../common/hashing.zig");
 const o2_case = @import("../input/o2_case.zig");
 const gauss_legendre = @import("../common/math/gauss_legendre.zig");
 const spline = @import("../common/math/spline.zig");
@@ -119,6 +120,44 @@ pub const LayerGrid = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
+
+pub fn hashAll(hasher: *std.hash.Wyhash, layers: LayerGrid) void {
+    // hashAll ----------------------------------------------------------------------------------------------- |
+    // Hash the layer/support arrays read while filling optics and source/curved-sun rows.                     |
+    // --------------------------------------------------------------------------------------------------------|
+    for ([_]usize{
+        layers.interval_count,
+        layers.configured_layer_count,
+        layers.sublayer_divisions,
+    }) |value| hashing.updateValue(hasher, value);
+    hashing.updateValue(hasher, layers.surface_pressure_hpa);
+    for ([_][]const f64{
+        layers.layer_top_altitudes_km,
+        layers.layer_bottom_altitudes_km,
+        layers.layer_top_pressures_hpa,
+        layers.layer_bottom_pressures_hpa,
+        layers.layer_mid_altitudes_km,
+        layers.layer_pressures_hpa,
+        layers.layer_temperatures_k,
+        layers.layer_air_number_densities_cm3,
+        layers.layer_o2_number_densities_cm3,
+        layers.layer_path_lengths_cm,
+        layers.support_mid_altitudes_km,
+        layers.support_pressures_hpa,
+        layers.support_temperatures_k,
+        layers.support_air_number_densities_cm3,
+        layers.support_o2_number_densities_cm3,
+        layers.support_path_lengths_km,
+        layers.support_path_lengths_cm,
+    }) |values| hasher.update(std.mem.sliceAsBytes(values));
+    for ([_][]const u32{
+        layers.layer_interval_indices_1based,
+        layers.layer_support_starts,
+        layers.layer_support_counts,
+        layers.support_interval_indices_1based,
+    }) |values| hasher.update(std.mem.sliceAsBytes(values));
+}
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn build(allocator: Allocator, case: o2_case.O2Case) !LayerGrid {

@@ -1,3 +1,6 @@
+const std = @import("std");
+
+const hashing = @import("../common/hashing.zig");
 const o2_case = @import("../input/o2_case.zig");
 
 // AerosolLayerTable ------------------------------------------------------------------------------------------|
@@ -30,6 +33,34 @@ pub const AerosolLayerTable = struct {
     bottom_pressure_hpa: f64,
     profile: []const o2_case.AerosolProfileLayer = &.{},
 };
+// ------------------------------------------------------------------------------------------------------------|
+
+pub fn hashAll(hasher: *std.hash.Wyhash, aerosol: AerosolLayerTable) void {
+    // hashAll ----------------------------------------------------------------------------------------------- |
+    // Hash scalar and explicit-profile aerosol controls used to fill per-wavelength layer optics.             |
+    // --------------------------------------------------------------------------------------------------------|
+    for ([_]f64{
+        aerosol.optical_depth,
+        aerosol.single_scatter_albedo,
+        aerosol.asymmetry_factor,
+        aerosol.angstrom_exponent,
+        aerosol.reference_wavelength_nm,
+        aerosol.top_pressure_hpa,
+        aerosol.bottom_pressure_hpa,
+    }) |value| hashing.updateValue(hasher, value);
+    hashing.updateValue(hasher, aerosol.interval_index_1based);
+    for (aerosol.profile) |layer| {
+        for ([_]f64{
+            layer.top_pressure_hpa,
+            layer.bottom_pressure_hpa,
+            layer.optical_depth,
+            layer.single_scatter_albedo,
+            layer.asymmetry_factor,
+            layer.angstrom_exponent,
+            layer.reference_wavelength_nm,
+        }) |value| hashing.updateValue(hasher, value);
+    }
+}
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn build(case: o2_case.O2Case) AerosolLayerTable {

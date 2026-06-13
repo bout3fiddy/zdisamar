@@ -451,44 +451,7 @@ export fn zds_atmospheric_budget(
     // zds_atmospheric_budget ---------------------------------------------------------------------------------|
     // Build atmospheric support-row diagnostic records for caller-selected wavelengths.                       |
     // --------------------------------------------------------------------------------------------------------|
-    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
-    const prepared = &(resolved.prepared orelse {
-        resolved.setError("not prepared");
-        return @intFromEnum(ZdsStatus.failure);
-    });
-
-    const wavelengths_ptr = wavelengths orelse {
-        resolved.setError("null wavelength input");
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    if (wavelength_count == 0) {
-        resolved.setError("empty wavelength input");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-
-    const output = out orelse {
-        resolved.setError("null atmospheric budget output");
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    output.* = .{};
-
-    var budget = zdisamar.buildAtmosphericBudget(
-        allocator,
-        prepared,
-        wavelengths_ptr[0..wavelength_count],
-    ) catch |err| {
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    errdefer budget.deinit(allocator);
-
-    output.* = .{
-        .len = budget.rows.len,
-        .rows = if (budget.rows.len == 0) null else budget.rows.ptr,
-    };
-    budget.rows = &.{};
-    resolved.setError("");
-    return @intFromEnum(ZdsStatus.ok);
+    return runWavelengthDiagnostic(.atmospheric_budget, ctx, wavelengths, wavelength_count, {}, out);
 }
 
 export fn zds_o2_line_contributions(
@@ -501,51 +464,7 @@ export fn zds_o2_line_contributions(
     // zds_o2_line_contributions ------------------------------------------------------------------------------|
     // Build O2 line-by-line diagnostic rows for caller-selected wavelengths.                                  |
     // --------------------------------------------------------------------------------------------------------|
-    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
-    const prepared = &(resolved.prepared orelse {
-        resolved.setError("not prepared");
-        return @intFromEnum(ZdsStatus.failure);
-    });
-
-    const wavelengths_ptr = wavelengths orelse {
-        resolved.setError("null wavelength input");
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    if (wavelength_count == 0) {
-        resolved.setError("empty wavelength input");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-    if (max_rows == 0) {
-        resolved.setError("invalid O2 line contribution row limit");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-
-    const output = out orelse {
-        resolved.setError("null O2 line contribution output");
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    output.* = .{};
-
-    var contributions = zdisamar.buildO2LineContributions(
-        allocator,
-        prepared,
-        wavelengths_ptr[0..wavelength_count],
-        max_rows,
-    ) catch |err| {
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    errdefer contributions.deinit(allocator);
-
-    output.* = .{
-        .len = contributions.rows.len,
-        .total_row_count = contributions.total_row_count,
-        .truncated = @intFromBool(contributions.truncated),
-        .rows = if (contributions.rows.len == 0) null else contributions.rows.ptr,
-    };
-    contributions.rows = &.{};
-    resolved.setError("");
-    return @intFromEnum(ZdsStatus.ok);
+    return runWavelengthDiagnostic(.o2_line_contributions, ctx, wavelengths, wavelength_count, max_rows, out);
 }
 
 export fn zds_instrument_response_sampling(
@@ -558,45 +477,7 @@ export fn zds_instrument_response_sampling(
     // zds_instrument_response_sampling -----------------------------------------------------------------------|
     // Build instrument-response support rows for caller-selected wavelengths and channel mask.                |
     // --------------------------------------------------------------------------------------------------------|
-    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
-    const prepared = &(resolved.prepared orelse {
-        resolved.setError("not prepared");
-        return @intFromEnum(ZdsStatus.failure);
-    });
-
-    const wavelengths_ptr = wavelengths orelse {
-        resolved.setError("null wavelength input");
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    if (wavelength_count == 0) {
-        resolved.setError("empty wavelength input");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-
-    const output = out orelse {
-        resolved.setError("null instrument response output");
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    output.* = .{};
-
-    var response = zdisamar.buildInstrumentResponse(
-        allocator,
-        prepared,
-        wavelengths_ptr[0..wavelength_count],
-        channel_mask,
-    ) catch |err| {
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    errdefer response.deinit(allocator);
-
-    output.* = .{
-        .len = response.rows.len,
-        .rows = if (response.rows.len == 0) null else response.rows.ptr,
-    };
-    response.rows = &.{};
-    resolved.setError("");
-    return @intFromEnum(ZdsStatus.ok);
+    return runWavelengthDiagnostic(.instrument_response, ctx, wavelengths, wavelength_count, channel_mask, out);
 }
 
 export fn zds_o2_o2_cia_diagnostics(
@@ -608,44 +489,7 @@ export fn zds_o2_o2_cia_diagnostics(
     // zds_o2_o2_cia_diagnostics ------------------------------------------------------------------------------|
     // Build O2-O2 CIA diagnostic rows for caller-selected wavelengths.                                        |
     // --------------------------------------------------------------------------------------------------------|
-    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
-    const prepared = &(resolved.prepared orelse {
-        resolved.setError("not prepared");
-        return @intFromEnum(ZdsStatus.failure);
-    });
-
-    const wavelengths_ptr = wavelengths orelse {
-        resolved.setError("null wavelength input");
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    if (wavelength_count == 0) {
-        resolved.setError("empty wavelength input");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-
-    const output = out orelse {
-        resolved.setError("null O2-O2 CIA output");
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    output.* = .{};
-
-    var diagnostics = zdisamar.buildO2O2CIADiagnostics(
-        allocator,
-        prepared,
-        wavelengths_ptr[0..wavelength_count],
-    ) catch |err| {
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    errdefer diagnostics.deinit(allocator);
-
-    output.* = .{
-        .len = diagnostics.rows.len,
-        .rows = if (diagnostics.rows.len == 0) null else diagnostics.rows.ptr,
-    };
-    diagnostics.rows = &.{};
-    resolved.setError("");
-    return @intFromEnum(ZdsStatus.ok);
+    return runWavelengthDiagnostic(.o2_o2_cia, ctx, wavelengths, wavelength_count, {}, out);
 }
 
 export fn zds_run_o2a_optimal_estimation(ctx: ?*Context, _: ?*const anyopaque, _: ?*anyopaque) c_int {
@@ -768,6 +612,174 @@ export fn zds_last_error(ctx: ?*Context) [*:0]const u8 {
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return "null context";
     return @ptrCast(&resolved.last_error);
+}
+
+const WavelengthDiagnostic = enum {
+    atmospheric_budget,
+    o2_line_contributions,
+    instrument_response,
+    o2_o2_cia,
+};
+
+fn DiagnosticExtra(comptime diagnostic: WavelengthDiagnostic) type {
+    // DiagnosticExtra --------------------------------------------------------------------------------------- |
+    // Compile each wavelength-diagnostic ABI wrapper with only the extra scalar it actually accepts.          |
+    // --------------------------------------------------------------------------------------------------------|
+    return switch (diagnostic) {
+        .atmospheric_budget, .o2_o2_cia => void,
+        .o2_line_contributions => usize,
+        .instrument_response => u32,
+    };
+}
+
+fn DiagnosticOutput(comptime diagnostic: WavelengthDiagnostic) type {
+    // DiagnosticOutput -------------------------------------------------------------------------------------- |
+    // Map one diagnostic kind to its stable extern output struct.                                             |
+    // --------------------------------------------------------------------------------------------------------|
+    return switch (diagnostic) {
+        .atmospheric_budget => ZdsAtmosphericBudget,
+        .o2_line_contributions => ZdsO2LineContributions,
+        .instrument_response => ZdsInstrumentResponse,
+        .o2_o2_cia => ZdsO2O2CIADiagnostics,
+    };
+}
+
+fn DiagnosticResult(comptime diagnostic: WavelengthDiagnostic) type {
+    // DiagnosticResult -------------------------------------------------------------------------------------- |
+    // Map one diagnostic kind to the native owned row collection returned by root.zig.                        |
+    // --------------------------------------------------------------------------------------------------------|
+    return switch (diagnostic) {
+        .atmospheric_budget => zdisamar.AtmosphericBudget,
+        .o2_line_contributions => zdisamar.O2LineContributions,
+        .instrument_response => zdisamar.InstrumentResponse,
+        .o2_o2_cia => zdisamar.O2O2CIADiagnostics,
+    };
+}
+
+fn runWavelengthDiagnostic(
+    comptime diagnostic: WavelengthDiagnostic,
+    ctx: ?*Context,
+    wavelengths: ?[*]const f64,
+    wavelength_count: usize,
+    extra: DiagnosticExtra(diagnostic),
+    out: ?*DiagnosticOutput(diagnostic),
+) c_int {
+    // runWavelengthDiagnostic ------------------------------------------------------------------------------- |
+    // Shared C-ABI body for row diagnostics that are selected by wavelength list.                             |
+    //                                                                                                         |
+    // boundary                                                                                                |
+    //   The exported zds_* functions keep their exact C signatures. This helper specializes the native        |
+    //   builder, output struct, and extra scalar at comptime so no runtime tag or type-erased row pointer     |
+    //   crosses the ABI boundary.                                                                             |
+    // --------------------------------------------------------------------------------------------------------|
+    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
+    const prepared = &(resolved.prepared orelse {
+        resolved.setError("not prepared");
+        return @intFromEnum(ZdsStatus.failure);
+    });
+
+    const wavelengths_ptr = wavelengths orelse {
+        resolved.setError("null wavelength input");
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    if (wavelength_count == 0) {
+        resolved.setError("empty wavelength input");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+
+    if (diagnostic == .o2_line_contributions and extra == 0) {
+        resolved.setError("invalid O2 line contribution row limit");
+        return @intFromEnum(ZdsStatus.failure);
+    }
+
+    const output = out orelse {
+        resolved.setError(nullDiagnosticOutputMessage(diagnostic));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    output.* = .{};
+
+    var result = buildWavelengthDiagnostic(
+        diagnostic,
+        prepared,
+        wavelengths_ptr[0..wavelength_count],
+        extra,
+    ) catch |err| {
+        resolved.setError(@errorName(err));
+        return @intFromEnum(ZdsStatus.failure);
+    };
+    errdefer result.deinit(allocator);
+
+    marshalWavelengthDiagnostic(diagnostic, output, &result);
+    result.rows = &.{};
+    resolved.setError("");
+    return @intFromEnum(ZdsStatus.ok);
+}
+
+fn nullDiagnosticOutputMessage(comptime diagnostic: WavelengthDiagnostic) []const u8 {
+    // nullDiagnosticOutputMessage --------------------------------------------------------------------------- |
+    // Keep the previous per-export null-output error strings while sharing the control flow.                  |
+    // --------------------------------------------------------------------------------------------------------|
+    return switch (diagnostic) {
+        .atmospheric_budget => "null atmospheric budget output",
+        .o2_line_contributions => "null O2 line contribution output",
+        .instrument_response => "null instrument response output",
+        .o2_o2_cia => "null O2-O2 CIA output",
+    };
+}
+
+fn buildWavelengthDiagnostic(
+    comptime diagnostic: WavelengthDiagnostic,
+    prepared: *const zdisamar.PreparedO2A,
+    wavelengths_nm: []const f64,
+    extra: DiagnosticExtra(diagnostic),
+) !DiagnosticResult(diagnostic) {
+    // buildWavelengthDiagnostic ----------------------------------------------------------------------------- |
+    // Dispatch to the native root builder selected by the exported ABI wrapper.                               |
+    // --------------------------------------------------------------------------------------------------------|
+    return switch (diagnostic) {
+        .atmospheric_budget => zdisamar.buildAtmosphericBudget(allocator, prepared, wavelengths_nm),
+        .o2_line_contributions => zdisamar.buildO2LineContributions(allocator, prepared, wavelengths_nm, extra),
+        .instrument_response => zdisamar.buildInstrumentResponse(allocator, prepared, wavelengths_nm, extra),
+        .o2_o2_cia => zdisamar.buildO2O2CIADiagnostics(allocator, prepared, wavelengths_nm),
+    };
+}
+
+fn marshalWavelengthDiagnostic(
+    comptime diagnostic: WavelengthDiagnostic,
+    output: *DiagnosticOutput(diagnostic),
+    result: *const DiagnosticResult(diagnostic),
+) void {
+    // marshalWavelengthDiagnostic --------------------------------------------------------------------------- |
+    // Move native row ownership to the stable C-facing output struct without copying rows.                    |
+    // --------------------------------------------------------------------------------------------------------|
+    switch (diagnostic) {
+        .atmospheric_budget => output.* = .{
+            .len = result.rows.len,
+            .rows = diagnosticRowsPointer(zdisamar.AtmosphericBudgetRow, result.rows),
+        },
+        .o2_line_contributions => output.* = .{
+            .len = result.rows.len,
+            .total_row_count = result.total_row_count,
+            .truncated = @intFromBool(result.truncated),
+            .rows = diagnosticRowsPointer(zdisamar.O2LineContributionRow, result.rows),
+        },
+        .instrument_response => output.* = .{
+            .len = result.rows.len,
+            .rows = diagnosticRowsPointer(zdisamar.InstrumentResponseRow, result.rows),
+        },
+        .o2_o2_cia => output.* = .{
+            .len = result.rows.len,
+            .rows = diagnosticRowsPointer(zdisamar.O2O2CIARow, result.rows),
+        },
+    }
+}
+
+fn diagnosticRowsPointer(comptime Row: type, rows: []const Row) ?[*]const Row {
+    // diagnosticRowsPointer --------------------------------------------------------------------------------- |
+    // Convert an owned native row slice to the nullable borrowed pointer used by the C ABI structs.           |
+    // --------------------------------------------------------------------------------------------------------|
+    if (rows.len == 0) return null;
+    return rows.ptr;
 }
 
 fn runSpectrum(

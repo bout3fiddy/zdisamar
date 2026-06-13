@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const readers = @import("../assets/readers.zig");
+const hashing = @import("../common/hashing.zig");
 const o2_case = @import("../input/o2_case.zig");
 
 const Allocator = std.mem.Allocator;
@@ -29,6 +30,15 @@ pub const O2CiaTable = struct {
         self.* = undefined;
     }
 };
+// ------------------------------------------------------------------------------------------------------------|
+
+pub fn hashAll(hasher: *std.hash.Wyhash, table: O2CiaTable) void {
+    // hashAll ----------------------------------------------------------------------------------------------- |
+    // Hash the CIA scale factor and coefficient rows read by per-wavelength optical-depth fills.              |
+    // --------------------------------------------------------------------------------------------------------|
+    hashing.updateValue(hasher, table.scale_factor_cm5_per_molecule2);
+    hasher.update(std.mem.sliceAsBytes(table.rows));
+}
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn build(allocator: Allocator, case: o2_case.O2Case) !O2CiaTable {

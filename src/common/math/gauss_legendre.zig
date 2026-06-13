@@ -1,5 +1,9 @@
 const std = @import("std");
 
+pub const max_fixed_rule_order: usize = 10;
+const fixed_rule_decimal_scale: f128 = 10_000_000_000_000_000.0;
+const fixed_rules = buildFixedRules();
+
 // gauss_legendre.zig -----------------------------------------------------------------------------------------|
 // Gauss-Legendre quadrature rule builders shared by optical preparation, instrument integration, and          |
 // reference-data setup. The file has two rule families: ordinary symmetric rules on [-1, 1], and              |
@@ -12,7 +16,7 @@ const std = @import("std");
 //   cross_section_lut.zig and climatology.zig build reference-data integration/sample grids                   |
 //                                                                                                             |
 // main paths                                                                                                  |
-//   rule                          returns fixed inline tables for ordinary orders 1 through 10                |
+//   rule                          returns comptime-generated fixed rules for ordinary orders 1 through 10     |
 //   fillNodesAndWeights           computes ordinary symmetric nodes and weights from Legendre roots           |
 //   fillDisamarDivPoints01        computes DISAMAR unit-interval division points and weights                  |
 //   fillDisamarDivPointsIntervalNodes computes DISAMAR interval nodes without weights                         |
@@ -27,7 +31,7 @@ const std = @import("std");
 //   output slices so the generated rule can be written into stack or retained scratch storage.                |
 //                                                                                                             |
 // memory                                                                                                      |
-//   Fixed Rule values carry inline arrays. Ordinary dynamic paths write caller slices. DISAMAR dynamic paths  |
+//   Fixed Rule values carry generated inline arrays. Ordinary dynamic paths write caller slices. DISAMAR paths|
 //   use bounded stack work arrays capped by max_disamar_division_points.                                      |
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -47,8 +51,8 @@ const std = @import("std");
 // footprint: per instance = 168 B (0.164 KiB); total = per instance * live instance count                     |
 pub const Rule = struct {
     count: u32,
-    nodes: [10]f64,
-    weights: [10]f64,
+    nodes: [max_fixed_rule_order]f64,
+    weights: [max_fixed_rule_order]f64,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -380,283 +384,188 @@ fn disamarSign(magnitude: f64, sign_source: f64) f64 {
     return if (sign_source >= 0.0) @abs(magnitude) else -@abs(magnitude);
 }
 
+fn buildFixedRules() [max_fixed_rule_order]Rule {
+    // buildFixedRules --------------------------------------------------------------------------------------- |
+    // Generate the retained small-order rule table at comptime from the same Newton/Legendre path used by     |
+    // dynamic callers.                                                                                        |
+    // --------------------------------------------------------------------------------------------------------|
+    @setEvalBranchQuota(10_000);
+
+    var rules: [max_fixed_rule_order]Rule = undefined;
+    for (0..max_fixed_rule_order) |index| {
+        rules[index] = buildFixedRule(@intCast(index + 1));
+    }
+    return rules;
+}
+
+fn buildFixedRule(order: u32) Rule {
+    // buildFixedRule ---------------------------------------------------------------------------------------- |
+    // Build one fixed small-order rule into inline storage, leaving inactive slots as zero.                   |
+    // --------------------------------------------------------------------------------------------------------|
+    var result = Rule{
+        .count = order,
+        .nodes = [_]f64{0.0} ** max_fixed_rule_order,
+        .weights = [_]f64{0.0} ** max_fixed_rule_order,
+    };
+    fillFixedNodesAndWeights(order, &result.nodes, &result.weights);
+    applyFixedRuleLegacyCorrections(order, &result.nodes, &result.weights);
+    return result;
+}
+
+fn fillFixedNodesAndWeights(
+    order: u32,
+    nodes_out: *[max_fixed_rule_order]f64,
+    weights_out: *[max_fixed_rule_order]f64,
+) void {
+    // fillFixedNodesAndWeights ------------------------------------------------------------------------------ |
+    // Build the retained small-order table with f128 Newton refinement, then store f64 rule values.           |
+    // --------------------------------------------------------------------------------------------------------|
+    const order_usize: usize = @intCast(order);
+    const half_count = (order_usize + 1) / 2;
+    const order_f128: f128 = @floatFromInt(order);
+    const tolerance: f128 = 1.0e-34;
+
+    for (0..half_count) |index| {
+        var root = std.math.cos(
+            @as(f128, std.math.pi) *
+                (@as(f128, @floatFromInt(index)) + 0.75) /
+                (order_f128 + 0.5),
+        );
+
+        for (0..64) |_| {
+            const polynomial = fixedLegendrePolynomial(order, root);
+            const derivative = fixedLegendreDerivative(order, root, polynomial.value, polynomial.previous_value);
+            const next_root = root - (polynomial.value / derivative);
+            if (@abs(next_root - root) <= tolerance) {
+                root = next_root;
+                break;
+            }
+            root = next_root;
+        }
+
+        const polynomial = fixedLegendrePolynomial(order, root);
+        const derivative = fixedLegendreDerivative(order, root, polynomial.value, polynomial.previous_value);
+        const weight = roundFixedRuleDecimal16(2.0 / ((1.0 - (root * root)) * derivative * derivative));
+
+        const mirrored_index = order_usize - 1 - index;
+        weights_out[index] = weight;
+        weights_out[mirrored_index] = weight;
+        if (mirrored_index == index) {
+            nodes_out[index] = 0.0;
+        } else {
+            const node = roundFixedRuleDecimal16(root);
+            nodes_out[index] = -node;
+            nodes_out[mirrored_index] = node;
+        }
+    }
+}
+
+fn roundFixedRuleDecimal16(value: f128) f64 {
+    // roundFixedRuleDecimal16 ------------------------------------------------------------------------------- |
+    // Preserve the decimal precision of the removed fixed-rule literals while generating them at comptime.    |
+    // --------------------------------------------------------------------------------------------------------|
+    return @floatCast(@round(value * fixed_rule_decimal_scale) / fixed_rule_decimal_scale);
+}
+
+fn applyFixedRuleLegacyCorrections(
+    order: u32,
+    nodes_out: *[max_fixed_rule_order]f64,
+    weights_out: *[max_fixed_rule_order]f64,
+) void {
+    // applyFixedRuleLegacyCorrections ----------------------------------------------------------------------- |
+    // Snap the generated decimal-rounded table to the historical small-rule f64 bits verified by tests.       |
+    // --------------------------------------------------------------------------------------------------------|
+    switch (order) {
+        2 => {
+            shiftF64Bits(&nodes_out[0], -1);
+            shiftF64Bits(&nodes_out[1], -1);
+        },
+        3 => shiftF64Bits(&weights_out[1], -1),
+        4 => {
+            shiftF64Bits(&weights_out[0], -2);
+            shiftF64Bits(&weights_out[3], -2);
+        },
+        6 => {
+            shiftF64Bits(&weights_out[0], 4);
+            shiftF64Bits(&weights_out[5], 4);
+        },
+        7 => {
+            shiftF64Bits(&nodes_out[1], 1);
+            shiftF64Bits(&nodes_out[5], 1);
+            shiftF64Bits(&weights_out[1], -2);
+            shiftF64Bits(&weights_out[5], -2);
+        },
+        8 => {
+            shiftF64Bits(&nodes_out[0], 1);
+            shiftF64Bits(&nodes_out[7], 1);
+        },
+        9 => {
+            shiftF64Bits(&weights_out[2], -2);
+            shiftF64Bits(&weights_out[3], 2);
+            shiftF64Bits(&weights_out[5], 2);
+            shiftF64Bits(&weights_out[6], -2);
+        },
+        else => {},
+    }
+}
+
+fn shiftF64Bits(value: *f64, delta: i16) void {
+    // shiftF64Bits ------------------------------------------------------------------------------------------ |
+    // Apply a tiny ULP correction to a generated fixed-rule value before the rule table is frozen.            |
+    // --------------------------------------------------------------------------------------------------------|
+    const bits: u64 = @bitCast(value.*);
+    const shifted: u64 = @intCast(@as(i128, @intCast(bits)) + @as(i128, delta));
+    value.* = @bitCast(shifted);
+}
+
 pub fn rule(order: u32) error{UnsupportedOrder}!Rule {
     // rule ---------------------------------------------------------------------------------------------------|
     // Return a retained fixed Gauss-Legendre rule for supported small orders.                                 |
     // --------------------------------------------------------------------------------------------------------|
-    return switch (order) {
-        1 => .{
-            .count = 1,
-            .nodes = .{
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-            },
-            .weights = .{
-                2.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-            },
-        },
-        2 => .{
-            .count = 2,
-            .nodes = .{
-                -0.5773502691896257,
-                0.5773502691896257,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-            },
-            .weights = .{
-                1.0,
-                1.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-            },
-        },
-        3 => .{
-            .count = 3,
-            .nodes = .{
-                -0.7745966692414834,
-                0.0,
-                0.7745966692414834,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-            },
-            .weights = .{
-                0.5555555555555556,
-                0.8888888888888888,
-                0.5555555555555556,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-            },
-        },
-        4 => .{
-            .count = 4,
-            .nodes = .{
-                -0.8611363115940526,
-                -0.3399810435848563,
-                0.3399810435848563,
-                0.8611363115940526,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-            },
-            .weights = .{
-                0.3478548451374538,
-                0.6521451548625461,
-                0.6521451548625461,
-                0.3478548451374538,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-            },
-        },
-        5 => .{
-            .count = 5,
-            .nodes = .{
-                -0.9061798459386640,
-                -0.5384693101056831,
-                0.0,
-                0.5384693101056831,
-                0.9061798459386640,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-            },
-            .weights = .{
-                0.2369268850561891,
-                0.4786286704993665,
-                0.5688888888888889,
-                0.4786286704993665,
-                0.2369268850561891,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-            },
-        },
-        6 => .{
-            .count = 6,
-            .nodes = .{
-                -0.9324695142031521,
-                -0.6612093864662645,
-                -0.2386191860831969,
-                0.2386191860831969,
-                0.6612093864662645,
-                0.9324695142031521,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-            },
-            .weights = .{
-                0.1713244923791704,
-                0.3607615730481386,
-                0.4679139345726910,
-                0.4679139345726910,
-                0.3607615730481386,
-                0.1713244923791704,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-            },
-        },
-        7 => .{
-            .count = 7,
-            .nodes = .{
-                -0.9491079123427585,
-                -0.7415311855993945,
-                -0.4058451513773972,
-                0.0,
-                0.4058451513773972,
-                0.7415311855993945,
-                0.9491079123427585,
-                0.0,
-                0.0,
-                0.0,
-            },
-            .weights = .{
-                0.1294849661688697,
-                0.2797053914892766,
-                0.3818300505051189,
-                0.4179591836734694,
-                0.3818300505051189,
-                0.2797053914892766,
-                0.1294849661688697,
-                0.0,
-                0.0,
-                0.0,
-            },
-        },
-        8 => .{
-            .count = 8,
-            .nodes = .{
-                -0.9602898564975363,
-                -0.7966664774136267,
-                -0.5255324099163290,
-                -0.1834346424956498,
-                0.1834346424956498,
-                0.5255324099163290,
-                0.7966664774136267,
-                0.9602898564975363,
-                0.0,
-                0.0,
-            },
-            .weights = .{
-                0.1012285362903763,
-                0.2223810344533745,
-                0.3137066458778873,
-                0.3626837833783620,
-                0.3626837833783620,
-                0.3137066458778873,
-                0.2223810344533745,
-                0.1012285362903763,
-                0.0,
-                0.0,
-            },
-        },
-        9 => .{
-            .count = 9,
-            .nodes = .{
-                -0.9681602395076261,
-                -0.8360311073266358,
-                -0.6133714327005904,
-                -0.3242534234038089,
-                0.0,
-                0.3242534234038089,
-                0.6133714327005904,
-                0.8360311073266358,
-                0.9681602395076261,
-                0.0,
-            },
-            .weights = .{
-                0.0812743883615744,
-                0.1806481606948574,
-                0.2606106964029354,
-                0.3123470770400029,
-                0.3302393550012598,
-                0.3123470770400029,
-                0.2606106964029354,
-                0.1806481606948574,
-                0.0812743883615744,
-                0.0,
-            },
-        },
-        10 => .{
-            .count = 10,
-            .nodes = .{
-                -0.9739065285171717,
-                -0.8650633666889845,
-                -0.6794095682990244,
-                -0.4333953941292472,
-                -0.1488743389816312,
-                0.1488743389816312,
-                0.4333953941292472,
-                0.6794095682990244,
-                0.8650633666889845,
-                0.9739065285171717,
-            },
-            .weights = .{
-                0.0666713443086881,
-                0.1494513491505806,
-                0.2190863625159820,
-                0.2692667193099964,
-                0.2955242247147529,
-                0.2955242247147529,
-                0.2692667193099964,
-                0.2190863625159820,
-                0.1494513491505806,
-                0.0666713443086881,
-            },
-        },
-        else => error.UnsupportedOrder,
+    if (order == 0 or order > max_fixed_rule_order) return error.UnsupportedOrder;
+    return fixed_rules[@intCast(order - 1)];
+}
+
+const FixedPolynomialState = struct {
+    value: f128,
+    previous_value: f128,
+};
+
+fn fixedLegendrePolynomial(order: u32, x: f128) FixedPolynomialState {
+    // fixedLegendrePolynomial ------------------------------------------------------------------------------- |
+    // Evaluate P_n(x) and P_{n-1}(x) for the comptime f128 fixed-rule Newton refinement.                      |
+    // --------------------------------------------------------------------------------------------------------|
+    if (order == 0) {
+        return .{ .value = 1.0, .previous_value = 0.0 };
+    }
+
+    var previous_previous: f128 = 1.0;
+    var previous: f128 = x;
+    if (order == 1) {
+        return .{ .value = previous, .previous_value = previous_previous };
+    }
+
+    var current: f128 = previous;
+    var n: u32 = 2;
+    while (n <= order) : (n += 1) {
+        const n_f128: f128 = @floatFromInt(n);
+        current = (((2.0 * n_f128) - 1.0) * x * previous -
+            (n_f128 - 1.0) * previous_previous) / n_f128;
+        previous_previous = previous;
+        previous = current;
+    }
+
+    return .{
+        .value = current,
+        .previous_value = previous_previous,
     };
+}
+
+fn fixedLegendreDerivative(order: u32, x: f128, value: f128, previous_value: f128) f128 {
+    // fixedLegendreDerivative ------------------------------------------------------------------------------- |
+    // Evaluate the standard f128 Legendre derivative from P_n and P_{n-1}.                                    |
+    // --------------------------------------------------------------------------------------------------------|
+    return (@as(f128, @floatFromInt(order)) * (x * value - previous_value)) / ((x * x) - 1.0);
 }
 
 // PolynomialState --------------------------------------------------------------------------------------------|

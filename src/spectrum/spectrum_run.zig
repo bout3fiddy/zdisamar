@@ -56,6 +56,82 @@ pub const radiance_prefetch_pooled_chunk_size: usize = 8;
 
 const RadiancePrefetchErrorState = worker_partition.FirstWorkerErrorState(anyerror);
 
+// O2ASamplingPolicy -----------------------------------------------------------------------------------------  |
+// Product-channel sampling and calibration policy for the exercised O2 A spectrum route.                       |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 104 B (0.102 KiB), align: 8 B                                                                          |
+//                                                                                                              |
+// memory                                                                                                       |
+// [  0.. 31] radiance_calibration              : Calibration                                                   |
+// [ 32.. 63] irradiance_calibration            : Calibration                                                   |
+// [ 64.. 79] radiance_slit_kernel              : []const f64                                                   |
+// [ 80.. 95] irradiance_slit_kernel            : []const f64                                                   |
+// [ 96.. 96] uses_integrated_radiance_sampling : bool                                                          |
+// [ 97.. 97] uses_integrated_irradiance_sampling: bool                                                         |
+// [ 98..103] padding                           : 6 B                                                           |
+pub const O2ASamplingPolicy = struct {
+    radiance_calibration: instrument_average.Calibration = .{},
+    irradiance_calibration: instrument_average.Calibration = .{},
+    radiance_slit_kernel: []const f64 = &.{},
+    irradiance_slit_kernel: []const f64 = &.{},
+    uses_integrated_radiance_sampling: bool = true,
+    uses_integrated_irradiance_sampling: bool = true,
+};
+// ------------------------------------------------------------------------------------------------------------ |
+
+// ProductRows ------------------------------------------------------------------------------------------------ |
+// Caller-owned spectrum output rows grouped at the orchestration boundary.                                     |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 128 B (0.125 KiB), align: 8 B                                                                          |
+//                                                                                                              |
+// memory                                                                                                       |
+// [  0.. 15] dense_radiance : []RadianceResult                                                                 |
+// [ 16.. 31] wavelengths_nm : []f64                                                                            |
+// [ 32.. 47] raw_radiance   : []RadianceResult                                                                 |
+// [ 48.. 63] raw_irradiance : []f64                                                                            |
+// [ 64.. 79] radiance       : []RadianceResult                                                                 |
+// [ 80.. 95] irradiance     : []f64                                                                            |
+// [ 96..111] reflectance    : []f64                                                                            |
+// [112..127] jacobian       : []Vector                                                                         |
+pub const ProductRows = struct {
+    dense_radiance: []radiance_results.RadianceResult,
+    wavelengths_nm: []f64,
+    raw_radiance: []radiance_results.RadianceResult,
+    raw_irradiance: []f64,
+    radiance: []radiance_results.RadianceResult,
+    irradiance: []f64,
+    reflectance: []f64,
+    jacobian: []jacobian_states.Vector,
+};
+// ------------------------------------------------------------------------------------------------------------ |
+
+// RadianceWorkRows ------------------------------------------------------------------------------------------  |
+// Worker-local optics scratch rows for one exact-wavelength solve.                                             |
+//                                                                                                              |
+// layout(64-bit)                                                                                               |
+// size: 112 B (0.109 KiB), align: 8 B                                                                          |
+//                                                                                                              |
+// memory                                                                                                       |
+// [  0.. 15] line_sigma_cm2_per_molecule : []f64                                                               |
+// [ 16.. 31] support                     : []SupportOptics                                                     |
+// [ 32.. 47] layers                      : []LayerOptics                                                       |
+// [ 48.. 63] source_levels               : []SourceLevel                                                       |
+// [ 64.. 79] curved_samples              : []CurvedSunPathSample                                               |
+// [ 80.. 95] curved_level_starts         : []usize                                                             |
+// [ 96..111] curved_level_altitudes_km   : []f64                                                               |
+pub const RadianceWorkRows = struct {
+    line_sigma_cm2_per_molecule: []f64,
+    support: []layer_depths.SupportOptics,
+    layers: []layer_depths.LayerOptics,
+    source_levels: []source_levels.SourceLevel,
+    curved_samples: []curved_sun_path.CurvedSunPathSample,
+    curved_level_starts: []usize,
+    curved_level_altitudes_km: []f64,
+};
+// ------------------------------------------------------------------------------------------------------------ |
+
 // RadiancePrefetchWorker ------------------------------------------------------------------------------------  |
 // Site-local worker row for dense O2 A radiance prefetch.                                                      |
 //                                                                                                              |
@@ -105,13 +181,7 @@ pub fn radianceAtWavelength(
     phase: phase_table.PhaseTable,
     solar_irradiance: f64,
     solve_config: controls.SolveConfig,
-    out_line_sigma_cm2_per_molecule: []f64,
-    out_support: []layer_depths.SupportOptics,
-    out_layers: []layer_depths.LayerOptics,
-    out_source_levels: []source_levels.SourceLevel,
-    out_curved_samples: []curved_sun_path.CurvedSunPathSample,
-    out_curved_level_starts: []usize,
-    out_curved_level_altitudes_km: []f64,
+    work_rows: RadianceWorkRows,
     worker_memory: *transport_worker_memory.TransportWorkerMemory,
 ) !radiance_results.RadianceResult {
     // radianceAtWavelength ---------------------------------------------------------------------------------   |
@@ -136,12 +206,12 @@ pub fn radianceAtWavelength(
     // -------------------------------------------------------------------------------------------------------- |
     const support_count = layer_grid.support_mid_altitudes_km.len;
     const layer_count = layer_grid.layer_pressures_hpa.len;
-    if (out_support.len != support_count or
-        out_line_sigma_cm2_per_molecule.len != support_count or
-        out_layers.len != layer_count or
-        out_source_levels.len != layer_count + 1 or
-        out_curved_level_starts.len != layer_count + 1 or
-        out_curved_level_altitudes_km.len != layer_count + 1)
+    if (work_rows.support.len != support_count or
+        work_rows.line_sigma_cm2_per_molecule.len != support_count or
+        work_rows.layers.len != layer_count or
+        work_rows.source_levels.len != layer_count + 1 or
+        work_rows.curved_level_starts.len != layer_count + 1 or
+        work_rows.curved_level_altitudes_km.len != layer_count + 1)
     {
         return error.ShapeMismatch;
     }
@@ -166,18 +236,18 @@ pub fn radianceAtWavelength(
         try profile_lines.fillSupportLineSigmaAtWavelengthIndex(
             layer_grid,
             wavelength_index,
-            out_line_sigma_cm2_per_molecule,
+            work_rows.line_sigma_cm2_per_molecule,
         );
         try layer_depths.fillSupportOpticsAtWavelength(
             wavelength_nm,
             layer_grid,
-            out_line_sigma_cm2_per_molecule,
+            work_rows.line_sigma_cm2_per_molecule,
             cia,
             aerosol,
-            out_support,
+            work_rows.support,
         );
-        try layer_depths.reduceLayerOpticsFromSupportRows(layer_grid, out_support, out_layers);
-        layer_depths.fillLayerAerosolJacobians(aerosol, solve_config.derivative_state_mask, out_layers);
+        try layer_depths.reduceLayerOpticsFromSupportRows(layer_grid, work_rows.support, work_rows.layers);
+        layer_depths.fillLayerAerosolJacobians(aerosol, solve_config.derivative_state_mask, work_rows.layers);
     }
 
     const prepared_config = try controls.prepareSolveConfig(solve_config);
@@ -186,29 +256,29 @@ pub fn radianceAtWavelength(
             try source_levels.fillSourceLevelsAtWavelength(
                 wavelength_nm,
                 layer_grid,
-                out_support,
-                out_layers,
-                out_source_levels,
+                work_rows.support,
+                work_rows.layers,
+                work_rows.source_levels,
             );
-            break :source_rows out_source_levels;
+            break :source_rows work_rows.source_levels;
         }
 
-        break :source_rows out_source_levels[0..0];
+        break :source_rows work_rows.source_levels[0..0];
     };
 
     const curved_rows = curved_rows: {
         if (prepared_config.controls.use_spherical_correction) {
             const curved_count = try curved_sun_path.fillCurvedSunPathSamples(
                 layer_grid,
-                out_support,
-                out_curved_samples,
-                out_curved_level_starts,
-                out_curved_level_altitudes_km,
+                work_rows.support,
+                work_rows.curved_samples,
+                work_rows.curved_level_starts,
+                work_rows.curved_level_altitudes_km,
             );
-            break :curved_rows out_curved_samples[0..curved_count];
+            break :curved_rows work_rows.curved_samples[0..curved_count];
         }
 
-        break :curved_rows out_curved_samples[0..0];
+        break :curved_rows work_rows.curved_samples[0..0];
     };
 
     const reflectance = reflectance: {
@@ -216,7 +286,7 @@ pub fn radianceAtWavelength(
             break :reflectance solve.directSurfaceOnly(
                 angles,
                 surface_albedo,
-                totalOpticalDepth(out_layers),
+                totalOpticalDepth(work_rows.layers),
                 prepared_config.derivative_mode,
                 prepared_config.derivative_state_mask,
             );
@@ -230,12 +300,12 @@ pub fn radianceAtWavelength(
             prepared_config.controls.n_streams,
             needs_order_local_sum,
         );
-        work.curved_level_starts = out_curved_level_starts;
-        work.curved_level_altitudes_km = out_curved_level_altitudes_km;
+        work.curved_level_starts = work_rows.curved_level_starts;
+        work.curved_level_altitudes_km = work_rows.curved_level_altitudes_km;
         break :reflectance try solve.solveReflectance(
             angles,
             surface_albedo,
-            out_layers,
+            work_rows.layers,
             source_rows,
             curved_rows,
             phase,
@@ -445,13 +515,15 @@ fn radiancePrefetchWorkerMain(worker: *RadiancePrefetchWorker) void {
                 worker.phase,
                 solar_irradiance,
                 worker.solve_config,
-                worker.transport_memory.line_sigma_cm2_per_molecule,
-                worker.transport_memory.support_optics,
-                worker.transport_memory.layer_optics,
-                worker.transport_memory.source_level_rows,
-                worker.transport_memory.curved_samples,
-                worker.transport_memory.curved_level_starts,
-                worker.transport_memory.curved_level_altitudes_km,
+                .{
+                    .line_sigma_cm2_per_molecule = worker.transport_memory.line_sigma_cm2_per_molecule,
+                    .support = worker.transport_memory.support_optics,
+                    .layers = worker.transport_memory.layer_optics,
+                    .source_levels = worker.transport_memory.source_level_rows,
+                    .curved_samples = worker.transport_memory.curved_samples,
+                    .curved_level_starts = worker.transport_memory.curved_level_starts,
+                    .curved_level_altitudes_km = worker.transport_memory.curved_level_altitudes_km,
+                },
                 worker.transport_memory,
             ) catch |err| {
                 worker.error_state.store(err);
@@ -481,23 +553,11 @@ pub fn runO2ASpectrum(
     phase: phase_table.PhaseTable,
     solar: solar_table.SolarTable,
     solve_config: controls.SolveConfig,
-    uses_integrated_radiance_sampling: bool,
-    uses_integrated_irradiance_sampling: bool,
-    radiance_calibration: instrument_average.Calibration,
-    irradiance_calibration: instrument_average.Calibration,
-    radiance_slit_kernel: []const f64,
-    irradiance_slit_kernel: []const f64,
+    sampling_policy: O2ASamplingPolicy,
     prefetch_dense_radiance: bool,
     pool: ?*std.Thread.Pool,
     worker_count: usize,
-    out_dense_radiance: []radiance_results.RadianceResult,
-    out_wavelengths_nm: []f64,
-    out_raw_radiance: []radiance_results.RadianceResult,
-    out_raw_irradiance: []f64,
-    out_radiance: []radiance_results.RadianceResult,
-    out_irradiance: []f64,
-    out_reflectance: []f64,
-    out_jacobian: []jacobian_states.Vector,
+    product_rows: ProductRows,
     transport_workers: []transport_worker_memory.TransportWorkerMemory,
     solar_memory: *solar_irradiance_memory.SolarIrradianceMemory,
 ) !instrument_average.ReflectanceAssemblySummary {
@@ -522,12 +582,12 @@ pub fn runO2ASpectrum(
     // ---------------------------------------------------------------------------------------------------------|
     const row_count = table.rows.len;
     const product_shapes_match = wavelengths.rows.len == row_count and
-        out_wavelengths_nm.len == row_count and
-        out_raw_radiance.len == row_count and
-        out_raw_irradiance.len == row_count and
-        out_radiance.len == row_count and
-        out_irradiance.len == row_count and
-        out_reflectance.len == row_count;
+        product_rows.wavelengths_nm.len == row_count and
+        product_rows.raw_radiance.len == row_count and
+        product_rows.raw_irradiance.len == row_count and
+        product_rows.radiance.len == row_count and
+        product_rows.irradiance.len == row_count and
+        product_rows.reflectance.len == row_count;
     if (!product_shapes_match) return error.ShapeMismatch;
 
     // instrumentation: trace zone: O2 A spectrum run --------------------------------------------------------- |
@@ -552,7 +612,7 @@ pub fn runO2ASpectrum(
             solve_config,
             pool,
             worker_count,
-            out_dense_radiance,
+            product_rows.dense_radiance,
             transport_workers,
         );
     }
@@ -561,29 +621,29 @@ pub fn runO2ASpectrum(
         solve_config,
         table,
         wavelengths,
-        out_dense_radiance,
+        product_rows.dense_radiance,
         solar,
         solar_memory,
-        out_wavelengths_nm,
-        out_raw_radiance,
-        out_raw_irradiance,
+        product_rows.wavelengths_nm,
+        product_rows.raw_radiance,
+        product_rows.raw_irradiance,
     );
 
     return postprocessAndAssembleProductRows(
         solve_config,
-        uses_integrated_radiance_sampling,
-        uses_integrated_irradiance_sampling,
-        radiance_calibration,
-        irradiance_calibration,
-        radiance_slit_kernel,
-        irradiance_slit_kernel,
+        sampling_policy.uses_integrated_radiance_sampling,
+        sampling_policy.uses_integrated_irradiance_sampling,
+        sampling_policy.radiance_calibration,
+        sampling_policy.irradiance_calibration,
+        sampling_policy.radiance_slit_kernel,
+        sampling_policy.irradiance_slit_kernel,
         angles.solar_mu,
-        out_raw_radiance,
-        out_raw_irradiance,
-        out_radiance,
-        out_irradiance,
-        out_reflectance,
-        out_jacobian,
+        product_rows.raw_radiance,
+        product_rows.raw_irradiance,
+        product_rows.radiance,
+        product_rows.irradiance,
+        product_rows.reflectance,
+        product_rows.jacobian,
     );
 }
 

@@ -694,10 +694,14 @@ fn fillInitialTangentDirectAndLocalSources(
             var rt_index = col;
 
             for (0..stream_count) |stream_index| {
-                local_d[stream_index] = rt_t.data[rt_index] * attenuation_value;
-                tangent_d[stream_index] =
-                    rt_t_derivative.data[rt_index] * attenuation_value +
-                    rt_t.data[rt_index] * attenuation_derivative;
+                const value = attenuateTangentValue(
+                    rt_t.data[rt_index],
+                    rt_t_derivative.data[rt_index],
+                    attenuation_value,
+                    attenuation_derivative,
+                );
+                local_d[stream_index] = value.base;
+                tangent_d[stream_index] = value.tangent;
                 rt_index += rt_t.n;
             }
         }
@@ -722,10 +726,14 @@ fn fillInitialTangentDirectAndLocalSources(
             var rt_index = col;
 
             for (0..stream_count) |stream_index| {
-                local_u[stream_index] = rt_r.data[rt_index] * attenuation_value;
-                tangent_u[stream_index] =
-                    rt_r_derivative.data[rt_index] * attenuation_value +
-                    rt_r.data[rt_index] * attenuation_derivative;
+                const value = attenuateTangentValue(
+                    rt_r.data[rt_index],
+                    rt_r_derivative.data[rt_index],
+                    attenuation_value,
+                    attenuation_derivative,
+                );
+                local_u[stream_index] = value.base;
+                tangent_u[stream_index] = value.tangent;
                 rt_index += rt_r.n;
             }
         }
@@ -765,11 +773,13 @@ fn fillDownwardLocalSources(
         Trace.plotU("dot_gauss_pair_terms", @intCast(stream_count * 2 * gaussian_count));
 
         for (0..stream_count) |stream_index| {
-            const rst_dot_u = dotGaussPair(&rt[level + 1].R, stream_index, prev_u0, prev_u1, gaussian_count);
-            const t_dot_d = dotGaussPair(&rt[level + 1].T, stream_index, prev_d0, prev_d1, gaussian_count);
+            const local = addDotPairs(
+                dotGaussPair(&rt[level + 1].R, stream_index, prev_u0, prev_u1, gaussian_count),
+                dotGaussPair(&rt[level + 1].T, stream_index, prev_d0, prev_d1, gaussian_count),
+            );
 
-            local_d0[stream_index] = rst_dot_u.col0 + t_dot_d.col0;
-            local_d1[stream_index] = rst_dot_u.col1 + t_dot_d.col1;
+            local_d0[stream_index] = local.col0;
+            local_d1[stream_index] = local.col1;
         }
     }
     ud_local[end_level].D = rows.Vec2.zero(stream_count);
@@ -814,20 +824,22 @@ fn fillDownwardLocalSourcesTangent(
         const tangent_prev_d1 = &tangent_orde[level + 1].D.col[1];
 
         for (0..stream_count) |stream_index| {
-            const r_dot_u = dotGaussPair(&rt[level + 1].R, stream_index, prev_u0, prev_u1, gaussian_count);
-            const t_dot_d = dotGaussPair(&rt[level + 1].T, stream_index, prev_d0, prev_d1, gaussian_count);
-            local_d0[stream_index] = r_dot_u.col0 + t_dot_d.col0;
-            local_d1[stream_index] = r_dot_u.col1 + t_dot_d.col1;
+            const local = addDotPairs(
+                dotGaussPair(&rt[level + 1].R, stream_index, prev_u0, prev_u1, gaussian_count),
+                dotGaussPair(&rt[level + 1].T, stream_index, prev_d0, prev_d1, gaussian_count),
+            );
+            local_d0[stream_index] = local.col0;
+            local_d1[stream_index] = local.col1;
 
-            const dr_dot_u = dotGaussPair(&rt_tangent[level + 1].R, stream_index, prev_u0, prev_u1, gaussian_count);
-            const r_dot_du =
-                dotGaussPair(&rt[level + 1].R, stream_index, tangent_prev_u0, tangent_prev_u1, gaussian_count);
-            const dt_dot_d = dotGaussPair(&rt_tangent[level + 1].T, stream_index, prev_d0, prev_d1, gaussian_count);
-            const t_dot_dd =
-                dotGaussPair(&rt[level + 1].T, stream_index, tangent_prev_d0, tangent_prev_d1, gaussian_count);
+            const tangent = addFourDotPairs(
+                dotGaussPair(&rt_tangent[level + 1].R, stream_index, prev_u0, prev_u1, gaussian_count),
+                dotGaussPair(&rt[level + 1].R, stream_index, tangent_prev_u0, tangent_prev_u1, gaussian_count),
+                dotGaussPair(&rt_tangent[level + 1].T, stream_index, prev_d0, prev_d1, gaussian_count),
+                dotGaussPair(&rt[level + 1].T, stream_index, tangent_prev_d0, tangent_prev_d1, gaussian_count),
+            );
 
-            tangent_d0[stream_index] = dr_dot_u.col0 + r_dot_du.col0 + dt_dot_d.col0 + t_dot_dd.col0;
-            tangent_d1[stream_index] = dr_dot_u.col1 + r_dot_du.col1 + dt_dot_d.col1 + t_dot_dd.col1;
+            tangent_d0[stream_index] = tangent.col0;
+            tangent_d1[stream_index] = tangent.col1;
         }
     }
     base_local[end_level].D = rows.Vec2.zero(stream_count);
@@ -888,11 +900,13 @@ fn fillUpwardLocalSources(
         Trace.plotU("dot_gauss_pair_terms", @intCast(stream_count * 2 * gaussian_count));
 
         for (0..stream_count) |stream_index| {
-            const r_dot_d = dotGaussPair(&rt[level].R, stream_index, prev_d0, prev_d1, gaussian_count);
-            const tst_dot_u = dotGaussPair(&rt[level].T, stream_index, prev_u0, prev_u1, gaussian_count);
+            const local = addDotPairs(
+                dotGaussPair(&rt[level].R, stream_index, prev_d0, prev_d1, gaussian_count),
+                dotGaussPair(&rt[level].T, stream_index, prev_u0, prev_u1, gaussian_count),
+            );
 
-            local_u0[stream_index] = r_dot_d.col0 + tst_dot_u.col0;
-            local_u1[stream_index] = r_dot_d.col1 + tst_dot_u.col1;
+            local_u0[stream_index] = local.col0;
+            local_u1[stream_index] = local.col1;
         }
     }
 }
@@ -930,17 +944,24 @@ fn fillUpwardLocalSourcesTangent(
             local_u_start0[stream_index] = r_dot_d.col0;
             local_u_start1[stream_index] = r_dot_d.col1;
 
-            const dr_dot_d =
-                dotGaussPair(&rt_tangent[start_level].R, stream_index, prev_d_start0, prev_d_start1, gaussian_count);
-            const r_dot_dd = dotGaussPair(
-                &rt[start_level].R,
-                stream_index,
-                tangent_prev_d_start0,
-                tangent_prev_d_start1,
-                gaussian_count,
+            const tangent = addDotPairs(
+                dotGaussPair(
+                    &rt_tangent[start_level].R,
+                    stream_index,
+                    prev_d_start0,
+                    prev_d_start1,
+                    gaussian_count,
+                ),
+                dotGaussPair(
+                    &rt[start_level].R,
+                    stream_index,
+                    tangent_prev_d_start0,
+                    tangent_prev_d_start1,
+                    gaussian_count,
+                ),
             );
-            tangent_u_start0[stream_index] = dr_dot_d.col0 + r_dot_dd.col0;
-            tangent_u_start1[stream_index] = dr_dot_d.col1 + r_dot_dd.col1;
+            tangent_u_start0[stream_index] = tangent.col0;
+            tangent_u_start1[stream_index] = tangent.col1;
         }
     } else {
         zeroQuad(local_u_start0, local_u_start1, tangent_u_start0, tangent_u_start1, stream_count);
@@ -967,20 +988,22 @@ fn fillUpwardLocalSourcesTangent(
         const tangent_prev_u1 = &tangent_orde[level - 1].U.col[1];
 
         for (0..stream_count) |stream_index| {
-            const r_dot_d = dotGaussPair(&rt[level].R, stream_index, prev_d0, prev_d1, gaussian_count);
-            const t_dot_u = dotGaussPair(&rt[level].T, stream_index, prev_u0, prev_u1, gaussian_count);
-            local_u0[stream_index] = r_dot_d.col0 + t_dot_u.col0;
-            local_u1[stream_index] = r_dot_d.col1 + t_dot_u.col1;
+            const local = addDotPairs(
+                dotGaussPair(&rt[level].R, stream_index, prev_d0, prev_d1, gaussian_count),
+                dotGaussPair(&rt[level].T, stream_index, prev_u0, prev_u1, gaussian_count),
+            );
+            local_u0[stream_index] = local.col0;
+            local_u1[stream_index] = local.col1;
 
-            const dr_dot_d = dotGaussPair(&rt_tangent[level].R, stream_index, prev_d0, prev_d1, gaussian_count);
-            const r_dot_dd =
-                dotGaussPair(&rt[level].R, stream_index, tangent_prev_d0, tangent_prev_d1, gaussian_count);
-            const dt_dot_u = dotGaussPair(&rt_tangent[level].T, stream_index, prev_u0, prev_u1, gaussian_count);
-            const t_dot_du =
-                dotGaussPair(&rt[level].T, stream_index, tangent_prev_u0, tangent_prev_u1, gaussian_count);
+            const tangent = addFourDotPairs(
+                dotGaussPair(&rt_tangent[level].R, stream_index, prev_d0, prev_d1, gaussian_count),
+                dotGaussPair(&rt[level].R, stream_index, tangent_prev_d0, tangent_prev_d1, gaussian_count),
+                dotGaussPair(&rt_tangent[level].T, stream_index, prev_u0, prev_u1, gaussian_count),
+                dotGaussPair(&rt[level].T, stream_index, tangent_prev_u0, tangent_prev_u1, gaussian_count),
+            );
 
-            tangent_u0[stream_index] = dr_dot_d.col0 + r_dot_dd.col0 + dt_dot_u.col0 + t_dot_du.col0;
-            tangent_u1[stream_index] = dr_dot_d.col1 + r_dot_dd.col1 + dt_dot_u.col1 + t_dot_du.col1;
+            tangent_u0[stream_index] = tangent.col0;
+            tangent_u1[stream_index] = tangent.col1;
         }
     }
 }
@@ -1113,14 +1136,20 @@ fn transportToOtherLevelsTangent(
         for (0..stream_count) |stream_index| {
             const attenuation_value = attenuation_base.get(stream_index, level - 1, level);
             const attenuation_derivative = attenuation_tangent.get(stream_index, level - 1, level);
-            out_u0[stream_index] =
-                local_du0[stream_index] +
-                attenuation_derivative * prev_u0[stream_index] +
-                attenuation_value * prev_du0[stream_index];
-            out_u1[stream_index] =
-                local_du1[stream_index] +
-                attenuation_derivative * prev_u1[stream_index] +
-                attenuation_value * prev_du1[stream_index];
+            out_u0[stream_index] = propagatedTangentValue(
+                local_du0[stream_index],
+                prev_u0[stream_index],
+                prev_du0[stream_index],
+                attenuation_value,
+                attenuation_derivative,
+            );
+            out_u1[stream_index] = propagatedTangentValue(
+                local_du1[stream_index],
+                prev_u1[stream_index],
+                prev_du1[stream_index],
+                attenuation_value,
+                attenuation_derivative,
+            );
         }
     }
 
@@ -1141,14 +1170,20 @@ fn transportToOtherLevelsTangent(
         for (0..stream_count) |stream_index| {
             const attenuation_value = attenuation_base.get(stream_index, level + 1, level);
             const attenuation_derivative = attenuation_tangent.get(stream_index, level + 1, level);
-            out_d0[stream_index] =
-                local_dd0[stream_index] +
-                attenuation_derivative * prev_d0[stream_index] +
-                attenuation_value * prev_dd0[stream_index];
-            out_d1[stream_index] =
-                local_dd1[stream_index] +
-                attenuation_derivative * prev_d1[stream_index] +
-                attenuation_value * prev_dd1[stream_index];
+            out_d0[stream_index] = propagatedTangentValue(
+                local_dd0[stream_index],
+                prev_d0[stream_index],
+                prev_dd0[stream_index],
+                attenuation_value,
+                attenuation_derivative,
+            );
+            out_d1[stream_index] = propagatedTangentValue(
+                local_dd1[stream_index],
+                prev_d1[stream_index],
+                prev_dd1[stream_index],
+                attenuation_value,
+                attenuation_derivative,
+            );
         }
     }
 }
@@ -1399,6 +1434,24 @@ fn zeroQuad(
     }
 }
 
+// AttenuatedValue --------------------------------------------------------------------------------------------|
+// Carries one base value and its derivative through the local product-rule helpers.                           |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] base    : f64                                                                                      |
+// [ 8..15] tangent : f64                                                                                      |
+//                                                                                                             |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
+// footprint: per instance = 16 B (0.016 KiB); stack value in tangent source and transport loops               |
+const AttenuatedValue = struct {
+    base: f64,
+    tangent: f64,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
 // DotPair ----------------------------------------------------------------------------------------------------|
 // Two Gaussian dot products returned from one pass over the same matrix row.                                  |
 //                                                                                                             |
@@ -1416,6 +1469,61 @@ const DotPair = struct {
     col1: f64,
 };
 // ------------------------------------------------------------------------------------------------------------|
+
+inline fn attenuateTangentValue(
+    base_value: f64,
+    tangent_value: f64,
+    attenuation_value: f64,
+    attenuation_derivative: f64,
+) AttenuatedValue {
+    // attenuateTangentValue --------------------------------------------------------------------------------- |
+    // Apply the first-order product rule to one RT-matrix value multiplied by direct attenuation.             |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   base    = RT * E                                                                                      |
+    //   tangent = dRT * E + RT * dE                                                                           |
+    // --------------------------------------------------------------------------------------------------------|
+    return .{
+        .base = base_value * attenuation_value,
+        .tangent = tangent_value * attenuation_value + base_value * attenuation_derivative,
+    };
+}
+
+inline fn propagatedTangentValue(
+    local_tangent: f64,
+    previous_base: f64,
+    previous_tangent: f64,
+    attenuation_value: f64,
+    attenuation_derivative: f64,
+) f64 {
+    // propagatedTangentValue -------------------------------------------------------------------------------- |
+    // Propagate a derivative field through one attenuation hop.                                               |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   tangent_out = local_tangent + dE * previous_base + E * previous_tangent                               |
+    // --------------------------------------------------------------------------------------------------------|
+    return local_tangent + attenuation_derivative * previous_base + attenuation_value * previous_tangent;
+}
+
+inline fn addDotPairs(a: DotPair, b: DotPair) DotPair {
+    // addDotPairs ------------------------------------------------------------------------------------------- |
+    // Add two paired Gaussian dot products without changing the source loop order.                            |
+    // --------------------------------------------------------------------------------------------------------|
+    return .{
+        .col0 = a.col0 + b.col0,
+        .col1 = a.col1 + b.col1,
+    };
+}
+
+inline fn addFourDotPairs(a: DotPair, b: DotPair, c: DotPair, d: DotPair) DotPair {
+    // addFourDotPairs --------------------------------------------------------------------------------------- |
+    // Add the four first-order tangent dot terms: dR*x, R*dx, dT*y, and T*dy.                                 |
+    // --------------------------------------------------------------------------------------------------------|
+    return .{
+        .col0 = a.col0 + b.col0 + c.col0 + d.col0,
+        .col1 = a.col1 + b.col1 + c.col1 + d.col1,
+    };
+}
 
 fn dotGaussPair(
     matrix: *const rows.Mat,
