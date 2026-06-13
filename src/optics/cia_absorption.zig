@@ -36,11 +36,14 @@ pub const CiaCoefficients = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn sigmaAt(table: cia_table.O2CiaTable, wavelength_nm: f64, temperature_k: f64) f64 {
-    // sigmaAt ----------------------------------------------------------------------------------------------- |
-    // Evaluate CIA sigma for one wavelength and support-row temperature.                                      |
+pub fn sigmaFromCoefficients(
+    table: cia_table.O2CiaTable,
+    coefficients: CiaCoefficients,
+    temperature_k: f64,
+) f64 {
+    // sigmaFromCoefficients --------------------------------------------------------------------------------- |
+    // Evaluate CIA sigma after the caller has interpolated the wavelength coefficients once.                  |
     // --------------------------------------------------------------------------------------------------------|
-    const coefficients = interpolateCoefficients(table.rows, wavelength_nm);
     const temperature_c = temperature_k - 273.15;
     const raw_sigma = coefficients.a0 +
         coefficients.a1 * temperature_c +
@@ -90,6 +93,9 @@ const SplineWindow = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 fn splineWindow(point_count: usize, right_index: usize) SplineWindow {
+    // splineWindow ------------------------------------------------------------------------------------------ |
+    // Choose the bounded CIA coefficient window around the wavelength bracket.                                |
+    // --------------------------------------------------------------------------------------------------------|
     const count = @min(point_count, max_spline_window_points);
     if (point_count <= max_spline_window_points) return .{ .start = 0, .count = count };
 
@@ -104,6 +110,9 @@ fn sampleCoefficientSpline(
     wavelength_nm: f64,
     coefficient_kind: CoefficientKind,
 ) f64 {
+    // sampleCoefficientSpline --------------------------------------------------------------------------------|
+    // Copy one coefficient window into stack arrays and sample the endpoint-secant spline.                    |
+    // --------------------------------------------------------------------------------------------------------|
     var x: [max_spline_window_points]f64 = undefined;
     var y: [max_spline_window_points]f64 = undefined;
     for (points, 0..) |point, index| {
@@ -119,6 +128,9 @@ fn sampleCoefficientSpline(
 }
 
 fn lowerBoundRowIndex(rows: []const readers.CiaAssetRow, wavelength_nm: f64) usize {
+    // lowerBoundRowIndex -------------------------------------------------------------------------------------|
+    // Return the first row index whose wavelength is not below the target wavelength.                         |
+    // --------------------------------------------------------------------------------------------------------|
     var low: usize = 0;
     var high = rows.len;
     while (low < high) {
@@ -137,6 +149,9 @@ fn interpolateCoefficientsLinear(
     right: readers.CiaAssetRow,
     wavelength_nm: f64,
 ) CiaCoefficients {
+    // interpolateCoefficientsLinear --------------------------------------------------------------------------|
+    // Linearly interpolate the CIA coefficient triplet between two neighboring rows.                          |
+    // --------------------------------------------------------------------------------------------------------|
     const span = right.wavelength_nm - left.wavelength_nm;
     if (span <= 0.0) return rowToCoefficients(left, wavelength_nm);
     const fraction = (wavelength_nm - left.wavelength_nm) / span;
@@ -154,6 +169,9 @@ fn interpolateCoefficientByKind(
     wavelength_nm: f64,
     coefficient_kind: CoefficientKind,
 ) f64 {
+    // interpolateCoefficientByKind ---------------------------------------------------------------------------|
+    // Select one linearly interpolated coefficient for the spline fallback path.                              |
+    // --------------------------------------------------------------------------------------------------------|
     return switch (coefficient_kind) {
         .a0 => interpolateCoefficientsLinear(left, right, wavelength_nm).a0,
         .a1 => interpolateCoefficientsLinear(left, right, wavelength_nm).a1,
@@ -162,6 +180,9 @@ fn interpolateCoefficientByKind(
 }
 
 fn rowToCoefficients(row: readers.CiaAssetRow, wavelength_nm: f64) CiaCoefficients {
+    // rowToCoefficients --------------------------------------------------------------------------------------|
+    // Adapt one parsed CIA asset row to the local interpolated-coefficient row.                               |
+    // --------------------------------------------------------------------------------------------------------|
     return .{
         .wavelength_nm = wavelength_nm,
         .a0 = row.a0,

@@ -231,6 +231,7 @@ pub fn fillSupportOpticsAtWavelength(
     }
 
     const rayleigh_sigma_cm2 = rayleigh.crossSectionCm2(wavelength_nm);
+    const cia_coefficients = cia_absorption.interpolateCoefficients(cia.rows, wavelength_nm);
     const collision_pair_profile = CollisionPairProfile.init(layer_grid);
     const aerosol_weight_sum_km = aerosolSupportWeightSumKm(layer_grid, aerosol);
     const aerosol_wavelength_scale = aerosolWavelengthScale(aerosol, wavelength_nm);
@@ -255,9 +256,9 @@ pub fn fillSupportOpticsAtWavelength(
             rayleigh_sigma_cm2 *
             air_density_cm3 *
             centimeters_per_kilometer;
-        const cia_sigma_cm5 = cia_absorption.sigmaAt(
+        const cia_sigma_cm5 = cia_absorption.sigmaFromCoefficients(
             cia,
-            wavelength_nm,
+            cia_coefficients,
             layer_grid.support_temperatures_k[support_index],
         );
         const cia_pair_density_cm6 = collision_pair_profile.pairDensityCm6(

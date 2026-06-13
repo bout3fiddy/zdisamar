@@ -17,7 +17,6 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     ("src/cache/solar_irradiance_memory.zig", "put"): "wp4-staged solar cache mutation surface; session runner must wire before WP4 close",
     ("src/common/math/gauss_legendre.zig", "fillDisamarDivPointsInterval"): "wp4-staged sampling quadrature helper; sampling-table runner must wire before WP4 close",
     ("src/common/worker_partition.zig", "preferredWorkerCountForCpuCount"): "worker-count oracle for preferredWorkerCount tests; production uses preferredWorkerCount",
-    ("src/optics/cia_absorption.zig", "interpolateCoefficients"): "wp4-staged optical helper; production optics runner must wire before WP4 close",
     ("src/optics/rayleigh.zig", "refractiveIndexDryAir"): "wp4-staged optical helper; production optics runner must wire before WP4 close",
     ("src/optics/rayleigh.zig", "depolarizationFactorAir"): "wp4-staged optical helper; production optics runner must wire before WP4 close",
     ("src/root.zig", "deinitO2RunTables"): "wp4-staged root surface; C API ownership tests must wire before WP4 close",
