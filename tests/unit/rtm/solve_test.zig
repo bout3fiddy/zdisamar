@@ -2,18 +2,18 @@ const std = @import("std");
 
 const internal = @import("internal");
 
-const controls = internal.transport.controls;
-const jacobian_states = internal.transport.jacobian_states;
+const controls = internal.rtm.controls;
+const jacobian_states = internal.rtm.jacobian_states;
 const layer_depths = internal.optics.layer_depths;
-const phase_basis = internal.transport.phase_basis;
+const phase_basis = internal.rtm.phase_basis;
 const phase_table = internal.setup.phase_table;
-const rows = internal.transport.rows;
-const solve = internal.transport.solve;
+const rows = internal.rtm.rows;
+const solve = internal.rtm.solve;
 const source_levels = internal.optics.source_levels;
 
 const tangent_step: f64 = 1.0e-5;
 
-test "direct surface solve ports old scalar formula and surface Jacobian" {
+test "direct surface solve ports old scalar formula without retrieval Jacobian lanes" {
     var storage = TestSolveWorkStorage{};
     var work = storage.work();
     const layers = [_]layer_depths.LayerOptics{
@@ -26,7 +26,7 @@ test "direct surface solve ports old scalar formula and surface Jacobian" {
     };
     const config = controls.SolveConfig{
         .derivative_mode = .semi_analytical,
-        .derivative_state_mask = jacobian_states.stateMask(.surface_albedo),
+        .derivative_state_mask = jacobian_states.all_states_mask,
         .controls = .{ .scattering = .none },
     };
     const result = try solve.solveReflectance(
@@ -43,15 +43,10 @@ test "direct surface solve ports old scalar formula and surface Jacobian" {
     const direct = std.math.exp(-0.2 / 0.5) * std.math.exp(-0.2 / 0.25);
 
     try std.testing.expectApproxEqAbs(0.3 * direct, result.reflectance, 1.0e-15);
-    try std.testing.expectApproxEqAbs(
-        direct,
-        jacobian_states.get(result.jacobian, .surface_albedo),
-        1.0e-15,
-    );
-    try std.testing.expectEqual(@as(f64, 0.0), jacobian_states.get(result.jacobian, .aerosol_optical_depth));
+    try std.testing.expectEqual(jacobian_states.zero(), result.jacobian);
 }
 
-test "direct surface solve respects active Jacobian mask and public clamp" {
+test "direct surface solve keeps retrieval Jacobian zero and respects public clamp" {
     const masked = solve.directSurfaceOnly(
         .{ .solar_mu = 1.0, .view_mu = 1.0 },
         0.3,
@@ -64,13 +59,13 @@ test "direct surface solve respects active Jacobian mask and public clamp" {
         3.0,
         0.0,
         .semi_analytical,
-        jacobian_states.stateMask(.surface_albedo),
+        jacobian_states.all_states_mask,
     );
 
     try std.testing.expectEqual(@as(f64, 0.3), masked.reflectance);
-    try std.testing.expectEqual(@as(f64, 0.0), jacobian_states.get(masked.jacobian, .surface_albedo));
+    try std.testing.expectEqual(jacobian_states.zero(), masked.jacobian);
     try std.testing.expectEqual(@as(f64, 2.0), clamped.reflectance);
-    try std.testing.expectEqual(@as(f64, 0.0), jacobian_states.get(clamped.jacobian, .surface_albedo));
+    try std.testing.expectEqual(jacobian_states.zero(), clamped.jacobian);
 }
 
 test "solveReflectance rejects malformed integrated and spherical direct controls" {
@@ -122,8 +117,7 @@ test "non-integrated scattering route runs Fourier surface term without allocati
         testPhase(),
         0.5,
         .{
-            .derivative_mode = .semi_analytical,
-            .derivative_state_mask = jacobian_states.stateMask(.surface_albedo),
+            .derivative_mode = .none,
             .controls = .{
                 .scattering = .single,
                 .n_streams = 8,
@@ -134,7 +128,102 @@ test "non-integrated scattering route runs Fourier surface term without allocati
     );
 
     try std.testing.expectApproxEqAbs(0.3, result.reflectance, 1.0e-14);
-    try std.testing.expect(result.jacobian[jacobian_states.stateIndex(.surface_albedo)] > 0.0);
+    try std.testing.expectEqual(jacobian_states.zero(), result.jacobian);
+}
+
+test "nadir scattering route keeps old scalar Fourier ceiling" {
+    var storage = TestSolveWorkStorage{};
+    var work = storage.work();
+    const layers = [_]layer_depths.LayerOptics{
+        .{
+            .aerosol_optical_depth = 0.02,
+            .aerosol_scattering_optical_depth = 0.01,
+            .total_optical_depth = 0.03,
+            .total_scattering_optical_depth = 0.01,
+            .single_scatter_albedo = 1.0 / 3.0,
+        },
+    };
+    const result = try solve.solveReflectance(
+        .{ .solar_mu = 0.58, .view_mu = 1.0 },
+        0.3,
+        &layers,
+        &.{},
+        &.{},
+        anisotropicPhase(),
+        0.5,
+        .{
+            .derivative_mode = .none,
+            .controls = .{
+                .scattering = .single,
+                .n_streams = 8,
+                .integrate_source_function = false,
+            },
+        },
+        &work,
+    );
+
+    try std.testing.expect(std.math.isFinite(result.reflectance));
+    try std.testing.expect(storage.plm_basis_cache_valid[0]);
+    try std.testing.expect(!storage.plm_basis_cache_valid[1]);
+    try std.testing.expect(!storage.plm_basis_cache_valid[2]);
+}
+
+test "scattering route reuses geometry and invalidates PLM rows on geometry changes" {
+    var storage = TestSolveWorkStorage{};
+    var work = storage.work();
+    const layers = [_]layer_depths.LayerOptics{
+        .{},
+    };
+    const config = controls.SolveConfig{
+        .derivative_mode = .none,
+        .controls = .{
+            .scattering = .single,
+            .n_streams = 8,
+            .integrate_source_function = false,
+        },
+    };
+
+    _ = try solve.solveReflectance(
+        .{ .solar_mu = 0.58, .view_mu = 0.64 },
+        0.3,
+        &layers,
+        &.{},
+        &.{},
+        testPhase(),
+        0.5,
+        config,
+        &work,
+    );
+    try std.testing.expect(storage.geometry_valid);
+    try std.testing.expect(storage.plm_basis_cache_valid[0]);
+
+    const sentinel_index = phase_table.coefficient_count - 1;
+    storage.plm_basis_cache_valid[sentinel_index] = true;
+    _ = try solve.solveReflectance(
+        .{ .solar_mu = 0.58, .view_mu = 0.64 },
+        0.3,
+        &layers,
+        &.{},
+        &.{},
+        testPhase(),
+        0.5,
+        config,
+        &work,
+    );
+    try std.testing.expect(storage.plm_basis_cache_valid[sentinel_index]);
+
+    _ = try solve.solveReflectance(
+        .{ .solar_mu = 0.58, .view_mu = 0.63 },
+        0.3,
+        &layers,
+        &.{},
+        &.{},
+        testPhase(),
+        0.5,
+        config,
+        &work,
+    );
+    try std.testing.expect(!storage.plm_basis_cache_valid[sentinel_index]);
 }
 
 test "integrated scattering route accepts source rows and pseudo-spherical metadata" {
@@ -164,8 +253,7 @@ test "integrated scattering route accepts source rows and pseudo-spherical metad
         testPhase(),
         0.5,
         .{
-            .derivative_mode = .semi_analytical,
-            .derivative_state_mask = jacobian_states.stateMask(.surface_albedo),
+            .derivative_mode = .none,
             .controls = .{
                 .scattering = .single,
                 .n_streams = 8,
@@ -177,9 +265,7 @@ test "integrated scattering route accepts source rows and pseudo-spherical metad
     );
 
     try std.testing.expectApproxEqAbs(0.3, result.reflectance, 1.0e-14);
-    try std.testing.expect(result.jacobian[jacobian_states.stateIndex(.surface_albedo)] > 0.0);
     try std.testing.expect(work.orders.ud_sum_local.len >= layers.len + 1);
-    try std.testing.expectEqual(@as(f64, 0.0), work.orders.ud_sum_local[0].U.col[0].get(0));
 }
 
 test "integrated scattering route propagates aerosol AOD and pressure tangents" {
@@ -315,10 +401,10 @@ test "scattering route propagates AOD tangent and rejects pressure lane" {
 
 test "solve route rows keep explicit layout" {
     const expected_work_size: usize =
-        if (@sizeOf(internal.transport.scattering_orders.OrdersWorkArrays) == 120) 368 else 360;
+        if (@sizeOf(internal.rtm.scattering_orders.OrdersWorkArrays) == 120) 376 else 368;
 
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(solve.ViewAngles));
-    try std.testing.expectEqual(@as(usize, 32), @sizeOf(solve.ReflectanceResult));
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(solve.ReflectanceResult));
     try std.testing.expectEqual(expected_work_size, @sizeOf(solve.TransportWorkArrays));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(solve.ViewAngles, "solar_mu"));
     try std.testing.expectEqual(@as(usize, 8), @offsetOf(solve.ViewAngles, "view_mu"));
@@ -330,6 +416,7 @@ test "solve route rows keep explicit layout" {
         @offsetOf(solve.TransportWorkArrays, "dynamic_attenuation_tangent_data"),
     );
     try std.testing.expectEqual(@as(usize, 216), @offsetOf(solve.TransportWorkArrays, "orders"));
+    try std.testing.expectEqual(expected_work_size - 8, @offsetOf(solve.TransportWorkArrays, "geometry_valid"));
 }
 
 // TestSolveWorkStorage -------------------------------------------------------------------------------------  |
@@ -341,7 +428,8 @@ test "solve route rows keep explicit layout" {
 // memory                                                                                                      |
 //   geometry, attenuation, RT, phase, PLM, and order rows for tiny solve tests                                |
 const TestSolveWorkStorage = struct {
-    geometry: internal.transport.gauss_angles.GaussGeometry = undefined,
+    geometry: internal.rtm.gauss_angles.GaussGeometry = undefined,
+    geometry_valid: bool = false,
     dynamic_attenuation_data: [72]f64 = undefined,
     dynamic_attenuation_tangent_data: [72]f64 = undefined,
     layer_transmittance: [12]f64 = undefined,
@@ -393,6 +481,7 @@ const TestSolveWorkStorage = struct {
             },
             .plm_basis_cache = self.plm_basis_cache[0..],
             .plm_basis_cache_valid = self.plm_basis_cache_valid[0..],
+            .geometry_valid = &self.geometry_valid,
         };
     }
 };
@@ -406,6 +495,20 @@ fn testPhase() phase_table.PhaseTable {
     return .{
         .aerosol_phase_coefficients = coefficients,
         .aerosol_phase_max_index = 0,
+        .aerosol_asymmetry_factor = 0.0,
+    };
+}
+
+fn anisotropicPhase() phase_table.PhaseTable {
+    // anisotropicPhase -------------------------------------------------------------------------------------- |
+    // Return a tiny aerosol phase row with active m=1 and m=2 terms for Fourier-ceiling tests.                |
+    // --------------------------------------------------------------------------------------------------------|
+    var coefficients = phase_table.zeroPhaseCoefficients();
+    coefficients[1] = 0.2;
+    coefficients[2] = 0.1;
+    return .{
+        .aerosol_phase_coefficients = coefficients,
+        .aerosol_phase_max_index = 2,
         .aerosol_asymmetry_factor = 0.0,
     };
 }

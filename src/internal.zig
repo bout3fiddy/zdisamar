@@ -157,8 +157,8 @@ pub const output = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// transport --------------------------------------------------------------------------------------------------|
-// Namespace-only test import wrapper for WP3 transport state modules.                                         |
+// retrieval --------------------------------------------------------------------------------------------------|
+// Namespace-only test import wrapper for WP5 retrieval state-space and result owners.                         |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 0 B (0.000 KiB), align: 1 B                                                                           |
@@ -167,19 +167,35 @@ pub const output = struct {
 //   no stored fields                                                                                          |
 //                                                                                                             |
 // footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
-pub const transport = struct {
-    pub const attenuation = @import("transport/attenuation.zig");
-    pub const controls = @import("transport/controls.zig");
-    pub const gauss_angles = @import("transport/gauss_angles.zig");
-    pub const jacobian_states = @import("transport/jacobian_states.zig");
-    pub const layer_reflect_transmit = @import("transport/layer_reflect_transmit.zig");
-    pub const matrix_12x10 = @import("transport/matrix_12x10.zig");
-    pub const phase_basis = @import("transport/phase_basis.zig");
-    pub const phase_timing = @import("transport/phase_timing.zig");
-    pub const reflectance = @import("transport/reflectance.zig");
-    pub const rows = @import("transport/rows.zig");
-    pub const scattering_orders = @import("transport/scattering_orders.zig");
-    pub const solve = @import("transport/solve.zig");
+pub const retrieval = struct {
+    pub const algebra = @import("retrieval/algebra.zig");
+    pub const root = @import("retrieval/root.zig");
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// rtm --------------------------------------------------------------------------------------------------------|
+// Namespace-only test import wrapper for WP3 RTM state modules.                                               |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 0 B (0.000 KiB), align: 1 B                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+//   no stored fields                                                                                          |
+//                                                                                                             |
+// footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
+pub const rtm = struct {
+    pub const attenuation = @import("rtm/attenuation.zig");
+    pub const controls = @import("rtm/controls.zig");
+    pub const gauss_angles = @import("rtm/gauss_angles.zig");
+    pub const jacobian_states = @import("rtm/jacobian_states.zig");
+    pub const layer_reflect_transmit = @import("rtm/layer_reflect_transmit.zig");
+    pub const matrix_12x10 = @import("rtm/matrix_12x10.zig");
+    pub const phase_basis = @import("rtm/phase_basis.zig");
+    pub const phase_timing = @import("rtm/phase_timing.zig");
+    pub const reflectance = @import("rtm/reflectance.zig");
+    pub const rows = @import("rtm/rows.zig");
+    pub const scattering_orders = @import("rtm/scattering_orders.zig");
+    pub const solve = @import("rtm/solve.zig");
 };
 // ------------------------------------------------------------------------------------------------------------|
 

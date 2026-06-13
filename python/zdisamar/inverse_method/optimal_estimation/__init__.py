@@ -23,18 +23,15 @@ from .rtm_evaluation import RtmEvaluation
 from .state_vector import (
     AEROSOL_LAYER_MID_PRESSURE_HPA,
     AEROSOL_OPTICAL_DEPTH,
-    SURFACE_ALBEDO,
     AerosolLayerMidPressure,
     AerosolOpticalDepth,
     StateVector,
     StateVectorParameter,
-    SurfaceAlbedo,
 )
 
 __all__ = [
     "AEROSOL_LAYER_MID_PRESSURE_HPA",
     "AEROSOL_OPTICAL_DEPTH",
-    "SURFACE_ALBEDO",
     "AerosolLayerMidPressure",
     "AerosolOpticalDepth",
     "FastCorrection",
@@ -47,7 +44,6 @@ __all__ = [
     "Result",
     "StateVector",
     "StateVectorParameter",
-    "SurfaceAlbedo",
     "WavelengthGridMismatchError",
     "attach_diagnosis",
     "attach_final_evaluation",

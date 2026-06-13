@@ -10,7 +10,7 @@ const jacobian_states = @import("jacobian_states.zig");
 //   `src/forward_model/radiative_transfer/root.zig` RadiativeTransferControls,                                |
 //   RadiativeTransferPerformanceThresholds, SolveConfig, and prepareSolveConfig.                              |
 //   The Jacobian mask field replaces the old SolveConfig derivative_state_mask field and uses the state order |
-//   in `transport/jacobian_states.zig`.                                                                       |
+//   in `rtm/jacobian_states.zig`.                                                                             |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const PrepareError = error{

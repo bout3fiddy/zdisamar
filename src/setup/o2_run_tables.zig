@@ -16,26 +16,28 @@ const Allocator = std.mem.Allocator;
 // Package boundary for setup tables below radiance math.                                                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 1936 B (1.891 KiB), align: 8 B                                                                        |
+// size: 2024 B (1.977 KiB), align: 8 B                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
 // [   0.. 399] layers    : LayerGrid                                                                          |
-// [ 400.. 511] lines     : O2LineTable                                                                        |
-// [ 512.. 535] cia       : O2CiaTable                                                                         |
-// [ 536.. 615] aerosol   : AerosolLayerTable                                                                  |
-// [ 616..1839] phase     : PhaseTable                                                                         |
-// [1840..1903] instrument: InstrumentTable                                                                    |
-// [1904..1935] solar     : SolarTable                                                                         |
+// [ 400.. 487] quadrature: LayerQuadrature                                                                    |
+// [ 488.. 599] lines     : O2LineTable                                                                        |
+// [ 600.. 623] cia       : O2CiaTable                                                                         |
+// [ 624.. 703] aerosol   : AerosolLayerTable                                                                  |
+// [ 704..1927] phase     : PhaseTable                                                                         |
+// [1928..1991] instrument: InstrumentTable                                                                    |
+// [1992..2023] solar     : SolarTable                                                                         |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   This owner groups table families only for top-level setup/run functions. Later optics/transport code      |
 //   must receive the narrow table slices it needs rather than this full bundle.                               |
 //                                                                                                             |
 // ownership                                                                                                   |
-//   layers, lines, cia, and solar own out-of-line arrays. Aerosol, phase, and instrument tables are inline    |
-//   scalar/control rows.                                                                                      |
+//   layers, quadrature, lines, cia, and solar own out-of-line arrays. Aerosol, phase, and instrument tables  |
+//   are inline scalar/control rows.                                                                           |
 pub const O2RunTables = struct {
     layers: atmosphere_layers.LayerGrid,
+    quadrature: atmosphere_layers.LayerQuadrature,
     lines: line_tables.O2LineTable,
     cia: cia_table.O2CiaTable,
     aerosol: aerosol_tables.AerosolLayerTable,
@@ -51,6 +53,7 @@ pub const O2RunTables = struct {
         self.cia.deinit(allocator);
         self.lines.deinit(allocator);
         self.layers.deinit(allocator);
+        self.quadrature.deinit(allocator);
         self.* = undefined;
     }
 };
@@ -62,7 +65,9 @@ pub fn buildO2RunTables(allocator: Allocator, case: o2_case.O2Case) !O2RunTables
     // --------------------------------------------------------------------------------------------------------|
     try validate.o2Case(case);
 
-    var layers = try atmosphere_layers.build(allocator, case);
+    var quadrature = try atmosphere_layers.buildLayerQuadrature(allocator, case);
+    errdefer quadrature.deinit(allocator);
+    var layers = try atmosphere_layers.buildWithQuadrature(allocator, case, quadrature);
     errdefer layers.deinit(allocator);
     var lines = try line_tables.build(allocator, case);
     errdefer lines.deinit(allocator);
@@ -73,6 +78,7 @@ pub fn buildO2RunTables(allocator: Allocator, case: o2_case.O2Case) !O2RunTables
 
     return .{
         .layers = layers,
+        .quadrature = quadrature,
         .lines = lines,
         .cia = cia,
         .aerosol = aerosol_tables.build(case),

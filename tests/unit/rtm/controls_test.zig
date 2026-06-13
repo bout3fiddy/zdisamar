@@ -2,8 +2,8 @@ const std = @import("std");
 
 const internal = @import("internal");
 
-const controls = internal.transport.controls;
-const jacobian_states = internal.transport.jacobian_states;
+const controls = internal.rtm.controls;
+const jacobian_states = internal.rtm.jacobian_states;
 
 // ControlLayoutEvidence --------------------------------------------------------------------------------------|
 // Compile-time layout pins for transport control rows copied from the old RTM control contract.               |

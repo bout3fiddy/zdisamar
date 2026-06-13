@@ -23,18 +23,18 @@ test {
     _ = @import("optics/curved_sun_path_test.zig");
     _ = @import("optics/layer_depths_test.zig");
     _ = @import("optics/source_levels_test.zig");
-    _ = @import("transport/attenuation_test.zig");
-    _ = @import("transport/controls_test.zig");
-    _ = @import("transport/gauss_angles_test.zig");
-    _ = @import("transport/jacobian_states_test.zig");
-    _ = @import("transport/layer_reflect_transmit_test.zig");
-    _ = @import("transport/matrix_12x10_test.zig");
-    _ = @import("transport/phase_basis_test.zig");
-    _ = @import("transport/phase_timing_test.zig");
-    _ = @import("transport/reflectance_test.zig");
-    _ = @import("transport/rows_test.zig");
-    _ = @import("transport/scattering_orders_test.zig");
-    _ = @import("transport/solve_test.zig");
+    _ = @import("rtm/attenuation_test.zig");
+    _ = @import("rtm/controls_test.zig");
+    _ = @import("rtm/gauss_angles_test.zig");
+    _ = @import("rtm/jacobian_states_test.zig");
+    _ = @import("rtm/layer_reflect_transmit_test.zig");
+    _ = @import("rtm/matrix_12x10_test.zig");
+    _ = @import("rtm/phase_basis_test.zig");
+    _ = @import("rtm/phase_timing_test.zig");
+    _ = @import("rtm/reflectance_test.zig");
+    _ = @import("rtm/rows_test.zig");
+    _ = @import("rtm/scattering_orders_test.zig");
+    _ = @import("rtm/solve_test.zig");
     _ = @import("spectrum/instrument_average_test.zig");
     _ = @import("spectrum/radiance_results_test.zig");
     _ = @import("spectrum/radiance_wavelengths_test.zig");
@@ -45,6 +45,7 @@ test {
     _ = @import("output/instrument_response_test.zig");
     _ = @import("output/o2_line_contributions_test.zig");
     _ = @import("output/o2_o2_cia_test.zig");
+    _ = @import("retrieval/root_test.zig");
     _ = @import("validation/o2a_band_metrics_test.zig");
     _ = @import("instrumentation/facades_test.zig");
 }
@@ -66,6 +67,12 @@ test "public root exposes setup session and spectrum surface" {
     try std.testing.expect(@hasDecl(zdisamar, "O2O2CIARow"));
     try std.testing.expect(@hasDecl(zdisamar, "O2Spectrum"));
     try std.testing.expect(@hasDecl(zdisamar, "O2SpectrumRunResult"));
+    try std.testing.expect(@hasDecl(zdisamar, "optimal_estimation"));
+    try std.testing.expect(@hasDecl(zdisamar, "RetrievalStateSpec"));
+    try std.testing.expect(@hasDecl(zdisamar, "RetrievalPressureAltitudeProfile"));
+    try std.testing.expect(@hasDecl(zdisamar, "RetrievalResult"));
+    try std.testing.expect(@hasDecl(zdisamar, "RetrievalBatchResult"));
+    try std.testing.expect(@hasDecl(zdisamar, "RetrievalFastmodeBatchResult"));
     try std.testing.expect(@hasDecl(zdisamar, "defaultO2Case"));
     try std.testing.expect(@hasDecl(zdisamar, "prepareO2A"));
     try std.testing.expect(@hasDecl(zdisamar, "initO2SessionMemory"));
@@ -126,7 +133,6 @@ test "runO2AWithSessionMemory reuses profile-line rows across repeated case runs
 
     const allocator = std.testing.allocator;
     const zdisamar = internal.public;
-    const jacobian_states = internal.transport.jacobian_states;
 
     var case = zdisamar.defaultO2Case();
     case.spectral_grid = .{
@@ -141,8 +147,8 @@ test "runO2AWithSessionMemory reuses profile-line rows across repeated case runs
     defer session.deinit(allocator);
 
     const solve_config = zdisamar.SolveConfig{
-        .derivative_mode = .semi_analytical,
-        .derivative_state_mask = jacobian_states.stateMask(.surface_albedo),
+        .derivative_mode = .none,
+        .derivative_state_mask = 0,
         .controls = .{
             .scattering = .none,
             .n_streams = @intCast(case.rtm.stream_count),

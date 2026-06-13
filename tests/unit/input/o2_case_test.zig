@@ -45,7 +45,7 @@ test "Python native O2 case JSON round-trips into typed controls" {
         parsed.case.observation.solar_reference.path,
     );
     try std.testing.expectEqual(
-        internal.transport.controls.PerformanceThresholds.o2a_default,
+        internal.rtm.controls.PerformanceThresholds.o2a_default,
         parsed.case.rtm.performance_thresholds,
     );
 }
@@ -98,23 +98,52 @@ test "Python native fast RTM thresholds are consumed by solve config" {
     );
 }
 
-test "unsupported JSON route controls fail at the input boundary" {
+test "Python native measured wavelengths are consumed as sparse product axes" {
     const allocator = std.testing.allocator;
 
     const rendered = try internal.input.json.renderDefaultO2CaseJson(allocator);
     defer allocator.free(rendered);
-    const measured_wavelengths = try std.mem.replaceOwned(
+
+    const sparse_count = try std.mem.replaceOwned(
+        u8,
+        allocator,
+        rendered,
+        "\"sample_count\":701",
+        "\"sample_count\":3",
+    );
+    defer allocator.free(sparse_count);
+    const sparse_axis = try std.mem.replaceOwned(
+        u8,
+        allocator,
+        sparse_count,
+        "\"measured_wavelengths_nm\":[]",
+        "\"measured_wavelengths_nm\":[755.0,765.5,776.0]",
+    );
+    defer allocator.free(sparse_axis);
+
+    var parsed = try internal.input.json.parseO2CaseJson(allocator, sparse_axis);
+    defer parsed.deinit();
+
+    try std.testing.expectEqual(@as(usize, 3), parsed.case.spectral_grid.sample_count);
+    try std.testing.expectEqual(@as(usize, 3), parsed.case.observation.measured_wavelengths_nm.len);
+    try std.testing.expectApproxEqAbs(
+        765.5,
+        parsed.case.observation.measured_wavelengths_nm[1],
+        0.0,
+    );
+
+    const mismatched_axis = try std.mem.replaceOwned(
         u8,
         allocator,
         rendered,
         "\"measured_wavelengths_nm\":[]",
         "\"measured_wavelengths_nm\":[760.0]",
     );
-    defer allocator.free(measured_wavelengths);
+    defer allocator.free(mismatched_axis);
 
     try std.testing.expectError(
-        error.UnsupportedJsonInput,
-        internal.input.json.parseO2CaseJson(allocator, measured_wavelengths),
+        error.InvalidControl,
+        internal.input.json.parseO2CaseJson(allocator, mismatched_axis),
     );
 }
 

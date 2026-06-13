@@ -2,9 +2,9 @@ const std = @import("std");
 
 const radiance_wavelengths = @import("radiance_wavelengths.zig");
 const sampling_table = @import("sampling_table.zig");
-const controls = @import("../transport/controls.zig");
-const jacobian_states = @import("../transport/jacobian_states.zig");
-const solve = @import("../transport/solve.zig");
+const controls = @import("../rtm/controls.zig");
+const jacobian_states = @import("../rtm/jacobian_states.zig");
+const solve = @import("../rtm/solve.zig");
 
 pub const Error = error{
     ShapeMismatch,
@@ -32,11 +32,11 @@ pub const Error = error{
 // One high-resolution or nominal radiance result with fixed Jacobian lanes.                                    |
 //                                                                                                              |
 // layout(64-bit)                                                                                               |
-// size: 32 B (0.031 KiB), align: 8 B                                                                           |
+// size: 24 B (0.023 KiB), align: 8 B                                                                           |
 //                                                                                                              |
 // memory                                                                                                       |
 // [ 0.. 7] radiance : f64                                                                                      |
-// [ 8..31] jacobian : [3]f64                                                                                   |
+// [ 8..23] jacobian : [2]f64                                                                                   |
 pub const RadianceResult = struct {
     radiance: f64 = 0.0,
     jacobian: jacobian_states.Vector = jacobian_states.zero(),
@@ -148,5 +148,5 @@ pub fn integratePrefetchedRadianceAtNominal(
 }
 
 comptime {
-    std.debug.assert(@sizeOf(RadianceResult) == 32);
+    std.debug.assert(@sizeOf(RadianceResult) == 24);
 }

@@ -17,14 +17,15 @@ const fixed_rules = buildFixedRules();
 //                                                                                                             |
 // main paths                                                                                                  |
 //   rule                          returns comptime-generated fixed rules for ordinary orders 1 through 10     |
-//   fillNodesAndWeights           computes ordinary symmetric nodes and weights from Legendre roots           |
-//   fillDisamarDivPoints01        computes DISAMAR unit-interval division points and weights                  |
-//   fillDisamarDivPointsIntervalNodes computes DISAMAR interval nodes without weights                         |
+//   fillCanonicalNodesAndWeights  computes ordinary symmetric nodes and weights from Legendre roots           |
+//   fillCanonicalDisamarDivPointNodes computes DISAMAR node-only roots on [-1, 1]                             |
+//   scaleIntervalNodes            applies affine interval scaling to retained canonical nodes                 |
 //                                                                                                             |
 // route choice                                                                                                |
 //   Small ordinary orders use rule() when the caller wants a fixed table. Larger ordinary orders use Newton   |
-//   root solves. DISAMAR paths build a tridiagonal system and diagonalize it with gausq2DisamarImpl because   |
-//   last-bit node differences are visible in steep O2 A high-resolution support samples.                      |
+//   root solves. DISAMAR canonical paths build a tridiagonal system and diagonalize it with                  |
+//   gausq2DisamarImpl because last-bit node differences are visible in steep O2 A high-resolution support    |
+//   samples. Callers that reuse layer shapes should retain canonical rows by order and rescale them only.     |
 //                                                                                                             |
 // hot path                                                                                                    |
 //   Most calls prepare a row, interval, or cached geometry plan before LABOS inner transport. Callers pass    |
@@ -56,16 +57,16 @@ pub const Rule = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn fillNodesAndWeights(
+pub fn fillCanonicalNodesAndWeights(
     order: u32,
     nodes_out: []f64,
     weights_out: []f64,
 ) error{InvalidOrder}!void {
-    // fillNodesAndWeights ------------------------------------------------------------------------------------|
-    // Builds one symmetric Gauss-Legendre rule for the requested order.                                       |
+    // fillCanonicalNodesAndWeights ---------------------------------------------------------------------------|
+    // Builds one order-only symmetric Gauss-Legendre rule on [-1, 1].                                        |
     //                                                                                                         |
     // hot path                                                                                                |
-    //   repeated : every dynamic quadrature build for integration or RTM subgrids                             |
+    //   repeated : every dynamic quadrature build for integration or RTM subgrids unless retained by setup    |
     //   costly   : Newton solve for each mirrored Legendre root                                               |
     //   memory   : caller-owned output slices; no heap allocation                                             |
     //                                                                                                         |
@@ -76,6 +77,11 @@ pub fn fillNodesAndWeights(
     if (order == 0 or nodes_out.len < order or weights_out.len < order) {
         return error.InvalidOrder;
     }
+
+    const empty_order = order == 0;
+    const order_too_large = order > max_disamar_division_points;
+    const missing_nodes = nodes_out.len < order;
+    if (empty_order or order_too_large or missing_nodes) return error.InvalidOrder;
 
     const order_usize: usize = @intCast(order);
     const half_count = (order_usize + 1) / 2;
@@ -108,6 +114,17 @@ pub fn fillNodesAndWeights(
         nodes_out[mirrored_index] = root;
         weights_out[mirrored_index] = weight;
     }
+}
+
+pub fn fillNodesAndWeights(
+    order: u32,
+    nodes_out: []f64,
+    weights_out: []f64,
+) error{InvalidOrder}!void {
+    // fillNodesAndWeights ------------------------------------------------------------------------------------|
+    // Backward-compatible ordinary rule fill; callers that reuse an order should retain the canonical row.   |
+    // --------------------------------------------------------------------------------------------------------|
+    try fillCanonicalNodesAndWeights(order, nodes_out, weights_out);
 }
 
 pub const max_disamar_division_points: usize = 256;
@@ -153,9 +170,66 @@ pub fn fillDisamarDivPointsIntervalNodes(
     //   gausq2DisamarNodes                                                                                    |
     // --------------------------------------------------------------------------------------------------------|
 
+    const order_usize: usize = @intCast(order);
+    var canonical_nodes: [max_disamar_division_points]f64 = undefined;
+    try fillCanonicalDisamarDivPointNodes(order, canonical_nodes[0..order_usize]);
+    try scaleIntervalNodes(canonical_nodes[0..order_usize], a0, b0, nodes_out);
+}
+
+pub fn fillCanonicalDisamarDivPointNodes(
+    order: u32,
+    nodes_out: []f64,
+) error{InvalidOrder}!void {
+    // fillCanonicalDisamarDivPointNodes ----------------------------------------------------------------------|
+    // Builds DISAMAR node-only division roots on [-1, 1] for one structural order.                           |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   repeated : vertical-grid preparation when callers do not retain order-keyed rows                      |
+    //   costly   : tridiagonal eigen solve without first-row tracking                                         |
+    //   memory   : two bounded stack arrays, each max 2.000 KiB                                               |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   This is the invariant portion of fillDisamarDivPointsIntervalNodes. OE pressure iterations reuse     |
+    //   these roots and only reapply scaleIntervalNodes to the moved altitude bounds.                         |
+    // --------------------------------------------------------------------------------------------------------|
+    const empty_order = order == 0;
+    const order_too_large = order > max_disamar_division_points;
+    const missing_nodes = nodes_out.len < order;
+    if (empty_order or order_too_large or missing_nodes) return error.InvalidOrder;
+
+    const order_usize: usize = @intCast(order);
+    var diagonal: [max_disamar_division_points]f64 = undefined;
+    var off_diagonal: [max_disamar_division_points]f64 = undefined;
+
+    initDisamarTridiagonal(order_usize, &diagonal, &off_diagonal);
+    try gausq2DisamarNodes(
+        diagonal[0..order_usize],
+        off_diagonal[0..order_usize],
+    );
+
+    @memcpy(nodes_out[0..order_usize], diagonal[0..order_usize]);
+}
+
+pub fn scaleIntervalNodes(
+    canonical_nodes: []const f64,
+    a0: f64,
+    b0: f64,
+    nodes_out: []f64,
+) error{InvalidOrder}!void {
+    // scaleIntervalNodes -------------------------------------------------------------------------------------|
+    // Apply the old DISAMAR affine interval map to canonical node-only roots.                                |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   node = canonical_node * ((b0 - a0) / 2) + (a0 + ((b0 - a0) / 2))                                      |
+    // --------------------------------------------------------------------------------------------------------|
+    if (nodes_out.len < canonical_nodes.len) return error.InvalidOrder;
+
     const span = b0 - a0;
     const half_span = span / 2.0;
-    try fillDisamarDivPointsScaled(order, a0 + half_span, half_span, nodes_out, null, 0.0);
+    const node_offset = a0 + half_span;
+    for (canonical_nodes, 0..) |node, index| {
+        nodes_out[index] = node * half_span + node_offset;
+    }
 }
 
 fn fillDisamarDivPointsScaled(

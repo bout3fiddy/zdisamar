@@ -1,5 +1,5 @@
 const std = @import("std");
-const transport_controls = @import("../transport/controls.zig");
+const transport_controls = @import("../rtm/controls.zig");
 
 // o2_case.zig ----------------------------------------------------------------------------------------------- |
 // Typed O2 A product-case controls consumed by setup tables and forward runs.                                 |
@@ -181,7 +181,7 @@ pub const AerosolControls = struct {
 // Instrument and high-resolution sampling controls for setup.                                                 |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 112 B (0.109 KiB), align: 8 B                                                                         |
+// size: 128 B (0.125 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0.. 15] instrument_name             : []const u8                                                         |
@@ -192,6 +192,10 @@ pub const AerosolControls = struct {
 // [ 48.. 55] strong_line_min_divisions   : usize                                                              |
 // [ 56.. 63] strong_line_max_divisions   : usize                                                              |
 // [ 64..111] solar_reference             : Asset                                                              |
+// [112..127] measured_wavelengths_nm     : []const f64                                                        |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   measured_wavelengths_nm borrows parser-owned JSON rows for sparse fastmode product grids.                 |
 pub const ObservationControls = struct {
     instrument_name: []const u8,
     instrument_line_fwhm_nm: f64,
@@ -201,6 +205,7 @@ pub const ObservationControls = struct {
     strong_line_min_divisions: usize,
     strong_line_max_divisions: usize,
     solar_reference: Asset,
+    measured_wavelengths_nm: []const f64 = &.{},
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -269,7 +274,7 @@ pub const RtmControls = struct {
 // Borrowed O2 A setup row.                                                                                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 688 B (0.672 KiB), align: 8 B                                                                         |
+// size: 704 B (0.688 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0.. 15] id           : []const u8                                                                        |
@@ -278,13 +283,13 @@ pub const RtmControls = struct {
 // [ 48..143] atmosphere   : AtmosphereControls                                                                |
 // [144..175] geometry     : GeometryControls                                                                  |
 // [176..255] aerosol      : AerosolControls                                                                   |
-// [256..367] observation  : ObservationControls                                                               |
-// [368..551] line_gas     : LineGasControls                                                                   |
-// [552..607] cia          : CiaControls                                                                       |
-// [608..687] rtm          : RtmControls                                                                       |
+// [256..383] observation  : ObservationControls                                                               |
+// [384..567] line_gas     : LineGasControls                                                                   |
+// [568..623] cia          : CiaControls                                                                       |
+// [624..703] rtm          : RtmControls                                                                       |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   id, asset strings, isotope slices, and interval slices are borrowed; table builders own loaded rows.      |
+//   id, asset strings, isotope/interval/wavelength slices are borrowed; table builders own loaded rows.       |
 pub const O2Case = struct {
     id: []const u8,
     spectral_grid: SpectralGrid,

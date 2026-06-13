@@ -1011,12 +1011,22 @@ pub fn gaussianBlockTrace(n: usize, n_gauss: usize, matrix: *const rows.Mat) f64
     // provenance                                                                                              |
     //   Ports old `layers.zig` `gaussTrace`.                                                                  |
     //                                                                                                         |
-    // Fixed n=12, n_gauss=10 uses matrix_12x10.gaussianTrace12x10.                                            |
+    // Fixed n=12, n_gauss=10 uses literal row-major diagonal indexes: k*12 + k = 13*k.                        |
     // Generic stream counts use k*n + k.                                                                      |
     // --------------------------------------------------------------------------------------------------------|
 
     if (n == rows.max_stream_count and n_gauss == rows.max_gauss) {
-        return matrix12.gaussianTrace12x10(matrix);
+        var trace = matrix.data[0];
+        trace += matrix.data[13];
+        trace += matrix.data[26];
+        trace += matrix.data[39];
+        trace += matrix.data[52];
+        trace += matrix.data[65];
+        trace += matrix.data[78];
+        trace += matrix.data[91];
+        trace += matrix.data[104];
+        trace += matrix.data[117];
+        return trace;
     }
 
     var trace: f64 = 0.0;

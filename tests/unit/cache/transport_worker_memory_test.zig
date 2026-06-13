@@ -6,7 +6,7 @@ const internal = @import("internal");
 const transport_worker_memory = internal.cache.transport_worker_memory;
 
 test "TransportWorkerMemory layout matches LABOS worker owner contract" {
-    try std.testing.expectEqual(@as(usize, 3264), @sizeOf(transport_worker_memory.TransportWorkerMemory));
+    try std.testing.expectEqual(@as(usize, 3272), @sizeOf(transport_worker_memory.TransportWorkerMemory));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(transport_worker_memory.TransportWorkerMemory));
     try std.testing.expectEqual(
         @as(usize, 0),
@@ -19,6 +19,10 @@ test "TransportWorkerMemory layout matches LABOS worker owner contract" {
     try std.testing.expectEqual(
         @as(usize, 432),
         @offsetOf(transport_worker_memory.TransportWorkerMemory, "cached_geometry"),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 3264),
+        @offsetOf(transport_worker_memory.TransportWorkerMemory, "cached_geometry_valid"),
     );
 }
 
@@ -76,6 +80,7 @@ test "TransportWorkerMemory reserves active transport prefixes without physics i
     try std.testing.expectEqual(@as(usize, 4), solve_work.orders.ud.len);
     try std.testing.expectEqual(@as(usize, 4), solve_work.orders.ud_sum_local.len);
     try std.testing.expectEqual(@as(usize, 3), solve_work.plm_basis_cache.len);
+    try std.testing.expectEqual(&memory.cached_geometry_valid, solve_work.geometry_valid);
 }
 
 test "TransportWorkerMemory rejects oversized borrowed prefixes" {
@@ -88,5 +93,5 @@ test "TransportWorkerMemory rejects oversized borrowed prefixes" {
 
 test "TransportWorkerMemory size is stable across build modes" {
     _ = builtin;
-    try std.testing.expectEqual(@as(usize, 3264), @sizeOf(transport_worker_memory.TransportWorkerMemory));
+    try std.testing.expectEqual(@as(usize, 3272), @sizeOf(transport_worker_memory.TransportWorkerMemory));
 }

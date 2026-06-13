@@ -2,14 +2,14 @@ const std = @import("std");
 const builtin = @import("builtin");
 const internal = @import("internal");
 
-const controls = internal.transport.controls;
-const jacobian_states = internal.transport.jacobian_states;
+const controls = internal.rtm.controls;
+const jacobian_states = internal.rtm.jacobian_states;
 const layer_depths = internal.optics.layer_depths;
 const radiance_results = internal.spectrum.radiance_results;
 const radiance_wavelengths = internal.spectrum.radiance_wavelengths;
 const readers = internal.assets.readers;
 const sampling_table = internal.spectrum.sampling_table;
-const solve = internal.transport.solve;
+const solve = internal.rtm.solve;
 const solar_lookup = internal.spectrum.solar_lookup;
 const solar_table = internal.setup.solar_table;
 const spectrum_run = internal.spectrum.spectrum_run;
@@ -78,8 +78,8 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
         .relative_azimuth_rad = 0.35,
     };
     const solve_config = controls.SolveConfig{
-        .derivative_mode = .semi_analytical,
-        .derivative_state_mask = jacobian_states.stateMask(.surface_albedo),
+        .derivative_mode = .none,
+        .derivative_state_mask = 0,
         .controls = .{
             .scattering = .none,
             .integrate_source_function = false,
@@ -140,7 +140,6 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
     try std.testing.expectApproxEqAbs(expected.radiance, actual.radiance, 1.0e-14);
     try std.testing.expectApproxEqAbs(expected.jacobian[0], actual.jacobian[0], 1.0e-14);
     try std.testing.expectApproxEqAbs(0.0, actual.jacobian[1], 0.0);
-    try std.testing.expectApproxEqAbs(0.0, actual.jacobian[2], 0.0);
     try std.testing.expectApproxEqAbs(
         expected_layers[0].total_optical_depth,
         actual_layers[0].total_optical_depth,
@@ -330,25 +329,24 @@ test "radianceAtWavelength matches old-route Stage 2 transport probes" {
         try std.testing.expectApproxEqRel(expected.radiance, actual.radiance, 1.0e-13);
         try std.testing.expectApproxEqRel(
             expected.aerosol_optical_depth_radiance_jacobian,
-            actual.jacobian[1],
+            actual.jacobian[0],
             stage2_radiance_jacobian_relative_tolerance,
         );
         try std.testing.expectApproxEqRel(
             expected.aerosol_layer_mid_pressure_radiance_jacobian,
-            actual.jacobian[2],
+            actual.jacobian[1],
             stage2_radiance_jacobian_relative_tolerance,
         );
         try std.testing.expectApproxEqAbs(
             expected.aerosol_optical_depth_reflectance_jacobian,
-            actual.jacobian[1] / scale,
+            actual.jacobian[0] / scale,
             1.0e-13,
         );
         try std.testing.expectApproxEqAbs(
             expected.aerosol_layer_mid_pressure_reflectance_jacobian,
-            actual.jacobian[2] / scale,
+            actual.jacobian[1] / scale,
             1.0e-13,
         );
-        try std.testing.expectApproxEqAbs(0.0, actual.jacobian[0], 0.0);
     }
 }
 
@@ -564,14 +562,6 @@ test "runO2ASpectrum matches old-route Stage 3 full spectrum" {
             jacobian[index][jacobian_states.stateIndex(.aerosol_layer_mid_pressure_hpa)],
             1.0e-13,
         );
-        try expectStage3ApproxAbs(
-            "surface_albedo_reflectance_jacobian",
-            index,
-            expected.wavelength_nm[index],
-            0.0,
-            jacobian[index][jacobian_states.stateIndex(.surface_albedo)],
-            0.0,
-        );
     }
 }
 
@@ -647,8 +637,8 @@ test "runO2ASpectrum assembles direct-route product reflectance across workers" 
     const angles = solve.ViewAngles{ .solar_mu = 0.62, .view_mu = 0.48 };
     const surface_albedo = 0.35;
     const solve_config = controls.SolveConfig{
-        .derivative_mode = .semi_analytical,
-        .derivative_state_mask = jacobian_states.stateMask(.surface_albedo),
+        .derivative_mode = .none,
+        .derivative_state_mask = 0,
         .controls = .{ .scattering = .none, .integrate_source_function = false },
     };
 
@@ -721,7 +711,6 @@ test "runO2ASpectrum assembles direct-route product reflectance across workers" 
             1.0e-14,
         );
         try std.testing.expectApproxEqAbs(0.0, jacobian[wavelength_index][1], 0.0);
-        try std.testing.expectApproxEqAbs(0.0, jacobian[wavelength_index][2], 0.0);
     }
 
     try std.testing.expectEqual(@as(usize, 2), summary.sample_count);
@@ -768,9 +757,9 @@ test "gatherProductRows gathers radiance irradiance and active Jacobian lanes" {
         .{ .start = 1 },
     };
     var dense = [_]radiance_results.RadianceResult{
-        .{ .radiance = 10.0, .jacobian = .{ 1.0, 10.0, 100.0 } },
-        .{ .radiance = 20.0, .jacobian = .{ 2.0, 20.0, 200.0 } },
-        .{ .radiance = 30.0, .jacobian = .{ 3.0, 30.0, 300.0 } },
+        .{ .radiance = 10.0, .jacobian = .{ 1.0, 100.0 } },
+        .{ .radiance = 20.0, .jacobian = .{ 2.0, 200.0 } },
+        .{ .radiance = 30.0, .jacobian = .{ 3.0, 300.0 } },
     };
     var solar_rows = [_]readers.SolarAssetRow{
         .{ .wavelength_nm = 759.0, .irradiance = 100.0 },
@@ -791,8 +780,7 @@ test "gatherProductRows gathers radiance irradiance and active Jacobian lanes" {
     try spectrum_run.gatherProductRows(
         .{
             .derivative_mode = .semi_analytical,
-            .derivative_state_mask = jacobian_states.stateMask(.surface_albedo) |
-                jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa),
+            .derivative_state_mask = jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa),
         },
         table,
         .{
@@ -811,11 +799,10 @@ test "gatherProductRows gathers radiance irradiance and active Jacobian lanes" {
     try std.testing.expectApproxEqAbs(760.0, out_wavelengths[0], 0.0);
     try std.testing.expectApproxEqAbs(761.0, out_wavelengths[1], 0.0);
     try std.testing.expectApproxEqAbs(20.0, out_radiance[0].radiance, 0.0);
-    try std.testing.expectEqual([3]f64{ 2.0, 20.0, 200.0 }, out_radiance[0].jacobian);
+    try std.testing.expectEqual(jacobian_states.Vector{ 2.0, 200.0 }, out_radiance[0].jacobian);
     try std.testing.expectApproxEqAbs(25.0, out_radiance[1].radiance, 0.0);
-    try std.testing.expectApproxEqAbs(2.5, out_radiance[1].jacobian[0], 0.0);
-    try std.testing.expectApproxEqAbs(0.0, out_radiance[1].jacobian[1], 0.0);
-    try std.testing.expectApproxEqAbs(250.0, out_radiance[1].jacobian[2], 0.0);
+    try std.testing.expectApproxEqAbs(0.0, out_radiance[1].jacobian[0], 0.0);
+    try std.testing.expectApproxEqAbs(250.0, out_radiance[1].jacobian[1], 0.0);
     try std.testing.expectApproxEqAbs(200.0, out_irradiance[0], 0.0);
     try std.testing.expectApproxEqAbs(425.0, out_irradiance[1], 0.0);
     try std.testing.expectEqual(@as(u32, 2), solar_memory.values.count());
@@ -892,12 +879,11 @@ test "gatherProductRows resets stale solar memory and rejects malformed shapes" 
 test "postprocessAndAssembleProductRows carries integrated radiance irradiance and Jacobians" {
     const solve_config: controls.SolveConfig = .{
         .derivative_mode = .semi_analytical,
-        .derivative_state_mask = jacobian_states.stateMask(.surface_albedo) |
-            jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa),
+        .derivative_state_mask = jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa),
     };
     const raw_radiance = [_]radiance_results.RadianceResult{
-        .{ .radiance = 10.0, .jacobian = .{ 1.0, 10.0, 100.0 } },
-        .{ .radiance = 20.0, .jacobian = .{ 2.0, 20.0, 200.0 } },
+        .{ .radiance = 10.0, .jacobian = .{ 1.0, 100.0 } },
+        .{ .radiance = 20.0, .jacobian = .{ 2.0, 200.0 } },
     };
     const raw_irradiance = [_]f64{ 100.0, 200.0 };
     var out_radiance: [2]radiance_results.RadianceResult = undefined;
@@ -925,18 +911,16 @@ test "postprocessAndAssembleProductRows carries integrated radiance irradiance a
     const row0_scale = std.math.pi / (52.0 * 0.25);
     const row1_scale = std.math.pi / (102.0 * 0.25);
     try std.testing.expectApproxEqAbs(21.0, out_radiance[0].radiance, 0.0);
-    try std.testing.expectEqual([3]f64{ 2.0, 0.0, 200.0 }, out_radiance[0].jacobian);
+    try std.testing.expectEqual(jacobian_states.Vector{ 0.0, 200.0 }, out_radiance[0].jacobian);
     try std.testing.expectApproxEqAbs(41.0, out_radiance[1].radiance, 0.0);
-    try std.testing.expectEqual([3]f64{ 4.0, 0.0, 400.0 }, out_radiance[1].jacobian);
+    try std.testing.expectEqual(jacobian_states.Vector{ 0.0, 400.0 }, out_radiance[1].jacobian);
     try std.testing.expectEqual([2]f64{ 52.0, 102.0 }, out_irradiance);
     try std.testing.expectApproxEqAbs(21.0 * row0_scale, out_reflectance[0], 1.0e-14);
     try std.testing.expectApproxEqAbs(41.0 * row1_scale, out_reflectance[1], 1.0e-14);
-    try std.testing.expectApproxEqAbs(2.0 * row0_scale, out_jacobian[0][0], 1.0e-14);
-    try std.testing.expectApproxEqAbs(0.0, out_jacobian[0][1], 0.0);
-    try std.testing.expectApproxEqAbs(200.0 * row0_scale, out_jacobian[0][2], 1.0e-14);
-    try std.testing.expectApproxEqAbs(4.0 * row1_scale, out_jacobian[1][0], 1.0e-14);
-    try std.testing.expectApproxEqAbs(0.0, out_jacobian[1][1], 0.0);
-    try std.testing.expectApproxEqAbs(400.0 * row1_scale, out_jacobian[1][2], 1.0e-14);
+    try std.testing.expectApproxEqAbs(0.0, out_jacobian[0][0], 0.0);
+    try std.testing.expectApproxEqAbs(200.0 * row0_scale, out_jacobian[0][1], 1.0e-14);
+    try std.testing.expectApproxEqAbs(0.0, out_jacobian[1][0], 0.0);
+    try std.testing.expectApproxEqAbs(400.0 * row1_scale, out_jacobian[1][1], 1.0e-14);
     try std.testing.expectEqual(@as(usize, 2), summary.sample_count);
     try std.testing.expectApproxEqAbs(out_reflectance[0] + out_reflectance[1], summary.reflectance_sum, 1.0e-14);
 }
@@ -944,13 +928,13 @@ test "postprocessAndAssembleProductRows carries integrated radiance irradiance a
 test "postprocessAndAssembleProductRows convolves non-integrated product rows" {
     const solve_config: controls.SolveConfig = .{
         .derivative_mode = .semi_analytical,
-        .derivative_state_mask = jacobian_states.stateMask(.surface_albedo),
+        .derivative_state_mask = jacobian_states.stateMask(.aerosol_optical_depth),
     };
     const kernel = [_]f64{ 1.0, 1.0, 1.0 };
     const raw_radiance = [_]radiance_results.RadianceResult{
-        .{ .radiance = 10.0, .jacobian = .{ 1.0, 10.0, 100.0 } },
-        .{ .radiance = 20.0, .jacobian = .{ 2.0, 20.0, 200.0 } },
-        .{ .radiance = 40.0, .jacobian = .{ 4.0, 40.0, 400.0 } },
+        .{ .radiance = 10.0, .jacobian = .{ 1.0, 100.0 } },
+        .{ .radiance = 20.0, .jacobian = .{ 2.0, 200.0 } },
+        .{ .radiance = 40.0, .jacobian = .{ 4.0, 400.0 } },
     };
     const raw_irradiance = [_]f64{ 100.0, 200.0, 300.0 };
     var out_radiance: [3]radiance_results.RadianceResult = undefined;
@@ -983,12 +967,10 @@ test "postprocessAndAssembleProductRows convolves non-integrated product rows" {
         try std.testing.expectApproxEqAbs(radiance, out_radiance[index].radiance, 1.0e-14);
         try std.testing.expectApproxEqAbs(jacobian, out_radiance[index].jacobian[0], 1.0e-14);
         try std.testing.expectApproxEqAbs(0.0, out_radiance[index].jacobian[1], 0.0);
-        try std.testing.expectApproxEqAbs(0.0, out_radiance[index].jacobian[2], 0.0);
         try std.testing.expectApproxEqAbs(irradiance, out_irradiance[index], 1.0e-14);
         try std.testing.expectApproxEqAbs(radiance * scale, out_reflectance[index], 1.0e-14);
         try std.testing.expectApproxEqAbs(jacobian * scale, out_jacobian[index][0], 1.0e-14);
         try std.testing.expectApproxEqAbs(0.0, out_jacobian[index][1], 0.0);
-        try std.testing.expectApproxEqAbs(0.0, out_jacobian[index][2], 0.0);
     }
     try std.testing.expectEqual(@as(usize, 3), summary.sample_count);
     try std.testing.expectApproxEqAbs(15.0 + 70.0 / 3.0 + 30.0, summary.radiance_sum, 1.0e-14);
@@ -1031,7 +1013,7 @@ test "postprocessAndAssembleProductRows rejects inconsistent product shapes" {
         spectrum_run.postprocessAndAssembleProductRows(
             .{
                 .derivative_mode = .semi_analytical,
-                .derivative_state_mask = jacobian_states.stateMask(.surface_albedo),
+                .derivative_state_mask = jacobian_states.stateMask(.aerosol_optical_depth),
             },
             true,
             true,

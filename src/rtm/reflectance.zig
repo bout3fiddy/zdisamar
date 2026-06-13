@@ -22,7 +22,7 @@ const earth_radius_km: f64 = 6371.0;
 // provenance                                                                                                  |
 //   Ports main:`src/forward_model/radiative_transfer/labos/reflectance.zig` `calcReflectance` and             |
 //   main:`src/forward_model/radiative_transfer/labos/execute.zig` Fourier weighting, Fourier tail stop,       |
-//   weighted-term perturbation, and zero-Fourier surface-albedo weighting.                                    |
+//   weighted-term perturbation, and aerosol derivative weighting.                                             |
 //                                                                                                             |
 // reference names                                                                                             |
 //   rho_m : reflectance coefficient for one Fourier term before azimuthal weighting                           |
@@ -1314,34 +1314,6 @@ pub fn fourierTailBreak(
     }
 
     return tail_break;
-}
-
-pub fn surfaceAlbedoWeighting(
-    ud: []const rows.UDField,
-    geometry: *const gauss_angles.GaussGeometry,
-) f64 {
-    // surfaceAlbedoWeighting -------------------------------------------------------------------------------- |
-    // Surface-albedo Jacobian for the zero-Fourier surface term.                                              |
-    //                                                                                                         |
-    // math                                                                                                    |
-    //   d reflectance / d albedo = (E_view + integral D_view dmu)                                             |
-    //                              * (E_sun  + integral D_sun  dmu)                                           |
-    // --------------------------------------------------------------------------------------------------------|
-    const surface_level: usize = 0;
-    const view_column: usize = 0;
-    const solar_column: usize = 1;
-    var diffuse_view: f64 = 0.0;
-    var diffuse_solar: f64 = 0.0;
-
-    for (0..geometry.n_gauss) |gauss_index| {
-        diffuse_view += ud[surface_level].D.col[view_column].get(gauss_index) * geometry.w[gauss_index];
-        diffuse_solar += ud[surface_level].D.col[solar_column].get(gauss_index) * geometry.w[gauss_index];
-    }
-
-    const view_direct = ud[surface_level].E.get(geometry.viewIndex());
-    const solar_direct = ud[surface_level].E.get(geometry.solarIndex());
-
-    return (view_direct + diffuse_view) * (solar_direct + diffuse_solar);
 }
 
 pub fn clampPublicReflectance(reflectance: f64) f64 {

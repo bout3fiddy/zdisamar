@@ -44,23 +44,6 @@ const lu_diagonal_floor: f64 = 1.0e-30;
 //   layer_reflect_transmit.zig, where the code still knows the Fourier, layer, and doubling-step coordinates. |
 // ------------------------------------------------------------------------------------------------------------|
 
-pub inline fn gaussianTrace12x10(matrix: *const Mat) f64 {
-    // gaussianTrace12x10 ------------------------------------------------------------------------------------ |
-    // Sum the fixed O2 A Gaussian-block diagonal.                                                             |
-    // Reference form: trace(M_gg) = M[0,0] + M[1,1] + ... + M[9,9]. Production trace gates use this helper    |
-    // before the fused fixed kernels; tests assert those fused paths match the scalar reference forms.        |
-    //                                                                                                         |
-    // storage                                                                                                 |
-    //   Mat.data is row-major with n=12 on this path, so diagonal slot k is k*12 + k.                         |
-    //   The inline comptime loop emits the same fixed diagonal loads as the old literal slot list.            |
-    // --------------------------------------------------------------------------------------------------------|
-    var trace: f64 = matrix.data[0];
-    inline for (1..rows.max_gauss) |gaussian_index| {
-        trace += matrix.data[gaussian_index * rows.max_stream_count + gaussian_index];
-    }
-    return trace;
-}
-
 pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *const Mat) Mat {
     // smul (small matrix multiply with trace gate) ---------------------------------------------------------- |
     // Multiply two LABOS small dense matrices over the Gaussian directions.                                   |
@@ -91,8 +74,27 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
         //                                                                                                     |
         // trace(A_gg) * trace(B_gg) is the cheap product-size test used before running the unrolled 12x10     |
         // multiply.                                                                                           |
-        const tra = gaussianTrace12x10(a);
-        const trb = gaussianTrace12x10(b);
+        var tra = a.data[0];
+        tra += a.data[13];
+        tra += a.data[26];
+        tra += a.data[39];
+        tra += a.data[52];
+        tra += a.data[65];
+        tra += a.data[78];
+        tra += a.data[91];
+        tra += a.data[104];
+        tra += a.data[117];
+
+        var trb = b.data[0];
+        trb += b.data[13];
+        trb += b.data[26];
+        trb += b.data[39];
+        trb += b.data[52];
+        trb += b.data[65];
+        trb += b.data[78];
+        trb += b.data[91];
+        trb += b.data[104];
+        trb += b.data[117];
         // ----------------------------------------------------------------------------------------------------|
         // ----------------------------------------------------------------------------------------------------|
         // tradeoff: fixed small-multiply trace gate                                                           |
@@ -158,8 +160,27 @@ pub inline fn smulInto(
         // If the trace product is tiny, out receives the zero matrix and no multiply is run.                  |
         // ----------------------------------------------------------------------------------------------------|
 
-        const tra = gaussianTrace12x10(a);
-        const trb = gaussianTrace12x10(b);
+        var tra = a.data[0];
+        tra += a.data[13];
+        tra += a.data[26];
+        tra += a.data[39];
+        tra += a.data[52];
+        tra += a.data[65];
+        tra += a.data[78];
+        tra += a.data[91];
+        tra += a.data[104];
+        tra += a.data[117];
+
+        var trb = b.data[0];
+        trb += b.data[13];
+        trb += b.data[26];
+        trb += b.data[39];
+        trb += b.data[52];
+        trb += b.data[65];
+        trb += b.data[78];
+        trb += b.data[91];
+        trb += b.data[104];
+        trb += b.data[117];
 
         // ----------------------------------------------------------------------------------------------------|
         // ----------------------------------------------------------------------------------------------------|
@@ -1298,7 +1319,16 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
     // Same cutoff as the generic rtm_config, but with fixed 10x10 Gaussian diagonal indexes.                  |
     // This avoids the fixed LU solve when the repeated-reflection correction is already negligible.           |
 
-    const trab = gaussianTrace12x10(ab);
+    var trab = ab.data[0];
+    trab += ab.data[13];
+    trab += ab.data[26];
+    trab += ab.data[39];
+    trab += ab.data[52];
+    trab += ab.data[65];
+    trab += ab.data[78];
+    trab += ab.data[91];
+    trab += ab.data[104];
+    trab += ab.data[117];
     if (@abs(trab) < threshold_q) {
         result.* = ab.*;
         return;
@@ -2220,8 +2250,27 @@ fn smulAddSemul3_12(threshold_mul: f64, a: *const Mat, e: *const Vec, c: *const 
     //                                                                                                         |
     // Row-major n=12 puts diagonal slot k at k*12 + k = 13*k. The helper keeps that fixed slot sequence in    |
     // one place.                                                                                              |
-    const tra = gaussianTrace12x10(a);
-    const trc = gaussianTrace12x10(c);
+    var tra = a.data[0];
+    tra += a.data[13];
+    tra += a.data[26];
+    tra += a.data[39];
+    tra += a.data[52];
+    tra += a.data[65];
+    tra += a.data[78];
+    tra += a.data[91];
+    tra += a.data[104];
+    tra += a.data[117];
+
+    var trc = c.data[0];
+    trc += c.data[13];
+    trc += c.data[26];
+    trc += c.data[39];
+    trc += c.data[52];
+    trc += c.data[65];
+    trc += c.data[78];
+    trc += c.data[91];
+    trc += c.data[104];
+    trc += c.data[117];
     // --------------------------------------------------------------------------------------------------------|
 
     return smulAddSemul3_12KnownTraces(threshold_mul, a, e, c, tra, trc);
@@ -2243,7 +2292,16 @@ fn smulAddSemul3_12KnownRightTrace(
     // Gaussian-block trace -----------------------------------------------------------------------------------|
     // trace(C_gg) came from the caller. This wrapper only scans trace(A_gg).                                  |
     // Row-major n=12 puts A[k,k] at k*12 + k = 13*k for k = 0..9.                                             |
-    const tra = gaussianTrace12x10(a);
+    var tra = a.data[0];
+    tra += a.data[13];
+    tra += a.data[26];
+    tra += a.data[39];
+    tra += a.data[52];
+    tra += a.data[65];
+    tra += a.data[78];
+    tra += a.data[91];
+    tra += a.data[104];
+    tra += a.data[117];
     // --------------------------------------------------------------------------------------------------------|
 
     return smulAddSemul3_12KnownTraces(threshold_mul, a, e, c, tra, trc);
@@ -2266,7 +2324,16 @@ fn smulAddSemul3_12KnownRightTraceInto(
     // Gaussian-block trace -----------------------------------------------------------------------------------|
     // trace(C_gg) came from the caller. This caller-owned-output wrapper only scans trace(A_gg).              |
     // Row-major n=12 puts A[k,k] at k*12 + k = 13*k for k = 0..9.                                             |
-    const tra = gaussianTrace12x10(a);
+    var tra = a.data[0];
+    tra += a.data[13];
+    tra += a.data[26];
+    tra += a.data[39];
+    tra += a.data[52];
+    tra += a.data[65];
+    tra += a.data[78];
+    tra += a.data[91];
+    tra += a.data[104];
+    tra += a.data[117];
     // --------------------------------------------------------------------------------------------------------|
 
     smulAddSemul3_12KnownTracesInto(result, threshold_mul, a, e, c, tra, trc);

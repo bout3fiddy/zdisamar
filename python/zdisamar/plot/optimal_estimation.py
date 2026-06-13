@@ -8,31 +8,26 @@ from .properties import PLOT, PlotAccessor
 from .svg import SvgFigure, SvgPanel, SvgSeries, axis_multiplier, line_panel
 
 STATE_LABELS = {
-    "surface_albedo": "Surface albedo",
     "aerosol_optical_depth": "Aerosol optical depth",
     "aerosol_layer_mid_pressure_hpa": "Aerosol layer mid-pressure",
 }
 
 STATE_UNITS = {
-    "surface_albedo": "",
     "aerosol_optical_depth": "optical depth at 550 nm",
     "aerosol_layer_mid_pressure_hpa": "hPa",
 }
 
 STATE_AXIS_TITLES = {
-    "surface_albedo": "Surface albedo",
     "aerosol_optical_depth": "AOD at 550 nm",
     "aerosol_layer_mid_pressure_hpa": "Mid-pressure (hPa)",
 }
 
 STATE_PANEL_TITLES = {
-    "surface_albedo": "Surface albedo",
     "aerosol_optical_depth": "Aerosol optical depth",
     "aerosol_layer_mid_pressure_hpa": "Layer mid-pressure (hPa)",
 }
 
 STATE_DERIVATIVE_TITLES = {
-    "surface_albedo": "dR/dA",
     "aerosol_optical_depth": "dR/dτ",
     "aerosol_layer_mid_pressure_hpa": "dR/dp (hPa⁻¹)",
 }

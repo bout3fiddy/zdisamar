@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const instrument_average = @import("../spectrum/instrument_average.zig");
-const jacobian_states = @import("../transport/jacobian_states.zig");
+const jacobian_states = @import("../rtm/jacobian_states.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -17,7 +17,7 @@ const Allocator = std.mem.Allocator;
 // Owned product-grid spectrum arrays returned by root run calls.                                              |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 80 B (0.078 KiB), align: 8 B                                                                          |
+// size: 72 B (0.070 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
 // [ 0..15] wavelength_nm : []f64                                                                              |
@@ -63,7 +63,7 @@ pub const O2Spectrum = struct {
 // size: 80 B (0.078 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [ 0..79] reflectance_assembly : ReflectanceAssemblySummary                                                  |
+// [ 0..71] reflectance_assembly : ReflectanceAssemblySummary                                                  |
 pub const O2SpectrumRunSummary = struct {
     reflectance_assembly: instrument_average.ReflectanceAssemblySummary = .{},
 };
@@ -73,11 +73,11 @@ pub const O2SpectrumRunSummary = struct {
 // Owned spectrum plus scalar summary returned from one public forward run.                                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 160 B (0.156 KiB), align: 8 B                                                                         |
+// size: 152 B (0.148 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0.. 79] spectrum : O2Spectrum                                                                            |
-// [ 80..159] summary  : O2SpectrumRunSummary                                                                  |
+// [ 80..151] summary  : O2SpectrumRunSummary                                                                  |
 pub const O2SpectrumRunResult = struct {
     spectrum: O2Spectrum = .{},
     summary: O2SpectrumRunSummary = .{},
@@ -94,6 +94,6 @@ pub const O2SpectrumRunResult = struct {
 
 comptime {
     std.debug.assert(@sizeOf(O2Spectrum) == 80);
-    std.debug.assert(@sizeOf(O2SpectrumRunSummary) == 80);
-    std.debug.assert(@sizeOf(O2SpectrumRunResult) == 160);
+    std.debug.assert(@sizeOf(O2SpectrumRunSummary) == 72);
+    std.debug.assert(@sizeOf(O2SpectrumRunResult) == 152);
 }

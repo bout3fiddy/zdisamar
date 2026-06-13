@@ -2,13 +2,13 @@ const std = @import("std");
 
 const internal = @import("internal");
 
-const controls = internal.transport.controls;
-const gauss_angles = internal.transport.gauss_angles;
-const rows = internal.transport.rows;
-const scattering_orders = internal.transport.scattering_orders;
+const controls = internal.rtm.controls;
+const gauss_angles = internal.rtm.gauss_angles;
+const rows = internal.rtm.rows;
+const scattering_orders = internal.rtm.scattering_orders;
 
 test "orders work arrays keep borrowed workspace layout" {
-    const expected_size: usize = if (internal.transport.phase_timing.enabled) 120 else 112;
+    const expected_size: usize = if (internal.rtm.phase_timing.enabled) 120 else 112;
     try std.testing.expectEqual(expected_size, @sizeOf(scattering_orders.OrdersWorkArrays));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(scattering_orders.OrdersWorkArrays));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(scattering_orders.OrdersWorkArrays, "ud"));

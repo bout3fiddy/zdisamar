@@ -1,22 +1,21 @@
 // jacobian_states.zig --------------------------------------------------------------------------------------- |
-// Fixed RTM Jacobian state vocabulary used by optics, LABOS transport, and spectrum convolution.              |
+// Fixed RTM Jacobian state vocabulary used by optics, LABOS RTM, and spectrum convolution.                    |
 //                                                                                                             |
 // route map                                                                                                   |
 //   optics/   writes per-layer derivative vectors in this state order                                         |
-//   transport/ propagates the same fixed vector through one solveReflectance call                             |
+//   rtm/      propagates the same fixed vector through one solveReflectance call                              |
 //   spectrum/  convolves active columns with the same instrument weights as reflectance                       |
 //                                                                                                             |
 // memory                                                                                                      |
-//   Vector is [3]f64. StateMask is u8 and uses the low three bits. This file owns no heap storage and has no  |
-//   hidden mutable state. The order follows main:`src/forward_model/jacobian/root.zig`.                       |
+//   Vector is [2]f64. StateMask is u8 and uses the low two bits. This file owns no heap storage and has no    |
+//   hidden mutable state. Surface albedo remains a forward scalar; it is intentionally not a retrieval lane.  |
 // ------------------------------------------------------------------------------------------------------------|
 
-pub const state_count: usize = 3;
+pub const state_count: usize = 2;
 
 pub const State = enum(u8) {
-    surface_albedo = 0,
-    aerosol_optical_depth = 1,
-    aerosol_layer_mid_pressure_hpa = 2,
+    aerosol_optical_depth = 0,
+    aerosol_layer_mid_pressure_hpa = 1,
 };
 
 pub const Vector = [state_count]f64;
@@ -32,7 +31,6 @@ pub const all_states_mask: StateMask = (1 << state_count) - 1;
 // memory                                                                                                      |
 //   no stored fields                                                                                          |
 pub const StateNames = struct {
-    pub const surface_albedo = "surface_albedo";
     pub const aerosol_optical_depth = "aerosol_optical_depth";
     pub const aerosol_layer_mid_pressure_hpa = "aerosol_layer_mid_pressure_hpa";
 };
@@ -68,7 +66,7 @@ pub fn includes(mask: StateMask, state: State) bool {
 
 pub fn sanitizedMask(mask: StateMask) StateMask {
     // sanitizedMask ----------------------------------------------------------------------------------------- |
-    // Keep only the low bits owned by the fixed three-state Jacobian vector.                                  |
+    // Keep only the low bits owned by the fixed two-state Jacobian vector.                                    |
     // --------------------------------------------------------------------------------------------------------|
     return mask & all_states_mask;
 }
@@ -121,8 +119,8 @@ pub fn scale(vector: Vector, factor: f64) Vector {
     // Multiply every fixed derivative lane by one scalar.                                                     |
     //                                                                                                         |
     // provenance                                                                                              |
-    //   Ports main:`src/forward_model/jacobian/root.zig` `scale`; spectrum summaries use the same unmasked    |
-    //   fixed-vector scale when all three lanes remain in state order.                                        |
+    //   Ports main:`src/forward_model/jacobian/root.zig` `scale`; spectrum summaries keep the same unmasked   |
+    //   fixed-vector scale over the retained two O2 A retrieval lanes.                                        |
     //                                                                                                         |
     // math                                                                                                    |
     //   result_i = factor * vector_i                                                                          |

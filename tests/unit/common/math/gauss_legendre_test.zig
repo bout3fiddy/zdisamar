@@ -3,9 +3,12 @@ const internal = @import("internal");
 
 const gauss_legendre = internal.common.math.gauss_legendre;
 const rule = gauss_legendre.rule;
+const fillCanonicalNodesAndWeights = gauss_legendre.fillCanonicalNodesAndWeights;
+const fillCanonicalDisamarDivPointNodes = gauss_legendre.fillCanonicalDisamarDivPointNodes;
 const fillNodesAndWeights = gauss_legendre.fillNodesAndWeights;
 const fillDisamarDivPoints01 = gauss_legendre.fillDisamarDivPoints01;
 const fillDisamarDivPointsIntervalNodes = gauss_legendre.fillDisamarDivPointsIntervalNodes;
+const scaleIntervalNodes = gauss_legendre.scaleIntervalNodes;
 const Rule = gauss_legendre.Rule;
 
 const legacy_fixed_rules = [_]Rule{
@@ -330,6 +333,19 @@ test "gauss-legendre dynamic fill supports higher-order rules" {
     try std.testing.expectApproxEqRel(@as(f64, -nodes[19]), nodes[0], 1e-12);
 }
 
+test "canonical ordinary fill matches dynamic fill bit-for-bit" {
+    var canonical_nodes = [_]f64{0.0} ** 20;
+    var canonical_weights = [_]f64{0.0} ** 20;
+    var dynamic_nodes = [_]f64{0.0} ** 20;
+    var dynamic_weights = [_]f64{0.0} ** 20;
+
+    try fillCanonicalNodesAndWeights(20, canonical_nodes[0..], canonical_weights[0..]);
+    try fillNodesAndWeights(20, dynamic_nodes[0..], dynamic_weights[0..]);
+
+    try expectEqualF64Bits(canonical_nodes[0..], dynamic_nodes[0..]);
+    try expectEqualF64Bits(canonical_weights[0..], dynamic_weights[0..]);
+}
+
 test "disamar gauss division points are scaled to unit interval" {
     var nodes = [_]f64{0.0} ** 5;
     var weights = [_]f64{0.0} ** 5;
@@ -357,5 +373,27 @@ test "disamar interval node-only fill scales nodes" {
     try std.testing.expect(node_only[node_only.len - 1] < 17.9);
     for (node_only[0 .. node_only.len - 1], node_only[1..]) |left, right| {
         try std.testing.expect(left < right);
+    }
+}
+
+test "canonical disamar interval nodes rescale to old fill bit-for-bit" {
+    var old_nodes = [_]f64{0.0} ** 28;
+    var canonical_nodes = [_]f64{0.0} ** 28;
+    var scaled_nodes = [_]f64{0.0} ** 28;
+
+    try fillDisamarDivPointsIntervalNodes(28, 2.3, 17.9, old_nodes[0..]);
+    try fillCanonicalDisamarDivPointNodes(28, canonical_nodes[0..]);
+    try scaleIntervalNodes(canonical_nodes[0..], 2.3, 17.9, scaled_nodes[0..]);
+
+    try expectEqualF64Bits(old_nodes[0..], scaled_nodes[0..]);
+}
+
+fn expectEqualF64Bits(expected: []const f64, actual: []const f64) !void {
+    // expectEqualF64Bits -------------------------------------------------------------------------------------|
+    // Compare retained quadrature rows exactly so setup reuse cannot change support placement by one ULP.    |
+    // --------------------------------------------------------------------------------------------------------|
+    try std.testing.expectEqual(expected.len, actual.len);
+    for (expected, actual) |expected_value, actual_value| {
+        try std.testing.expectEqual(@as(u64, @bitCast(expected_value)), @as(u64, @bitCast(actual_value)));
     }
 }

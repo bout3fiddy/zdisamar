@@ -18,7 +18,7 @@ fn exerciseEnabledPhaseTiming() !void {
     // exerciseEnabledPhaseTiming ----------------------------------------------------------------------------|
     // Compile and exercise the trace-build branch of transport phase timing.                                 |
     // -------------------------------------------------------------------------------------------------------|
-    const phase_timing = internal.transport.phase_timing;
+    const phase_timing = internal.rtm.phase_timing;
 
     try std.testing.expectEqual(true, phase_timing.enabled);
     try std.testing.expectEqual(@as(usize, 8), @sizeOf(phase_timing.WorkspaceState));

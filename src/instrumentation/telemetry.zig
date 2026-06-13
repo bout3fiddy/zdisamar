@@ -7,10 +7,10 @@ const sink = @import("calculation_telemetry_sink");
 // called from                                                                                                   |
 //   spectrum sampling and run code records dense-wavelength fan-out, forward-cache miss plans, reflectance      |
 //   assembly, and Jacobian column summaries.                                                                    |
-//   transport/layer_reflect_transmit.zig records layer-doubling classification, q-series skip/retain gates,     |
+//   rtm/layer_reflect_transmit.zig records layer-doubling classification, q-series skip/retain gates,           |
 //   and downstream R-D, T-U, and T-D product decisions.                                                         |
-//   transport/scattering_orders.zig records first-order and multiple-order convergence margins.                 |
-//   transport/reflectance.zig records Fourier contribution size and tail-stop decisions.                        |
+//   rtm/scattering_orders.zig records first-order and multiple-order convergence margins.                       |
+//   rtm/reflectance.zig records Fourier contribution size and tail-stop decisions.                              |
 //   telemetry tests verify disabled builds keep the facade callable and side-effect free.                       |
 //                                                                                                               |
 // main paths                                                                                                    |

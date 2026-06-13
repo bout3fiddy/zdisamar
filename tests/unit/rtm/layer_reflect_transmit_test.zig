@@ -2,14 +2,14 @@ const std = @import("std");
 
 const internal = @import("internal");
 
-const controls = internal.transport.controls;
-const gauss_angles = internal.transport.gauss_angles;
-const jacobian_states = internal.transport.jacobian_states;
+const controls = internal.rtm.controls;
+const gauss_angles = internal.rtm.gauss_angles;
+const jacobian_states = internal.rtm.jacobian_states;
 const layer_depths = internal.optics.layer_depths;
-const layer_rt = internal.transport.layer_reflect_transmit;
-const phase_basis = internal.transport.phase_basis;
+const layer_rt = internal.rtm.layer_reflect_transmit;
+const phase_basis = internal.rtm.phase_basis;
 const phase_table = internal.setup.phase_table;
-const rows = internal.transport.rows;
+const rows = internal.rtm.rows;
 
 const tangent_step: f64 = 1.0e-5;
 

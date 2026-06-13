@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const attenuation_mod = @import("attenuation.zig");
 const controls = @import("controls.zig");
 const gauss_angles = @import("gauss_angles.zig");
 const phase_timing = @import("phase_timing.zig");
@@ -502,7 +503,7 @@ fn solveOrdersInternal(
             // instrumentation: trace zone: order transport ---------------------------------------------------|
             // captures: inter-level transport wall time for this order                                        |
             // why: separate propagation from local source computation.                                        |
-            const zone = Trace.deepStaticZone(@src(), "labos.orders.transport");
+            const zone = Trace.deepStaticZone(@src(), "labos.orders.rtm");
             defer zone.end();
             const trace_start = phase_timing.start(work.activeTracePhaseTiming());
             defer phase_timing.finish(work.activeTracePhaseTiming(), trace_start, "orders_transport");
@@ -758,8 +759,9 @@ fn fillDownwardLocalSources(
     for (start_level..end_level) |level| {
         const local_d0 = &ud_local[level].D.col[0].data;
         const local_d1 = &ud_local[level].D.col[1].data;
+        const active = rt_active[level + 1];
 
-        if (!rt_active[level + 1]) {
+        if (!active) {
             Trace.plotU("orders_inactive_down_layers", 1);
             continue;
         }
@@ -885,8 +887,9 @@ fn fillUpwardLocalSources(
     for (start_level + 1..end_level + 1) |level| {
         const local_u0 = &ud_local[level].U.col[0].data;
         const local_u1 = &ud_local[level].U.col[1].data;
+        const active = rt_active[level];
 
-        if (!rt_active[level]) {
+        if (!active) {
             Trace.plotU("orders_inactive_up_layers", 1);
             continue;
         }
@@ -1020,6 +1023,14 @@ fn transportToOtherLevels(
     // Transport current local sources through the level grid.                                                 |
     // --------------------------------------------------------------------------------------------------------|
     if (stream_count == rows.max_stream_count) {
+        if (comptime isDynamicAttenuationPointer(@TypeOf(attenuation))) {
+            transportToOtherLevelsDynamic12(start_level, end_level, attenuation, ud_local, ud_orde);
+            return;
+        }
+        if (comptime isRuntimeAttenuationPointer(@TypeOf(attenuation))) {
+            transportToOtherLevelsRuntime12(start_level, end_level, attenuation, ud_local, ud_orde);
+            return;
+        }
         transportToOtherLevels12(start_level, end_level, attenuation, ud_local, ud_orde);
         return;
     }
@@ -1054,6 +1065,142 @@ fn transportToOtherLevels(
 
         for (0..stream_count) |stream_index| {
             const att = attenuation.get(stream_index, level + 1, level);
+            out_d0[stream_index] = local_d0[stream_index] + att * prev_d0[stream_index];
+            out_d1[stream_index] = local_d1[stream_index] + att * prev_d1[stream_index];
+        }
+    }
+}
+
+fn isDynamicAttenuationPointer(comptime T: type) bool {
+    // isDynamicAttenuationPointer --------------------------------------------------------------------------- |
+    // Compile-time route check for the full [direction, from_level, to_level] attenuation table.              |
+    // provenance: main:`radiative_transfer/labos/orders.zig` `isDynamicAttenPointer`.                         |
+    // --------------------------------------------------------------------------------------------------------|
+    return switch (@typeInfo(T)) {
+        .pointer => |ptr| ptr.child == attenuation_mod.DynamicAttenuation,
+        else => false,
+    };
+}
+
+fn isRuntimeAttenuationPointer(comptime T: type) bool {
+    // isRuntimeAttenuationPointer --------------------------------------------------------------------------- |
+    // Compile-time route check for the compact runtime attenuation table used by integrated-source LABOS.     |
+    // provenance: main:`radiative_transfer/labos/orders.zig` `isRuntimeAttenPointer`.                         |
+    // --------------------------------------------------------------------------------------------------------|
+    return switch (@typeInfo(T)) {
+        .pointer => |ptr| ptr.child == attenuation_mod.RuntimeAttenuation,
+        else => false,
+    };
+}
+
+fn dynamicAttenuationAt(
+    attenuation: *const attenuation_mod.DynamicAttenuation,
+    stream_stride: usize,
+    stream_index: usize,
+    level_offset: usize,
+) f64 {
+    // dynamicAttenuationAt ---------------------------------------------------------------------------------- |
+    // Direct row-major lookup for DynamicAttenuation without redoing the index decomposition in `get`.        |
+    // provenance: main:`radiative_transfer/labos/orders.zig` `dynamicAttenAt`.                                |
+    // --------------------------------------------------------------------------------------------------------|
+    return attenuation.data[stream_index * stream_stride + level_offset];
+}
+
+fn transportToOtherLevelsDynamic12(
+    start_level: usize,
+    end_level: usize,
+    attenuation: *const attenuation_mod.DynamicAttenuation,
+    ud_local: []const rows.UDLocal,
+    ud_orde: []rows.UDLocal,
+) void {
+    // transportToOtherLevelsDynamic12 ----------------------------------------------------------------------- |
+    // Fixed 12-direction transport for the full dynamic attenuation table.                                    |
+    // provenance: main:`radiative_transfer/labos/orders.zig` `transportToOtherLevelsDynamic12`.               |
+    // hot path: avoids generic `get` calls inside scattering-order propagation.                               |
+    // --------------------------------------------------------------------------------------------------------|
+    const level_count = attenuation.level_count;
+    const stream_stride = level_count * level_count;
+
+    ud_orde[start_level].U = ud_local[start_level].U;
+    for (start_level + 1..end_level + 1) |level| {
+        const level_offset = (level - 1) * level_count + level;
+        const local_u0 = ud_local[level].U.col[0].data;
+        const local_u1 = ud_local[level].U.col[1].data;
+        const prev_u0 = ud_orde[level - 1].U.col[0].data;
+        const prev_u1 = ud_orde[level - 1].U.col[1].data;
+        const out_u0 = &ud_orde[level].U.col[0].data;
+        const out_u1 = &ud_orde[level].U.col[1].data;
+
+        inline for (0..rows.max_stream_count) |stream_index| {
+            const att = dynamicAttenuationAt(attenuation, stream_stride, stream_index, level_offset);
+            out_u0[stream_index] = local_u0[stream_index] + att * prev_u0[stream_index];
+            out_u1[stream_index] = local_u1[stream_index] + att * prev_u1[stream_index];
+        }
+    }
+
+    ud_orde[end_level].D = rows.Vec2.zero(rows.max_stream_count);
+    var level = end_level;
+    while (level > start_level) {
+        level -= 1;
+
+        const level_offset = (level + 1) * level_count + level;
+        const local_d0 = ud_local[level].D.col[0].data;
+        const local_d1 = ud_local[level].D.col[1].data;
+        const prev_d0 = ud_orde[level + 1].D.col[0].data;
+        const prev_d1 = ud_orde[level + 1].D.col[1].data;
+        const out_d0 = &ud_orde[level].D.col[0].data;
+        const out_d1 = &ud_orde[level].D.col[1].data;
+
+        inline for (0..rows.max_stream_count) |stream_index| {
+            const att = dynamicAttenuationAt(attenuation, stream_stride, stream_index, level_offset);
+            out_d0[stream_index] = local_d0[stream_index] + att * prev_d0[stream_index];
+            out_d1[stream_index] = local_d1[stream_index] + att * prev_d1[stream_index];
+        }
+    }
+}
+
+fn transportToOtherLevelsRuntime12(
+    start_level: usize,
+    end_level: usize,
+    attenuation: *const attenuation_mod.RuntimeAttenuation,
+    ud_local: []const rows.UDLocal,
+    ud_orde: []rows.UDLocal,
+) void {
+    // transportToOtherLevelsRuntime12 ----------------------------------------------------------------------- |
+    // Fixed 12-direction transport for compact runtime attenuation.                                           |
+    // provenance: main:`radiative_transfer/labos/orders.zig` `transportToOtherLevelsRuntime12`.               |
+    // hot path: integrated-source transport only needs adjacent layer transmittance here.                     |
+    // --------------------------------------------------------------------------------------------------------|
+    ud_orde[start_level].U = ud_local[start_level].U;
+    for (start_level + 1..end_level + 1) |level| {
+        const local_u0 = ud_local[level].U.col[0].data;
+        const local_u1 = ud_local[level].U.col[1].data;
+        const prev_u0 = ud_orde[level - 1].U.col[0].data;
+        const prev_u1 = ud_orde[level - 1].U.col[1].data;
+        const out_u0 = &ud_orde[level].U.col[0].data;
+        const out_u1 = &ud_orde[level].U.col[1].data;
+
+        inline for (0..rows.max_stream_count) |stream_index| {
+            const att = attenuation.adjacent(stream_index, level - 1);
+            out_u0[stream_index] = local_u0[stream_index] + att * prev_u0[stream_index];
+            out_u1[stream_index] = local_u1[stream_index] + att * prev_u1[stream_index];
+        }
+    }
+
+    ud_orde[end_level].D = rows.Vec2.zero(rows.max_stream_count);
+    var level = end_level;
+    while (level > start_level) {
+        level -= 1;
+
+        const local_d0 = ud_local[level].D.col[0].data;
+        const local_d1 = ud_local[level].D.col[1].data;
+        const prev_d0 = ud_orde[level + 1].D.col[0].data;
+        const prev_d1 = ud_orde[level + 1].D.col[1].data;
+        const out_d0 = &ud_orde[level].D.col[0].data;
+        const out_d1 = &ud_orde[level].D.col[1].data;
+
+        inline for (0..rows.max_stream_count) |stream_index| {
+            const att = attenuation.adjacent(stream_index, level);
             out_d0[stream_index] = local_d0[stream_index] + att * prev_d0[stream_index];
             out_d1[stream_index] = local_d1[stream_index] + att * prev_d1[stream_index];
         }

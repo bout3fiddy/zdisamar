@@ -2,7 +2,7 @@ const std = @import("std");
 
 const internal = @import("internal");
 
-const gauss_angles = internal.transport.gauss_angles;
+const gauss_angles = internal.rtm.gauss_angles;
 
 // GeometryValueEvidence --------------------------------------------------------------------------------------|
 // Old LABOS Geometry.init values for n_gauss=4, solar_mu=0.58, view_mu=0.64.                                  |

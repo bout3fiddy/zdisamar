@@ -25,19 +25,19 @@ const Allocator = std.mem.Allocator;
 // Top-level allocation owner for reusable O2 A setup, spectrum, solar, workers, and transport work.           |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// Debug build: size 416 B (0.406 KiB), align 8                                                                |
-// optimized  : size 384 B (0.375 KiB), align 8                                                                |
+// Debug build: size 424 B (0.414 KiB), align 8                                                                |
+// optimized  : size 392 B (0.383 KiB), align 8                                                                |
 //                                                                                                             |
 // memory                                                                                                      |
-// [  0.. 47] spectrum          : SpectrumMemory                                                               |
-// [ 48..159] radiance          : RadianceMemory                                                               |
-// [160..223] profile_lines     : ProfileLineValues                                                            |
-// [224..263] solar_irradiance  : SolarIrradianceMemory in Debug                                               |
-// [224..255] solar_irradiance  : SolarIrradianceMemory in optimized builds                                    |
-// [264..399] worker_pool       : ForwardWorkerPool in Debug                                                   |
-// [256..367] worker_pool       : ForwardWorkerPool in optimized builds                                        |
-// [400..415] transport_workers : TransportWorkerMemoryCollection in Debug                                     |
-// [368..383] transport_workers : TransportWorkerMemoryCollection in optimized builds                          |
+// [  0.. 55] spectrum          : SpectrumMemory                                                               |
+// [ 56..167] radiance          : RadianceMemory                                                               |
+// [168..231] profile_lines     : ProfileLineValues                                                            |
+// [232..271] solar_irradiance  : SolarIrradianceMemory in Debug                                               |
+// [232..263] solar_irradiance  : SolarIrradianceMemory in optimized builds                                    |
+// [272..407] worker_pool       : ForwardWorkerPool in Debug                                                   |
+// [264..375] worker_pool       : ForwardWorkerPool in optimized builds                                        |
+// [408..423] transport_workers : TransportWorkerMemoryCollection in Debug                                     |
+// [376..391] transport_workers : TransportWorkerMemoryCollection in optimized builds                          |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Child memory owners release their own heap storage through deinit. Worker-local transport buffers live    |
@@ -75,6 +75,6 @@ pub const O2SessionMemory = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 comptime {
-    const expected_size: usize = if (@import("builtin").mode == .Debug) 416 else 384;
+    const expected_size: usize = if (@import("builtin").mode == .Debug) 424 else 392;
     std.debug.assert(@sizeOf(O2SessionMemory) == expected_size);
 }

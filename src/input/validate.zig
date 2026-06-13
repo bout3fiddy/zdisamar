@@ -13,6 +13,7 @@ pub fn o2Case(case: o2_case.O2Case) !void {
     if (case.spectral_grid.sample_count < 2) return errors.Error.InvalidControl;
     if (case.spectral_grid.end_nm <= case.spectral_grid.start_nm) return errors.Error.InvalidControl;
     if (case.surface_albedo < 0.0 or case.surface_albedo > 1.0) return errors.Error.InvalidControl;
+    try measuredWavelengths(case.spectral_grid, case.observation.measured_wavelengths_nm);
 
     if (case.atmosphere.layer_count == 0) return errors.Error.InvalidControl;
     if (case.atmosphere.sublayer_divisions == 0) return errors.Error.InvalidControl;
@@ -44,6 +45,40 @@ pub fn o2Case(case: o2_case.O2Case) !void {
     if (!case.cia.enabled) return errors.Error.InvalidControl;
     if (case.rtm.stream_count == 0) return errors.Error.InvalidControl;
     case.rtm.performance_thresholds.validate() catch return errors.Error.InvalidControl;
+}
+
+fn measuredWavelengths(
+    grid: o2_case.SpectralGrid,
+    wavelengths_nm: []const f64,
+) !void {
+    // measuredWavelengths -----------------------------------------------------------------------------------|
+    // Validate the optional sparse product axis consumed by fastmode and correction routes.                  |
+    //                                                                                                         |
+    // contract                                                                                                |
+    //   An empty slice means the endpoint-inclusive uniform SpectralGrid is the product axis. A non-empty     |
+    //   slice is the exact product axis; its count and endpoints must agree with SpectralGrid so support      |
+    //   planning still has one global wavelength span.                                                        |
+    // --------------------------------------------------------------------------------------------------------|
+    if (wavelengths_nm.len == 0) return;
+    if (wavelengths_nm.len != grid.sample_count) return errors.Error.InvalidControl;
+
+    for (wavelengths_nm, 0..) |wavelength_nm, index| {
+        if (!std.math.isFinite(wavelength_nm)) return errors.Error.InvalidControl;
+        if (index != 0 and wavelength_nm <= wavelengths_nm[index - 1]) {
+            return errors.Error.InvalidControl;
+        }
+    }
+
+    if (!std.math.approxEqAbs(f64, wavelengths_nm[0], grid.start_nm, profile_spectral_tolerance) or
+        !std.math.approxEqAbs(
+            f64,
+            wavelengths_nm[wavelengths_nm.len - 1],
+            grid.end_nm,
+            profile_spectral_tolerance,
+        ))
+    {
+        return errors.Error.InvalidControl;
+    }
 }
 
 fn aerosolProfile(

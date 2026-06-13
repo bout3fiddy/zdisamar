@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const instrument_average = @import("instrument_average.zig");
-const jacobian_states = @import("../transport/jacobian_states.zig");
+const jacobian_states = @import("../rtm/jacobian_states.zig");
 const aerosol_tables = @import("../setup/aerosol_tables.zig");
 const atmosphere_layers = @import("../setup/atmosphere_layers.zig");
 const cia_table = @import("../setup/cia_table.zig");
@@ -14,13 +14,13 @@ const rayleigh = @import("../optics/rayleigh.zig");
 const radiance_results = @import("radiance_results.zig");
 const radiance_wavelengths = @import("radiance_wavelengths.zig");
 const sampling_table = @import("sampling_table.zig");
-const solve = @import("../transport/solve.zig");
+const solve = @import("../rtm/solve.zig");
 const solar_lookup = @import("solar_lookup.zig");
 const solar_irradiance_memory = @import("../cache/solar_irradiance_memory.zig");
 const solar_table = @import("../setup/solar_table.zig");
 const source_levels = @import("../optics/source_levels.zig");
 const transport_worker_memory = @import("../cache/transport_worker_memory.zig");
-const controls = @import("../transport/controls.zig");
+const controls = @import("../rtm/controls.zig");
 const Trace = @import("../instrumentation/trace.zig");
 const Telemetry = @import("../instrumentation/telemetry.zig");
 
@@ -142,7 +142,7 @@ pub const RadianceWorkRows = struct {
 //                                                                                                              |
 // memory groups                                                                                                |
 //   inputs     : wavelengths, angles, surface albedo, layer grid, profile lines, CIA, aerosol, phase, solar    |
-//   controls   : solve_config                                                                                  |
+//   controls   : prepared_solve_config                                                                         |
 //   outputs    : out_dense_radiance[index] for each claimed exact wavelength                                   |
 //   scheduling : static range or pooled ChunkQueue, worker index, first-error state                            |
 //   scratch    : one worker-local TransportWorkerMemory with optics and LABOS rows                             |
@@ -157,7 +157,7 @@ const RadiancePrefetchWorker = struct {
     aerosol: aerosol_tables.AerosolLayerTable,
     phase: phase_table.PhaseTable,
     solar: solar_table.SolarTable,
-    solve_config: controls.SolveConfig,
+    prepared_solve_config: controls.SolveConfig,
     out_dense_radiance: []radiance_results.RadianceResult,
     error_state: *RadiancePrefetchErrorState,
     start_index: usize,
@@ -180,7 +180,7 @@ pub fn radianceAtWavelength(
     aerosol: aerosol_tables.AerosolLayerTable,
     phase: phase_table.PhaseTable,
     solar_irradiance: f64,
-    solve_config: controls.SolveConfig,
+    prepared_solve_config: controls.SolveConfig,
     work_rows: RadianceWorkRows,
     worker_memory: *transport_worker_memory.TransportWorkerMemory,
 ) !radiance_results.RadianceResult {
@@ -198,6 +198,11 @@ pub fn radianceAtWavelength(
     // memory                                                                                                   |
     //   All row and transport storage is caller-owned. Scattering callers must reserve worker memory before    |
     //   entering this per-wavelength helper through `TransportWorkerMemory.ensureCapacity`.                    |
+    //                                                                                                          |
+    // hot path                                                                                                 |
+    //   The caller passes a SolveConfig already validated by `controls.prepareSolveConfig`. Keeping that       |
+    //   setup-side check outside this exact-wavelength loop mirrors old main:                                  |
+    //   `radiative_transfer/root.zig` `executePreparedWithLabosWorkspace`.                                     |
     //                                                                                                          |
     // unsupported old routes                                                                                   |
     //   Source-level and curved-sun rows are only filled for controls that request those old routes. The       |
@@ -247,12 +252,11 @@ pub fn radianceAtWavelength(
             work_rows.support,
         );
         try layer_depths.reduceLayerOpticsFromSupportRows(layer_grid, work_rows.support, work_rows.layers);
-        layer_depths.fillLayerAerosolJacobians(aerosol, solve_config.derivative_state_mask, work_rows.layers);
+        layer_depths.fillLayerAerosolJacobians(aerosol, prepared_solve_config.derivative_state_mask, work_rows.layers);
     }
 
-    const prepared_config = try controls.prepareSolveConfig(solve_config);
     const source_rows = source_rows: {
-        if (prepared_config.controls.integrate_source_function) {
+        if (prepared_solve_config.controls.integrate_source_function) {
             try source_levels.fillSourceLevelsAtWavelength(
                 wavelength_nm,
                 layer_grid,
@@ -267,7 +271,7 @@ pub fn radianceAtWavelength(
     };
 
     const curved_rows = curved_rows: {
-        if (prepared_config.controls.use_spherical_correction) {
+        if (prepared_solve_config.controls.use_spherical_correction) {
             const curved_count = try curved_sun_path.fillCurvedSunPathSamples(
                 layer_grid,
                 work_rows.support,
@@ -282,22 +286,22 @@ pub fn radianceAtWavelength(
     };
 
     const reflectance = reflectance: {
-        if (prepared_config.controls.scattering == .none) {
+        if (prepared_solve_config.controls.scattering == .none) {
             break :reflectance solve.directSurfaceOnly(
                 angles,
                 surface_albedo,
                 totalOpticalDepth(work_rows.layers),
-                prepared_config.derivative_mode,
-                prepared_config.derivative_state_mask,
+                prepared_solve_config.derivative_mode,
+                prepared_solve_config.derivative_state_mask,
             );
         }
 
         const needs_order_local_sum =
-            prepared_config.controls.integrate_source_function and
-            prepared_config.derivative_mode != .none;
+            prepared_solve_config.controls.integrate_source_function and
+            prepared_solve_config.derivative_mode != .none;
         var work = try worker_memory.solveWorkArrays(
             layer_count,
-            prepared_config.controls.n_streams,
+            prepared_solve_config.controls.n_streams,
             needs_order_local_sum,
         );
         work.curved_level_starts = work_rows.curved_level_starts;
@@ -310,13 +314,13 @@ pub fn radianceAtWavelength(
             curved_rows,
             phase,
             rayleigh.phaseCoefficient2(wavelength_nm),
-            prepared_config,
+            prepared_solve_config,
             &work,
         );
     };
 
     return radiance_results.scaleReflectanceToRadiance(
-        prepared_config,
+        prepared_solve_config,
         reflectance,
         angles.solar_mu,
         solar_irradiance,
@@ -333,7 +337,7 @@ fn prefetchO2ARadianceRows(
     aerosol: aerosol_tables.AerosolLayerTable,
     phase: phase_table.PhaseTable,
     solar: solar_table.SolarTable,
-    solve_config: controls.SolveConfig,
+    prepared_solve_config: controls.SolveConfig,
     pool: ?*std.Thread.Pool,
     worker_count: usize,
     out_dense_radiance: []radiance_results.RadianceResult,
@@ -355,6 +359,7 @@ fn prefetchO2ARadianceRows(
     // row contract                                                                                             |
     //   out_dense_radiance[index] corresponds to wavelengths.wavelengths[index]. ProfileLineValues must be     |
     //   built over the same exact list so the dense index is also the spectroscopy wavelength index.           |
+    //   prepared_solve_config has already passed the root/spectrum validation boundary.                        |
     //                                                                                                          |
     // memory                                                                                                   |
     //   Each worker borrows its own TransportWorkerMemory optics and LABOS arrays. No worker writes another    |
@@ -415,7 +420,7 @@ fn prefetchO2ARadianceRows(
             .aerosol = aerosol,
             .phase = phase,
             .solar = solar,
-            .solve_config = solve_config,
+            .prepared_solve_config = prepared_solve_config,
             .out_dense_radiance = out_dense_radiance,
             .error_state = &error_state,
             .start_index = range.start,
@@ -514,7 +519,7 @@ fn radiancePrefetchWorkerMain(worker: *RadiancePrefetchWorker) void {
                 worker.aerosol,
                 worker.phase,
                 solar_irradiance,
-                worker.solve_config,
+                worker.prepared_solve_config,
                 .{
                     .line_sigma_cm2_per_molecule = worker.transport_memory.line_sigma_cm2_per_molecule,
                     .support = worker.transport_memory.support_optics,
@@ -552,7 +557,7 @@ pub fn runO2ASpectrum(
     aerosol: aerosol_tables.AerosolLayerTable,
     phase: phase_table.PhaseTable,
     solar: solar_table.SolarTable,
-    solve_config: controls.SolveConfig,
+    prepared_solve_config: controls.SolveConfig,
     sampling_policy: O2ASamplingPolicy,
     prefetch_dense_radiance: bool,
     pool: ?*std.Thread.Pool,
@@ -579,6 +584,10 @@ pub fn runO2ASpectrum(
     // memory                                                                                                   |
     //   Every dense/product/optics row is caller-owned. The wrapper allocates nothing and stores no scene,     |
     //   request, product, output, or cache owner. Worker-local optics rows come from transport_workers.        |
+    //                                                                                                          |
+    // prepared controls                                                                                        |
+    //   The root facade calls `controls.prepareSolveConfig` before building session rows. Internal tests that  |
+    //   call this function directly pass the same valid prepared shape.                                        |
     // ---------------------------------------------------------------------------------------------------------|
     const row_count = table.rows.len;
     const product_shapes_match = wavelengths.rows.len == row_count and
@@ -609,7 +618,7 @@ pub fn runO2ASpectrum(
             aerosol,
             phase,
             solar,
-            solve_config,
+            prepared_solve_config,
             pool,
             worker_count,
             product_rows.dense_radiance,
@@ -618,7 +627,7 @@ pub fn runO2ASpectrum(
     }
 
     try gatherProductRows(
-        solve_config,
+        prepared_solve_config,
         table,
         wavelengths,
         product_rows.dense_radiance,
@@ -630,7 +639,7 @@ pub fn runO2ASpectrum(
     );
 
     return postprocessAndAssembleProductRows(
-        solve_config,
+        prepared_solve_config,
         sampling_policy.uses_integrated_radiance_sampling,
         sampling_policy.uses_integrated_irradiance_sampling,
         sampling_policy.radiance_calibration,

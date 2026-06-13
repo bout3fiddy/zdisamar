@@ -187,15 +187,15 @@ pub fn build(b: *std.Build) void {
         "Run explicit-dataflow unit and parity tests",
         "tests/unit/root.zig",
     );
-    const run_transport_tests = addTestStep(
+    const run_rtm_tests = addTestStep(
         b,
         target,
         optimize,
         internal_module,
         disabled_instrumentation,
-        "test-transport",
-        "Run focused WP3 transport tests",
-        "tests/unit/transport_root.zig",
+        "test-rtm",
+        "Run focused WP3 RTM tests",
+        "tests/unit/rtm_root.zig",
     );
     const run_enabled_instrumentation_tests = addTestStep(
         b,
@@ -207,6 +207,28 @@ pub fn build(b: *std.Build) void {
         "Compile instrumentation facades with enabled build options",
         "tests/unit/instrumentation/enabled_facades_test.zig",
     );
+    const c_api_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/unit/api/c_abi_test.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "c_api", .module = c_api_module },
+                .{ .name = "build_options", .module = disabled_instrumentation.build_options },
+                .{ .name = "ztracy", .module = disabled_instrumentation.ztracy },
+                .{
+                    .name = "calculation_telemetry_sink",
+                    .module = disabled_instrumentation.calculation_telemetry_sink,
+                },
+                .{
+                    .name = "perturbation_sensitivity_sink",
+                    .module = disabled_instrumentation.perturbation_sensitivity_sink,
+                },
+            },
+        }),
+    });
+    const run_c_api_tests = b.addRunArtifact(c_api_tests);
+    b.step("test-api-c", "Run focused C ABI tests").dependOn(&run_c_api_tests.step);
 
     const no_inline_src_tests_cmd = b.addSystemCommand(&.{"scripts/check-no-inline-src-tests.sh"});
     const fmt_check_cmd = b.addFmt(.{
@@ -232,10 +254,15 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&lib.step);
     check_step.dependOn(&c_api_lib.step);
     check_step.dependOn(&run_unit_tests.step);
+    check_step.dependOn(&run_c_api_tests.step);
     check_step.dependOn(&run_enabled_instrumentation_tests.step);
 
     const test_fast_step = b.step("test-fast", "Run fast explicit-dataflow test suite");
     test_fast_step.dependOn(&run_unit_tests.step);
-    test_fast_step.dependOn(&run_transport_tests.step);
+    test_fast_step.dependOn(&run_c_api_tests.step);
+    test_fast_step.dependOn(&run_rtm_tests.step);
     test_fast_step.dependOn(&run_enabled_instrumentation_tests.step);
+
+    const test_step = b.step("test", "Run retained explicit-dataflow test suite");
+    test_step.dependOn(test_fast_step);
 }

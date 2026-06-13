@@ -2,7 +2,7 @@ const std = @import("std");
 
 const internal = @import("internal");
 
-const rows = internal.transport.rows;
+const rows = internal.rtm.rows;
 
 // RowsLayoutEvidence ---------------------------------------------------------------------------------------- |
 // Old LABOS row byte sizes from main:`radiative_transfer/labos/types.zig`.                                    |

@@ -135,6 +135,38 @@ test "O2 SpectrumSamplingTable builder matches WP1 aggregate and exact-key evide
     try std.testing.expectApproxEqAbs(776.8246811031544, list.wavelengths[list.wavelengths.len - 1].wavelength_nm, 0.0);
 }
 
+test "O2 SpectrumSamplingTable consumes explicit sparse measured wavelengths" {
+    const explicit_wavelengths = [_]f64{ 758.0, 758.06, 758.21, 758.27 };
+    var case = internal.input.defaults.referenceCase();
+    case.spectral_grid = .{
+        .start_nm = explicit_wavelengths[0],
+        .end_nm = explicit_wavelengths[explicit_wavelengths.len - 1],
+        .sample_count = explicit_wavelengths.len,
+    };
+    case.observation.measured_wavelengths_nm = explicit_wavelengths[0..];
+
+    try internal.input.validate.o2Case(case);
+
+    var tables = try internal.setup.o2_run_tables.buildO2RunTables(std.testing.allocator, case);
+    defer tables.deinit(std.testing.allocator);
+
+    var owned = try sampling_table.buildO2SpectrumSamplingTable(
+        std.testing.allocator,
+        case,
+        tables.instrument,
+        tables.lines,
+    );
+    defer owned.deinit(std.testing.allocator);
+
+    const table = owned.view();
+    try std.testing.expectEqual(explicit_wavelengths.len, table.rows.len);
+    for (explicit_wavelengths, table.rows) |expected_wavelength_nm, row| {
+        try std.testing.expectApproxEqAbs(expected_wavelength_nm, row.nominal_wavelength_nm, 0.0);
+        try std.testing.expectApproxEqAbs(expected_wavelength_nm, row.radiance_wavelength_nm, 0.0);
+        try std.testing.expectApproxEqAbs(expected_wavelength_nm, row.irradiance_wavelength_nm, 0.0);
+    }
+}
+
 test "O2 SpectrumSamplingTable parallel fill keeps resolved samples deterministic" {
     var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         std.testing.allocator,

@@ -2,8 +2,8 @@ const std = @import("std");
 
 const internal = @import("internal");
 
-const gauss_angles = internal.transport.gauss_angles;
-const phase_basis = internal.transport.phase_basis;
+const gauss_angles = internal.rtm.gauss_angles;
+const phase_basis = internal.rtm.phase_basis;
 const phase_table = internal.setup.phase_table;
 
 test "Fourier PLM basis keeps old fixed layout" {

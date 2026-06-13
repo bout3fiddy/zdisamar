@@ -2,8 +2,8 @@ const std = @import("std");
 
 const internal = @import("internal");
 
-const controls = internal.transport.controls;
-const jacobian_states = internal.transport.jacobian_states;
+const controls = internal.rtm.controls;
+const jacobian_states = internal.rtm.jacobian_states;
 const instrument_average = internal.spectrum.instrument_average;
 const radiance_results = internal.spectrum.radiance_results;
 
@@ -62,10 +62,10 @@ test "postprocessSignal rejects in-place non-integrated convolution" {
 
 test "postprocessRadianceResults convolves and calibrates active row-vector Jacobian lanes" {
     const raw = [_]radiance_results.RadianceResult{
-        .{ .radiance = 2.0, .jacobian = .{ 1.0, 10.0, 100.0 } },
-        .{ .radiance = 4.0, .jacobian = .{ 2.0, 20.0, 200.0 } },
-        .{ .radiance = 8.0, .jacobian = .{ 4.0, 40.0, 400.0 } },
-        .{ .radiance = 16.0, .jacobian = .{ 8.0, 80.0, 800.0 } },
+        .{ .radiance = 2.0, .jacobian = .{ 1.0, 100.0 } },
+        .{ .radiance = 4.0, .jacobian = .{ 2.0, 200.0 } },
+        .{ .radiance = 8.0, .jacobian = .{ 4.0, 400.0 } },
+        .{ .radiance = 16.0, .jacobian = .{ 8.0, 800.0 } },
     };
     const kernel = [_]f64{ 1.0, 2.0, 1.0 };
     const calibration = instrument_average.Calibration{
@@ -73,8 +73,7 @@ test "postprocessRadianceResults convolves and calibrates active row-vector Jaco
         .offset = 0.5,
         .stray_light = 0.25,
     };
-    const mask = jacobian_states.stateMask(.surface_albedo) |
-        jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa);
+    const mask = jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa);
     var output = [_]radiance_results.RadianceResult{.{}} ** raw.len;
 
     try instrument_average.postprocessRadianceResults(
@@ -90,12 +89,10 @@ test "postprocessRadianceResults convolves and calibrates active row-vector Jaco
     );
 
     var convolved_radiance: [raw.len]f64 = undefined;
-    var convolved_surface: [raw.len]f64 = undefined;
     var convolved_pressure: [raw.len]f64 = undefined;
     for (0..raw.len) |index| {
         convolved_radiance[index] = expectedConvolutionRow(raw[0..], kernel[0..], index, .radiance, 0);
-        convolved_surface[index] = expectedConvolutionRow(raw[0..], kernel[0..], index, .jacobian, 0);
-        convolved_pressure[index] = expectedConvolutionRow(raw[0..], kernel[0..], index, .jacobian, 2);
+        convolved_pressure[index] = expectedConvolutionRow(raw[0..], kernel[0..], index, .jacobian, 1);
     }
 
     for (output, 0..) |actual, index| {
@@ -104,15 +101,10 @@ test "postprocessRadianceResults convolves and calibrates active row-vector Jaco
             actual.radiance,
             1.0e-15,
         );
-        try std.testing.expectApproxEqAbs(
-            expectedDerivativeCalibration(calibration, convolved_surface[0..], index),
-            actual.jacobian[0],
-            1.0e-15,
-        );
-        try std.testing.expectApproxEqAbs(0.0, actual.jacobian[1], 0.0);
+        try std.testing.expectApproxEqAbs(0.0, actual.jacobian[0], 0.0);
         try std.testing.expectApproxEqAbs(
             expectedDerivativeCalibration(calibration, convolved_pressure[0..], index),
-            actual.jacobian[2],
+            actual.jacobian[1],
             1.0e-12,
         );
     }
@@ -120,8 +112,8 @@ test "postprocessRadianceResults convolves and calibrates active row-vector Jaco
 
 test "postprocessRadianceResults permits in-place integrated sampling and zeros inactive lanes" {
     var rows = [_]radiance_results.RadianceResult{
-        .{ .radiance = 1.0, .jacobian = .{ 2.0, 3.0, 4.0 } },
-        .{ .radiance = 3.0, .jacobian = .{ 6.0, 9.0, 12.0 } },
+        .{ .radiance = 1.0, .jacobian = .{ 2.0, 4.0 } },
+        .{ .radiance = 3.0, .jacobian = .{ 6.0, 12.0 } },
     };
     const calibration = instrument_average.Calibration{
         .gain = 2.0,
@@ -227,11 +219,10 @@ test "assembleReflectanceResults keeps old denominator floor and clamp summary" 
 }
 
 test "assembleReflectanceResults scales active radiance Jacobian lanes into reflectance units" {
-    const mask = jacobian_states.stateMask(.surface_albedo) |
-        jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa);
+    const mask = jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa);
     const radiance = [_]radiance_results.RadianceResult{
-        .{ .radiance = 2.0, .jacobian = .{ 0.25, 25.0, 250.0 } },
-        .{ .radiance = 4.0, .jacobian = .{ 0.5, 50.0, 500.0 } },
+        .{ .radiance = 2.0, .jacobian = .{ 0.25, 250.0 } },
+        .{ .radiance = 4.0, .jacobian = .{ 0.5, 500.0 } },
     };
     const irradiance = [_]f64{ 8.0, 16.0 };
     var reflectance = [_]f64{0.0} ** 2;
@@ -253,20 +244,17 @@ test "assembleReflectanceResults scales active radiance Jacobian lanes into refl
     const scale1 = std.math.pi / (16.0 * 0.5);
     try std.testing.expectApproxEqAbs(2.0 * scale0, reflectance[0], 1.0e-15);
     try std.testing.expectApproxEqAbs(4.0 * scale1, reflectance[1], 1.0e-15);
-    try std.testing.expectApproxEqAbs(0.25 * scale0, jacobian[0][0], 1.0e-15);
-    try std.testing.expectApproxEqAbs(0.0, jacobian[0][1], 0.0);
-    try std.testing.expectApproxEqAbs(250.0 * scale0, jacobian[0][2], 1.0e-13);
-    try std.testing.expectApproxEqAbs(0.5 * scale1, jacobian[1][0], 1.0e-15);
-    try std.testing.expectApproxEqAbs(0.0, jacobian[1][1], 0.0);
-    try std.testing.expectApproxEqAbs(500.0 * scale1, jacobian[1][2], 1.0e-13);
-    try std.testing.expectApproxEqAbs(jacobian[0][0] + jacobian[1][0], summary.jacobian_sum[0], 1.0e-15);
-    try std.testing.expectApproxEqAbs(0.0, summary.jacobian_sum[1], 0.0);
-    try std.testing.expectApproxEqAbs(jacobian[0][2] + jacobian[1][2], summary.jacobian_sum[2], 1.0e-13);
+    try std.testing.expectApproxEqAbs(0.0, jacobian[0][0], 0.0);
+    try std.testing.expectApproxEqAbs(250.0 * scale0, jacobian[0][1], 1.0e-13);
+    try std.testing.expectApproxEqAbs(0.0, jacobian[1][0], 0.0);
+    try std.testing.expectApproxEqAbs(500.0 * scale1, jacobian[1][1], 1.0e-13);
+    try std.testing.expectApproxEqAbs(0.0, summary.jacobian_sum[0], 0.0);
+    try std.testing.expectApproxEqAbs(jacobian[0][1] + jacobian[1][1], summary.jacobian_sum[1], 1.0e-13);
 }
 
 test "assembleReflectanceResults requires output rows for requested Jacobians" {
     const radiance = [_]radiance_results.RadianceResult{
-        .{ .radiance = 1.0, .jacobian = .{ 1.0, 2.0, 3.0 } },
+        .{ .radiance = 1.0, .jacobian = .{ 1.0, 2.0 } },
     };
     const irradiance = [_]f64{2.0};
     var reflectance = [_]f64{0.0};
@@ -290,14 +278,14 @@ test "assembleReflectanceResults requires output rows for requested Jacobians" {
 
 test "assembleReflectanceResults zeros provided Jacobian rows when derivative mode is off" {
     const radiance = [_]radiance_results.RadianceResult{
-        .{ .radiance = 1.0, .jacobian = .{ 1.0, 2.0, 3.0 } },
-        .{ .radiance = 2.0, .jacobian = .{ 4.0, 5.0, 6.0 } },
+        .{ .radiance = 1.0, .jacobian = .{ 1.0, 2.0 } },
+        .{ .radiance = 2.0, .jacobian = .{ 4.0, 5.0 } },
     };
     const irradiance = [_]f64{ 10.0, 20.0 };
     var reflectance = [_]f64{0.0} ** 2;
     var jacobian = [_]jacobian_states.Vector{
-        .{ 9.0, 9.0, 9.0 },
-        .{ 8.0, 8.0, 8.0 },
+        .{ 9.0, 9.0 },
+        .{ 8.0, 8.0 },
     };
 
     const summary = try instrument_average.assembleReflectanceResults(

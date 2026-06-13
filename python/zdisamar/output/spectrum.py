@@ -8,7 +8,6 @@ from ..display import NotebookDisplay
 from ..input.wavelength_band.o2a import O2AInput
 
 JACOBIAN_STATE_NAMES = (
-    "surface_albedo",
     "aerosol_optical_depth",
     "aerosol_layer_mid_pressure_hpa",
 )

@@ -2,13 +2,13 @@ const std = @import("std");
 
 const internal = @import("internal");
 
-const controls = internal.transport.controls;
-const gauss_angles = internal.transport.gauss_angles;
+const controls = internal.rtm.controls;
+const gauss_angles = internal.rtm.gauss_angles;
 const layer_depths = internal.optics.layer_depths;
-const phase_basis = internal.transport.phase_basis;
+const phase_basis = internal.rtm.phase_basis;
 const phase_table = internal.setup.phase_table;
-const reflectance = internal.transport.reflectance;
-const rows = internal.transport.rows;
+const reflectance = internal.rtm.reflectance;
+const rows = internal.rtm.rows;
 const source_levels = internal.optics.source_levels;
 const sensitivity = internal.instrumentation.sensitivity;
 
@@ -61,32 +61,6 @@ test "Fourier zero weight and floor prevent early tail stop" {
     try std.testing.expectEqual(
         false,
         reflectance.fourierTailBreak(1, 1.0e-12, thresholds, coord),
-    );
-}
-
-test "surface albedo weighting integrates direct and diffuse surface fields" {
-    const geometry = try gauss_angles.GaussGeometry.init(4, 0.58, 0.64);
-    var fields = zeroFields(2, geometry.stream_count);
-    const surface_level: usize = 0;
-    fields[surface_level].E.set(geometry.viewIndex(), 0.71);
-    fields[surface_level].E.set(geometry.solarIndex(), 0.64);
-
-    var diffuse_view: f64 = 0.0;
-    var diffuse_solar: f64 = 0.0;
-    for (0..geometry.n_gauss) |gauss_index| {
-        const view_value = 0.01 * @as(f64, @floatFromInt(gauss_index + 1));
-        const solar_value = 0.015 * @as(f64, @floatFromInt(gauss_index + 2));
-        fields[surface_level].D.col[0].set(gauss_index, view_value);
-        fields[surface_level].D.col[1].set(gauss_index, solar_value);
-        diffuse_view += view_value * geometry.w[gauss_index];
-        diffuse_solar += solar_value * geometry.w[gauss_index];
-    }
-
-    const expected = (0.71 + diffuse_view) * (0.64 + diffuse_solar);
-    try std.testing.expectApproxEqAbs(
-        expected,
-        reflectance.surfaceAlbedoWeighting(&fields, &geometry),
-        1.0e-15,
     );
 }
 

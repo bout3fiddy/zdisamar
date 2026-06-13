@@ -5,10 +5,10 @@ const sink = @import("perturbation_sensitivity_sink");
 // Perturbation-sensitivity facade for ablation sweeps around selected LABOS decisions.                          |
 //                                                                                                               |
 // called from                                                                                                   |
-//   transport/reflectance.zig wraps Fourier contribution and Fourier tail-stop decisions.                       |
-//   transport/solve.zig wraps integrated and non-integrated aerosol tangent contributions.                      |
-//   transport/layer_reflect_transmit.zig wraps q-series skip plus downstream R-D, T-U, and T-D product gates.   |
-//   transport/scattering_orders.zig wraps initial and multiple-scattering convergence decisions.                |
+//   rtm/reflectance.zig wraps Fourier contribution and Fourier tail-stop decisions.                             |
+//   rtm/solve.zig wraps integrated and non-integrated aerosol tangent contributions.                            |
+//   rtm/layer_reflect_transmit.zig wraps q-series skip plus downstream R-D, T-U, and T-D product gates.         |
+//   rtm/scattering_orders.zig wraps initial and multiple-scattering convergence decisions.                      |
 //   The active sweep implementation lives in scaffolding/instrumentation/perturbation; normal builds import     |
 //   the disabled sink stub.                                                                                     |
 //                                                                                                               |

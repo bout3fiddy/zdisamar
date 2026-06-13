@@ -18,6 +18,7 @@ const Perturbation = @import("../instrumentation/sensitivity.zig");
 const math = std.math;
 
 const direct_direction_cosine_floor: f64 = 0.05;
+const near_normal_mu_delta: f64 = 1.0e-5;
 
 pub const Error = controls.PrepareError || attenuation.Error || gauss_angles.Error || error{
     InvalidShape,
@@ -29,7 +30,7 @@ pub const Error = controls.PrepareError || attenuation.Error || gauss_angles.Err
 // provenance                                                                                                  |
 //   Ports the non-integrated branch of main:`src/forward_model/radiative_transfer/labos/execute.zig`:         |
 //   `directSurfaceOnly`, geometry setup, attenuation fill, RT layer build, scattering-order propagation,      |
-//   Fourier weighting, tail stop, public clamp, and zero-Fourier surface-albedo tangent.                      |
+//   Fourier weighting, tail stop, public clamp, and aerosol tangents.                                         |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   Inputs are explicit rows and scalars: angles, surface albedo, layer optics, source levels, curved-path    |
@@ -88,9 +89,9 @@ pub const ViewAngles = struct {
 //                                                                                                             |
 // memory                                                                                                      |
 // [ 0.. 7] reflectance : f64                                                                                  |
-// [ 8..31] jacobian    : [3]f64                                                                               |
+// [ 8..23] jacobian    : [2]f64                                                                               |
 //                                                                                                             |
-// footprint: per instance = 32 B (0.031 KiB); returned by value                                               |
+// footprint: per instance = 24 B (0.023 KiB); returned by value                                               |
 pub const ReflectanceResult = struct {
     reflectance: f64,
     jacobian: jacobian_states.Vector = jacobian_states.zero(),
@@ -101,8 +102,8 @@ pub const ReflectanceResult = struct {
 // Borrowed transport scratch passed to solveReflectance.                                                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// normal build: size 360 B (0.352 KiB), align 8                                                               |
-// trace build : size 368 B (0.359 KiB), align 8                                                               |
+// normal build: size 368 B (0.359 KiB), align 8                                                               |
+// trace build : size 376 B (0.367 KiB), align 8                                                               |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0..  7] geometry                     : *GaussGeometry                                                    |
@@ -122,9 +123,11 @@ pub const ReflectanceResult = struct {
 // [216..327] normal build: orders         : OrdersWorkArrays                                                  |
 // [328..343] normal build: plm_basis_cache: []FourierPlmBasis                                                 |
 // [344..359] normal build: valid flags    : []bool                                                            |
+// [360..367] normal build: geometry_valid : *bool                                                             |
 // [328..335] trace build only: orders extra trace field                                                       |
 // [336..351] trace build : plm_basis_cache: []FourierPlmBasis                                                 |
 // [352..367] trace build : valid flags    : []bool                                                            |
+// [368..375] trace build : geometry_valid : *bool                                                             |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Every slice borrows caller-owned memory, normally from TransportWorkerMemory.                             |
@@ -147,6 +150,7 @@ pub const TransportWorkArrays = struct {
     orders: scattering_orders.OrdersWorkArrays,
     plm_basis_cache: []phase_basis.FourierPlmBasis,
     plm_basis_cache_valid: []bool,
+    geometry_valid: *bool,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -158,7 +162,7 @@ pub fn solveReflectance(
     curved_samples: []const curved_sun_path.CurvedSunPathSample,
     phase: phase_table.PhaseTable,
     rayleigh_phase_coefficient2: f64,
-    prepared_config: controls.SolveConfig,
+    config: controls.SolveConfig,
     work: *TransportWorkArrays,
 ) Error!ReflectanceResult {
     // solveReflectance -------------------------------------------------------------------------------------  |
@@ -166,11 +170,15 @@ pub fn solveReflectance(
     // scattering route wires the non-integrated Fourier path through caller-owned work arrays.                |
     //                                                                                                         |
     // steps                                                                                                   |
-    //   1. validate prepared controls and reject unsupported route combinations                               |
-    //   2. choose direct surface or layer-resolved LABOS transport                                            |
-    //   3. require integrated-source rows before accepting pressure Jacobians                                 |
-    //   4. build the borrowed curved-grid view for pseudo-spherical top paths                                 |
-    //   5. return reflectance plus fixed-order Jacobian vector                                                |
+    //   1. choose direct surface or layer-resolved LABOS transport                                            |
+    //   2. require integrated-source rows before accepting pressure Jacobians                                 |
+    //   3. build the borrowed curved-grid view for pseudo-spherical top paths                                 |
+    //   4. return reflectance plus fixed-order Jacobian vector                                                |
+    //                                                                                                         |
+    // prepared controls                                                                                       |
+    //   Callers pass the result of `controls.prepareSolveConfig`. This matches old main:                      |
+    //   `radiative_transfer/root.zig` `executePreparedWithLabosWorkspace`, where wavelength workers do not    |
+    //   re-validate stream counts, thresholds, or derivative masks inside each LABOS solve.                   |
     //                                                                                                         |
     // direct math                                                                                             |
     //   direct path = exp(-tau / max(mu0, 0.05)) * exp(-tau / max(muv, 0.05))                                 |
@@ -179,7 +187,6 @@ pub fn solveReflectance(
     // unsupported routes                                                                                      |
     //   Pressure derivatives require the integrated-source RTM quadrature weighting route.                    |
     // --------------------------------------------------------------------------------------------------------|
-    const config = try controls.prepareSolveConfig(prepared_config);
     if (config.controls.scattering == .none) {
         if (config.controls.use_spherical_correction) return error.UnsupportedRadiativeTransferControls;
         return directSurfaceOnly(
@@ -246,19 +253,12 @@ pub fn directSurfaceOnly(
     const mu0 = @max(angles.solar_mu, direct_direction_cosine_floor);
     const muv = @max(angles.view_mu, direct_direction_cosine_floor);
     const direct = math.exp(-total_optical_depth / mu0) * math.exp(-total_optical_depth / muv);
+    _ = derivative_mode;
+    _ = derivative_state_mask;
     const raw_reflectance = surface_albedo * direct;
-    const wants_surface_albedo =
-        derivative_mode != .none and
-        jacobian_states.includes(derivative_state_mask, .surface_albedo);
-
-    var jacobian = jacobian_states.zero();
-    if (wants_surface_albedo and raw_reflectance >= 0.0 and raw_reflectance < 2.0) {
-        jacobian_states.set(&jacobian, .surface_albedo, direct);
-    }
 
     return .{
         .reflectance = math.clamp(raw_reflectance, 0.0, 2.0),
-        .jacobian = jacobian,
     };
 }
 
@@ -311,7 +311,27 @@ fn solveLayerResolvedScattering(
 
     const mu0 = @max(angles.solar_mu, direct_direction_cosine_floor);
     const muv = @max(angles.view_mu, direct_direction_cosine_floor);
-    work.geometry.* = try gauss_angles.GaussGeometry.init(config.controls.nGauss(), mu0, muv);
+    const n_gauss = config.controls.nGauss();
+    const geometry_miss =
+        !work.geometry_valid.* or
+        work.geometry.n_gauss != n_gauss or
+        work.geometry.solar_mu != mu0 or
+        work.geometry.view_mu != muv;
+    if (geometry_miss) {
+        // geometry cache ------------------------------------------------------------------------------------ |
+        // Port main:`src/forward_model/radiative_transfer/labos/workspace.zig` geometryWithStatus.            |
+        //                                                                                                     |
+        // cache key                                                                                           |
+        //   n_gauss, solar direction cosine, and viewing direction cosine.                                    |
+        //                                                                                                     |
+        // invalidation                                                                                        |
+        //   PLM basis rows are functions of stream directions and direction-pair factors. Rebuild geometry    |
+        //   only when that key changes, then force Fourier PLM rows to be rebuilt against the new geometry.   |
+        // ----------------------------------------------------------------------------------------------------|
+        work.geometry.* = try gauss_angles.GaussGeometry.init(n_gauss, mu0, muv);
+        work.geometry_valid.* = true;
+        @memset(work.plm_basis_cache_valid, false);
+    }
     const geometry = work.geometry;
     const layer_count = layers.len;
     const level_count = layer_count + 1;
@@ -364,7 +384,13 @@ fn solveLayerResolvedScattering(
     fillSourcePhaseMaxIndicesFromLayers(source_phase_max_indices, layer_phase_max_indices);
 
     const phase_max = maxLayerPhaseIndex(layer_phase_max_indices);
-    const fourier_max = config.controls.performance_thresholds.cappedFourierMax(phase_max);
+    const fourier_max = resolvedFourierMax(
+        layer_count,
+        mu0,
+        muv,
+        phase_max,
+        config.controls.performance_thresholds,
+    );
     const phase_suffix_stride = @min(phase_max, fourier_max) + 1;
     const suffix_required = layer_count * phase_suffix_stride;
     if (work.effective_scattering_suffixes.len < suffix_required) return error.InvalidShape;
@@ -380,9 +406,6 @@ fn solveLayerResolvedScattering(
 
     const rt_layers = work.rt_layers[0..level_count];
     const order_count: usize = @intCast(config.controls.resolvedNumOrdersMax(totalScatteringOpticalDepth(layers)));
-    const wants_surface_albedo =
-        config.derivative_mode != .none and
-        jacobian_states.includes(config.derivative_state_mask, .surface_albedo);
     const wants_aerosol_optical_depth =
         config.derivative_mode != .none and
         jacobian_states.includes(config.derivative_state_mask, .aerosol_optical_depth);
@@ -396,7 +419,6 @@ fn solveLayerResolvedScattering(
     const layer_phase_row_valid = work.phase_row_valid[0..level_count];
 
     var result_reflectance: f64 = 0.0;
-    var surface_albedo_tangent: f64 = 0.0;
     var aerosol_optical_depth_tangent: f64 = 0.0;
     var aerosol_layer_pressure_tangent: f64 = 0.0;
     for (0..fourier_max + 1) |fourier_index| {
@@ -495,9 +517,6 @@ fn solveLayerResolvedScattering(
         );
         result_reflectance += contribution.weighted;
 
-        if (wants_surface_albedo and fourier_index == 0) {
-            surface_albedo_tangent += reflectance_helpers.surfaceAlbedoWeighting(orders_view.ud, geometry);
-        }
         const evaluate_aerosol_tangent =
             config.controls.performance_thresholds.shouldEvaluateAerosolTangent(fourier_index);
         if (use_integrated_source and evaluate_aerosol_tangent and
@@ -645,9 +664,6 @@ fn solveLayerResolvedScattering(
     }
 
     var jacobian = jacobian_states.zero();
-    if (wants_surface_albedo) {
-        jacobian_states.set(&jacobian, .surface_albedo, surface_albedo_tangent);
-    }
     if (wants_aerosol_optical_depth) {
         jacobian_states.set(&jacobian, .aerosol_optical_depth, aerosol_optical_depth_tangent);
     }
@@ -700,6 +716,32 @@ fn maxLayerPhaseIndex(indices: []const usize) usize {
     return max_index;
 }
 
+fn resolvedFourierMax(
+    layer_count: usize,
+    solar_mu: f64,
+    view_mu: f64,
+    phase_max: usize,
+    thresholds: controls.PerformanceThresholds,
+) usize {
+    // resolvedFourierMax -----------------------------------------------------------------------------------  |
+    // Return the retained LABOS Fourier ceiling for one explicit RTM solve.                                   |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports main:`src/forward_model/radiative_transfer/labos/reflectance.zig` `resolvedFourierMax`.         |
+    //                                                                                                         |
+    // tradeoff: near-normal scalar Fourier route                                                              |
+    //   When either direction cosine is within 1.0e-5 of normal, old LABOS evaluates only m=0.                |
+    //   The O2 A reference case exercises this route because the viewing angle is nadir.                      |
+    // --------------------------------------------------------------------------------------------------------|
+    if (layer_count == 0) return 0;
+    if ((1.0 - view_mu) < near_normal_mu_delta or
+        (1.0 - solar_mu) < near_normal_mu_delta)
+    {
+        return 0;
+    }
+    return thresholds.cappedFourierMax(phase_max);
+}
+
 fn fillSourcePhaseMaxIndicesFromLayers(
     source_phase_max_indices: []usize,
     layer_phase_max_indices: []const usize,
@@ -735,8 +777,8 @@ fn totalScatteringOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {
 }
 
 comptime {
-    const expected_work_size: usize = if (@sizeOf(scattering_orders.OrdersWorkArrays) == 120) 368 else 360;
+    const expected_work_size: usize = if (@sizeOf(scattering_orders.OrdersWorkArrays) == 120) 376 else 368;
     std.debug.assert(@sizeOf(ViewAngles) == 24);
-    std.debug.assert(@sizeOf(ReflectanceResult) == 32);
+    std.debug.assert(@sizeOf(ReflectanceResult) == 24);
     std.debug.assert(@sizeOf(TransportWorkArrays) == expected_work_size);
 }

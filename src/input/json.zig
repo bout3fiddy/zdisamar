@@ -3,7 +3,7 @@ const std = @import("std");
 const defaults = @import("defaults.zig");
 const errors = @import("../common/errors.zig");
 const o2_case = @import("o2_case.zig");
-const transport_controls = @import("../transport/controls.zig");
+const transport_controls = @import("../rtm/controls.zig");
 const validate = @import("validate.zig");
 
 const Allocator = std.mem.Allocator;
@@ -27,11 +27,11 @@ const default_output_isotopes = [_]usize{ 1, 2, 3 };
 // Owns parser arena storage backing one borrowed O2Case.                                                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 1728 B (1.688 KiB), align: 8 B                                                                        |
+// size: 1744 B (1.703 KiB), align: 8 B                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
 // [   0..1039] parsed: std.json.Parsed(NativeO2CaseJson)                                                      |
-// [1040..1727] case  : O2Case                                                                                 |
+// [1040..1743] case  : O2Case                                                                                 |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   case slices and strings point into parsed.arena and stay valid until deinit.                              |
@@ -142,6 +142,7 @@ fn buildCase(native: NativeO2CaseJson) !o2_case.O2Case {
             .strong_line_min_divisions = native.observation.adaptive_reference_grid.strong_line_min_divisions,
             .strong_line_max_divisions = native.observation.adaptive_reference_grid.strong_line_max_divisions,
             .solar_reference = native.inputs.raw_solar_reference,
+            .measured_wavelengths_nm = native.observation.measured_wavelengths_nm,
         },
 
         .line_gas = .{
@@ -194,7 +195,7 @@ fn validateO2Assets(inputs: O2InputsJson) !void {
 
 fn validateObservation(observation: ObservationJson, solar_reference_asset_id: []const u8) !void {
     // validateObservation ------------------------------------------------------------------------------------|
-    // Accept the current O2 A instrument route and reject explicit measurement axes until sampling ports it.  |
+    // Accept the current O2 A instrument route and pass explicit sparse product axes to O2Case validation.   |
     // --------------------------------------------------------------------------------------------------------|
     if (!std.mem.eql(u8, observation.regime, "nadir")) return errors.Error.UnsupportedJsonInput;
     if (!std.mem.eql(u8, observation.sampling, "native")) return errors.Error.UnsupportedJsonInput;
@@ -202,7 +203,6 @@ fn validateObservation(observation: ObservationJson, solar_reference_asset_id: [
     if (!std.mem.eql(u8, observation.solar_reference_asset_id, solar_reference_asset_id)) {
         return errors.Error.UnsupportedJsonInput;
     }
-    if (observation.measured_wavelengths_nm.len != 0) return errors.Error.UnsupportedJsonInput;
 }
 
 fn validateRtm(
@@ -426,6 +426,7 @@ fn outputO2Case(case: o2_case.O2Case) OutputO2CaseJson {
                 .strong_line_max_divisions = case.observation.strong_line_max_divisions,
             },
             .solar_reference_asset_id = case.observation.solar_reference.id,
+            .measured_wavelengths_nm = case.observation.measured_wavelengths_nm,
         },
 
         .o2 = .{

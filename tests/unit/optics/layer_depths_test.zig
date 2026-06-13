@@ -4,7 +4,7 @@ const internal = @import("internal");
 const defaults = internal.input.defaults;
 const layer_depths = internal.optics.layer_depths;
 const setup = internal.setup.o2_run_tables;
-const jacobian = internal.transport.jacobian_states;
+const jacobian = internal.rtm.jacobian_states;
 
 const allocator = std.testing.allocator;
 
@@ -443,7 +443,6 @@ test "layer optics fill aerosol optical-depth jacobian lanes from old route form
             jacobian.get(layer.single_scatter_albedo_jacobian, .aerosol_optical_depth),
             1.0e-14,
         );
-        try expectClose(0.0, jacobian.get(layer.optical_depth_jacobian, .surface_albedo), 0.0);
         try expectClose(0.0, jacobian.get(layer.aerosol_phase_weight_jacobian, .aerosol_optical_depth), 0.0);
     }
 }

@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const cia_absorption = @import("cia_absorption.zig");
-const jacobian_states = @import("../transport/jacobian_states.zig");
+const jacobian_states = @import("../rtm/jacobian_states.zig");
 const rayleigh = @import("rayleigh.zig");
 const spline = @import("../common/math/spline.zig");
 const aerosol_tables = @import("../setup/aerosol_tables.zig");
@@ -90,18 +90,17 @@ pub const SupportOptics = struct {
 // LABOS layer optical-depth row reduced from active support rows.                                             |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 176 B (0.172 KiB), align: 8 B                                                                         |
+// size: 152 B (0.148 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
-// [  0.. 55] scalar optical-depth fields        : 7 f64                                                       |
-// [ 56..127] jacobian vectors                   : 3 * [3]f64                                                  |
-// [128..151] aerosol_phase_weight_jacobian      : [3]f64                                                      |
-// [152..159] support_start                      : usize                                                       |
-// [160..167] support_count                      : usize                                                       |
-// [168..171] interval_index_1based              : u32                                                         |
-// [172..175] trailing padding                   : 4 B                                                         |
+// [  0.. 63] scalar optical-depth fields        : 8 f64                                                       |
+// [ 64..127] jacobian vectors                   : 4 * [2]f64                                                  |
+// [128..135] support_start                      : usize                                                       |
+// [136..143] support_count                      : usize                                                       |
+// [144..147] interval_index_1based              : u32                                                         |
+// [148..151] trailing padding                   : 4 B                                                         |
 //                                                                                                             |
-// footprint: per instance = 176 B (0.172 KiB); total = per instance * transport layer count                   |
+// footprint: per instance = 152 B (0.148 KiB); total = per instance * RTM layer count                         |
 pub const LayerOptics = struct {
     gas_absorption_optical_depth: f64 = 0.0,
     gas_scattering_optical_depth: f64 = 0.0,

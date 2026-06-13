@@ -2,10 +2,10 @@ const std = @import("std");
 
 const internal = @import("internal");
 
-const attenuation = internal.transport.attenuation;
+const attenuation = internal.rtm.attenuation;
 const curved_sun_path = internal.optics.curved_sun_path;
-const gauss_angles = internal.transport.gauss_angles;
-const jacobian_states = internal.transport.jacobian_states;
+const gauss_angles = internal.rtm.gauss_angles;
+const jacobian_states = internal.rtm.jacobian_states;
 const layer_depths = internal.optics.layer_depths;
 
 const earth_radius_km: f64 = 6371.0;

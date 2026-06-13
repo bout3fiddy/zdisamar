@@ -2,7 +2,7 @@ const std = @import("std");
 
 const internal = @import("internal");
 
-const phase_timing = internal.transport.phase_timing;
+const phase_timing = internal.rtm.phase_timing;
 
 test "phase timing rows keep old LABOS memory layout" {
     try std.testing.expectEqual(false, phase_timing.enabled);

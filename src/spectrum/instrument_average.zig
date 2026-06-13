@@ -1,8 +1,8 @@
 const std = @import("std");
 
 const telemetry = @import("../instrumentation/telemetry.zig");
-const controls = @import("../transport/controls.zig");
-const jacobian_states = @import("../transport/jacobian_states.zig");
+const controls = @import("../rtm/controls.zig");
+const jacobian_states = @import("../rtm/jacobian_states.zig");
 const radiance_results = @import("radiance_results.zig");
 
 pub const Error = error{
@@ -68,7 +68,7 @@ pub const Calibration = struct {
 // Per-spectrum summary from radiance/irradiance-to-reflectance conversion.                                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 80 B (0.078 KiB), align: 8 B                                                                          |
+// size: 72 B (0.070 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
 // [ 0.. 7] radiance_sum           : f64                                                                       |
@@ -76,12 +76,11 @@ pub const Calibration = struct {
 // [16..23] reflectance_sum        : f64                                                                       |
 // [24..31] min_denominator        : f64                                                                       |
 // [32..39] max_reflectance        : f64                                                                       |
-// [40..63] jacobian_sum          : [3]f64                                                                     |
+// [40..55] jacobian_sum          : [2]f64                                                                     |
 //          |----- [40..47] jacobian_sum[0]                                                                    |
 //          |----- [48..55] jacobian_sum[1]                                                                    |
-//          |----- [56..63] jacobian_sum[2]                                                                    |
-// [64..71] sample_count           : usize                                                                     |
-// [72..79] denominator_clamp_count: usize                                                                     |
+// [56..63] sample_count           : usize                                                                     |
+// [64..71] denominator_clamp_count: usize                                                                     |
 pub const ReflectanceAssemblySummary = struct {
     radiance_sum: f64 = 0.0,
     irradiance_sum: f64 = 0.0,
@@ -534,5 +533,5 @@ fn slicesOverlap(
 
 comptime {
     std.debug.assert(@sizeOf(Calibration) == 32);
-    std.debug.assert(@sizeOf(ReflectanceAssemblySummary) == 80);
+    std.debug.assert(@sizeOf(ReflectanceAssemblySummary) == 72);
 }

@@ -579,13 +579,20 @@ pub fn buildO2SpectrumSamplingTable(
     //                                                                                                         |
     // route                                                                                                   |
     //   spectral grid -> strong-line adaptive interval plan -> radiance/irradiance kernels -> compact rows    |
+    //   measured_wavelengths_nm, when present, replaces only the nominal product axis; the grid endpoints     |
+    //   still define the global support span used by the adaptive plan.                                       |
     //                                                                                                         |
     // math                                                                                                    |
     //   nominal_i = start + i * (end - start) / (count - 1)                                                   |
     //   raw_w_j   = flat_top_n4(lambda_j - nominal_i) * interval_width * Gauss weight                         |
     //   w_j       = raw_w_j / sum_k raw_w_k after duplicate wavelengths are merged                            |
     // --------------------------------------------------------------------------------------------------------|
-    return buildO2SpectrumSamplingTableWithNominals(allocator, case, instrument, lines, null);
+    const explicit_nominals = if (case.observation.measured_wavelengths_nm.len == 0)
+        null
+    else
+        case.observation.measured_wavelengths_nm;
+
+    return buildO2SpectrumSamplingTableWithNominals(allocator, case, instrument, lines, explicit_nominals);
 }
 
 pub fn buildO2SpectrumSamplingTableForWavelengths(

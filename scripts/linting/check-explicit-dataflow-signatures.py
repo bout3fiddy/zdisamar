@@ -10,7 +10,7 @@ from pathlib import Path
 
 HOT_FOLDERS = (
     "src/optics",
-    "src/transport",
+    "src/rtm",
     "src/spectrum",
     "src/retrieval",
 )

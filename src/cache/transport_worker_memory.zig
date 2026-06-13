@@ -4,13 +4,13 @@ const memory = @import("../common/memory.zig");
 const curved_sun_path = @import("../optics/curved_sun_path.zig");
 const layer_depths = @import("../optics/layer_depths.zig");
 const source_levels = @import("../optics/source_levels.zig");
-const attenuation = @import("../transport/attenuation.zig");
-const gauss_angles = @import("../transport/gauss_angles.zig");
-const phase_basis = @import("../transport/phase_basis.zig");
+const attenuation = @import("../rtm/attenuation.zig");
+const gauss_angles = @import("../rtm/gauss_angles.zig");
+const phase_basis = @import("../rtm/phase_basis.zig");
 const phase_table = @import("../setup/phase_table.zig");
-const rows = @import("../transport/rows.zig");
-const scattering_orders = @import("../transport/scattering_orders.zig");
-const solve = @import("../transport/solve.zig");
+const rows = @import("../rtm/rows.zig");
+const scattering_orders = @import("../rtm/scattering_orders.zig");
+const solve = @import("../rtm/solve.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -23,11 +23,14 @@ pub const Error = error{
 //                                                                                                             |
 // provenance                                                                                                  |
 //   Splits the old main:`src/forward_model/radiative_transfer/labos/workspace.zig` allocation owner into a    |
-//   named WP3 memory block. The borrowed row types come from the new `transport/*` modules.                   |
+//   named WP3 memory block. The borrowed row types come from the new `rtm/*` modules.                         |
 //                                                                                                             |
 // ownership boundary                                                                                          |
 //   This owner stores arrays, geometry reuse state, and validity flags only. Optical-property values, phase   |
 //   coefficients, RTM controls, source-level rows, and angles stay visible in worker function signatures.     |
+//   Geometry reuse follows main:`src/forward_model/radiative_transfer/labos/workspace.zig`: the retained      |
+//   geometry is valid until n_gauss, solar_mu, or view_mu changes, and the solve layer invalidates dependent  |
+//   PLM rows only on that miss.                                                                               |
 //                                                                                                             |
 // hot path contract                                                                                           |
 //   Call `ensureOpticsCapacity` and `ensureCapacity` before per-wavelength solves. Accessors below borrow     |
@@ -38,7 +41,7 @@ pub const Error = error{
 // Allocation owner for one worker-local optics and LABOS solve path.                                          |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 3264 B (3.188 KiB), align: 8 B                                                                        |
+// size: 3272 B (3.195 KiB), align: 8 B                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
 // [   0..  15] attenuation_data                         : []f64                                               |
@@ -69,10 +72,13 @@ pub const Error = error{
 // [ 400.. 415] curved_level_starts               : []usize                                                    |
 // [ 416.. 431] curved_level_altitudes_km         : []f64                                                      |
 // [ 432..3263] cached_geometry                   : GaussGeometry                                              |
+// [3264..3264] cached_geometry_valid             : bool                                                       |
+// [3265..3271] trailing padding                  : 7 B                                                        |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Every slice owns heap storage and is released by deinit. Optics rows are borrowed by spectrum prefetch;   |
 //   active LABOS prefixes are borrowed by transport code.                                                     |
+// unused bits: 56 padding + 7 bool-storage slack = 63 bits                                                    |
 pub const TransportWorkerMemory = struct {
     attenuation_data: []f64 = &.{},
     attenuation_tangent_data: []f64 = &.{},
@@ -102,6 +108,7 @@ pub const TransportWorkerMemory = struct {
     curved_level_starts: []usize = &.{},
     curved_level_altitudes_km: []f64 = &.{},
     cached_geometry: gauss_angles.GaussGeometry = undefined,
+    cached_geometry_valid: bool = false,
 
     pub fn deinit(self: *TransportWorkerMemory, allocator: Allocator) void {
         // TransportWorkerMemory.deinit ---------------------------------------------------------------------- |
@@ -247,7 +254,7 @@ pub const TransportWorkerMemory = struct {
         needs_local_sum: bool,
     ) Error!solve.TransportWorkArrays {
         // solveWorkArrays ---------------------------------------------------------------------------------   |
-        // Borrow the active per-worker arrays consumed by `transport/solve.zig`.                              |
+        // Borrow the active per-worker arrays consumed by `rtm/solve.zig`.                                    |
         //                                                                                                     |
         // boundary                                                                                            |
         //   The owner provides storage and cached geometry only. Solve inputs remain explicit at the call     |
@@ -309,6 +316,7 @@ pub const TransportWorkerMemory = struct {
             },
             .plm_basis_cache = self.plm_basis_cache,
             .plm_basis_cache_valid = self.plm_basis_cache_valid,
+            .geometry_valid = &self.cached_geometry_valid,
         };
     }
 };
@@ -371,6 +379,6 @@ pub const TransportWorkerMemoryCollection = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 comptime {
-    std.debug.assert(@sizeOf(TransportWorkerMemory) == 3264);
+    std.debug.assert(@sizeOf(TransportWorkerMemory) == 3272);
     std.debug.assert(@sizeOf(TransportWorkerMemoryCollection) == 16);
 }

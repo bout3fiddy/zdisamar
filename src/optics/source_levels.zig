@@ -2,7 +2,7 @@ const std = @import("std");
 
 const gauss_legendre = @import("../common/math/gauss_legendre.zig");
 const atmosphere_layers = @import("../setup/atmosphere_layers.zig");
-const jacobian_states = @import("../transport/jacobian_states.zig");
+const jacobian_states = @import("../rtm/jacobian_states.zig");
 const layer_depths = @import("layer_depths.zig");
 const rayleigh = @import("rayleigh.zig");
 

@@ -2,8 +2,8 @@ const std = @import("std");
 
 const internal = @import("internal");
 
-const matrix_12x10 = internal.transport.matrix_12x10;
-const rows = internal.transport.rows;
+const matrix_12x10 = internal.rtm.matrix_12x10;
+const rows = internal.rtm.rows;
 
 test "smul generic path matches scalar Gaussian product" {
     var a = rows.Mat.zero(6);

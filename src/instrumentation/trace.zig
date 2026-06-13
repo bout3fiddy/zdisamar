@@ -10,9 +10,9 @@ const SourceLocation = std.builtin.SourceLocation;
 // called from                                                                                                   |
 //   spectrum/spectrum_run.zig marks exact-wavelength work, dense radiance prefetch chunks, nominal row gather,  |
 //   postprocess bands, and reflectance assembly.                                                                |
-//   transport/solve.zig and transport/layer_reflect_transmit.zig mark LABOS Fourier terms, layer visits, phase  |
+//   rtm/solve.zig and rtm/layer_reflect_transmit.zig mark LABOS Fourier terms, layer visits, phase              |
 //   matrix builds, doubling decisions, q-series work, and fixed-kernel product gates.                           |
-//   transport/scattering_orders.zig marks initial source setup, order transport, local source passes, retained  |
+//   rtm/scattering_orders.zig marks initial source setup, order transport, local source passes, retained        |
 //   order accumulation, convergence exits, and paired Gaussian dot products.                                    |
 //   cache/profile_line_memory.zig and setup refresh code may add retained setup zones as WP4/WP5 land.          |
 //                                                                                                               |

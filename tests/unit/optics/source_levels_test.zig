@@ -2,7 +2,7 @@ const std = @import("std");
 const internal = @import("internal");
 
 const defaults = internal.input.defaults;
-const jacobian = internal.transport.jacobian_states;
+const jacobian = internal.rtm.jacobian_states;
 const layer_depths = internal.optics.layer_depths;
 const setup = internal.setup.o2_run_tables;
 const source_levels = internal.optics.source_levels;
