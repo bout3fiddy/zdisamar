@@ -135,6 +135,119 @@ test "O2 SpectrumSamplingTable builder matches WP1 aggregate and exact-key evide
     try std.testing.expectApproxEqAbs(776.8246811031544, list.wavelengths[list.wavelengths.len - 1].wavelength_nm, 0.0);
 }
 
+test "O2 SpectrumSamplingTable parallel fill keeps resolved samples deterministic" {
+    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
+        std.testing.allocator,
+        internal.input.defaults.referenceCase(),
+    );
+    defer tables.deinit(std.testing.allocator);
+
+    var first = try sampling_table.buildO2SpectrumSamplingTable(
+        std.testing.allocator,
+        internal.input.defaults.referenceCase(),
+        tables.instrument,
+        tables.lines,
+    );
+    defer first.deinit(std.testing.allocator);
+
+    var second = try sampling_table.buildO2SpectrumSamplingTable(
+        std.testing.allocator,
+        internal.input.defaults.referenceCase(),
+        tables.instrument,
+        tables.lines,
+    );
+    defer second.deinit(std.testing.allocator);
+
+    try expectResolvedSamplingTablesEqual(first.view(), second.view());
+
+    var first_list = try radiance_wavelengths.buildRadianceWavelengthList(std.testing.allocator, first.view());
+    defer first_list.deinit(std.testing.allocator);
+    var second_list = try radiance_wavelengths.buildRadianceWavelengthList(std.testing.allocator, second.view());
+    defer second_list.deinit(std.testing.allocator);
+
+    try std.testing.expectEqualSlices(
+        u8,
+        std.mem.sliceAsBytes(first_list.rows),
+        std.mem.sliceAsBytes(second_list.rows),
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        std.mem.sliceAsBytes(first_list.sample_indices),
+        std.mem.sliceAsBytes(second_list.sample_indices),
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        std.mem.sliceAsBytes(first_list.wavelengths),
+        std.mem.sliceAsBytes(second_list.wavelengths),
+    );
+}
+
+fn expectResolvedSamplingTablesEqual(
+    expected: sampling_table.SpectrumSamplingTable,
+    actual: sampling_table.SpectrumSamplingTable,
+) !void {
+    // expectResolvedSamplingTablesEqual ----------------------------------------------------------------------|
+    // Compare sampling tables through row-resolved kernels. Parallel side-array appends may choose different  |
+    // raw storage positions; row-visible offsets and weights must remain identical.                           |
+    // --------------------------------------------------------------------------------------------------------|
+    try std.testing.expectEqual(expected.rows.len, actual.rows.len);
+    for (expected.rows, actual.rows) |expected_row, actual_row| {
+        try std.testing.expectApproxEqAbs(
+            expected_row.nominal_wavelength_nm,
+            actual_row.nominal_wavelength_nm,
+            0.0,
+        );
+        try std.testing.expectApproxEqAbs(
+            expected_row.radiance_wavelength_nm,
+            actual_row.radiance_wavelength_nm,
+            0.0,
+        );
+        try std.testing.expectApproxEqAbs(
+            expected_row.irradiance_wavelength_nm,
+            actual_row.irradiance_wavelength_nm,
+            0.0,
+        );
+        try expectResolvedKernelEqual(
+            &expected_row.radiance_integration,
+            expected.kernel_storage,
+            &actual_row.radiance_integration,
+            actual.kernel_storage,
+        );
+        try expectResolvedKernelEqual(
+            &expected_row.irradiance_integration,
+            expected.kernel_storage,
+            &actual_row.irradiance_integration,
+            actual.kernel_storage,
+        );
+    }
+}
+
+fn expectResolvedKernelEqual(
+    expected: *const sampling_table.IntegrationKernelRef,
+    expected_storage: sampling_table.IntegrationKernelStorage,
+    actual: *const sampling_table.IntegrationKernelRef,
+    actual_storage: sampling_table.IntegrationKernelStorage,
+) !void {
+    // expectResolvedKernelEqual ------------------------------------------------------------------------------|
+    // Compare one compact kernel by active samples instead of side-array offsets.                             |
+    // --------------------------------------------------------------------------------------------------------|
+    const count = expected.activeSampleCount();
+    try std.testing.expectEqual(count, actual.activeSampleCount());
+    try std.testing.expectEqual(expected.enabled(), actual.enabled());
+    for (0..count) |sample_index| {
+        try std.testing.expectApproxEqAbs(
+            expected.offsetNm(expected_storage, sample_index),
+            actual.offsetNm(actual_storage, sample_index),
+            0.0,
+        );
+        try std.testing.expectApproxEqAbs(
+            expected.weight(expected_storage, sample_index),
+            actual.weight(actual_storage, sample_index),
+            0.0,
+        );
+    }
+}
+
 // SamplingEvidence ------------------------------------------------------------------------------------------ |
 // Aggregate old-route sampling-table evidence from the WP1 internal dump.                                     |
 //                                                                                                             |

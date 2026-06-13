@@ -2,9 +2,11 @@ const std = @import("std");
 
 const errors = @import("../common/errors.zig");
 const gauss_legendre = @import("../common/math/gauss_legendre.zig");
+const worker_partition = @import("../common/worker_partition.zig");
 const o2_case = @import("../input/o2_case.zig");
 const instrument_tables = @import("../setup/instrument_tables.zig");
 const line_tables = @import("../setup/line_tables.zig");
+const Trace = @import("../instrumentation/trace.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -16,6 +18,12 @@ const flat_top_width_floor_nm: f64 = 1.0e-6;
 const strong_line_merge_tolerance_nm: f64 = 1.0e-9;
 const interval_progress_tolerance_nm: f64 = 1.0e-12;
 const vendor_outside_support_sample_count: usize = 1;
+const min_parallel_wavelength_sample_count: usize = 64;
+const wavelength_sampling_chunk_size: usize = 16;
+const initial_side_samples_per_kernel_cap: usize = 512;
+const initial_side_storage_sample_cap: usize = 1 << 20;
+
+const SamplingTableErrorState = worker_partition.FirstWorkerErrorState(anyerror);
 
 // sampling_table.zig ---------------------------------------------------------------------------------------- |
 // Compact instrument-response rows for the spectrum layer.                                                    |
@@ -432,6 +440,128 @@ pub const SamplingTableSummary = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
+// KernelStorageBuilder ---------------------------------------------------------------------------------------|
+// Temporary side-array builder for large integration kernels.                                                 |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 80 B (0.078 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] mutex                           : std.Thread.Mutex                                                 |
+// [16..39] offsets_nm                      : std.ArrayList(f64)                                               |
+// [40..63] weights                         : std.ArrayList(f64)                                               |
+// [64..71] expected_kernel_ref_count       : usize                                                            |
+// [72..72] reserved_from_first_side_kernel : bool                                                             |
+// [73..79] padding                         : 7 B                                                              |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   offsets_nm and weights own temporary backing arrays until buildO2SpectrumSamplingTableWithNominals        |
+//   moves them into OwnedSpectrumSamplingTable.                                                               |
+const KernelStorageBuilder = struct {
+    mutex: std.Thread.Mutex = .{},
+    offsets_nm: std.ArrayList(f64) = .empty,
+    weights: std.ArrayList(f64) = .empty,
+    expected_kernel_ref_count: usize = 0,
+    reserved_from_first_side_kernel: bool = false,
+
+    fn init(expected_kernel_ref_count: usize) KernelStorageBuilder {
+        // KernelStorageBuilder.init --------------------------------------------------------------------------|
+        // Start side-storage collection with a hint for how many large kernel references may appear.          |
+        // ----------------------------------------------------------------------------------------------------|
+        return .{ .expected_kernel_ref_count = expected_kernel_ref_count };
+    }
+
+    fn append(
+        self: *KernelStorageBuilder,
+        allocator: Allocator,
+        kernel: *const IntegrationKernelScratch,
+    ) !u32 {
+        // KernelStorageBuilder.append ------------------------------------------------------------------------|
+        // Append one large integration kernel into shared side arrays and return its starting index. The      |
+        // mutex protects ArrayList growth because sampling rows may be built by several workers.              |
+        // ----------------------------------------------------------------------------------------------------|
+        const count = kernel.sample_count;
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        if (self.offsets_nm.items.len > std.math.maxInt(u32) or
+            count > std.math.maxInt(u32) - self.offsets_nm.items.len)
+        {
+            return errors.Error.InvalidControl;
+        }
+
+        const start: u32 = @intCast(self.offsets_nm.items.len);
+        try self.ensureCapacityForSideKernel(allocator, count);
+        self.offsets_nm.appendSliceAssumeCapacity(kernel.offsets_nm[0..count]);
+        self.weights.appendSliceAssumeCapacity(kernel.weights[0..count]);
+        return start;
+    }
+
+    fn ensureCapacityForSideKernel(
+        self: *KernelStorageBuilder,
+        allocator: Allocator,
+        count: usize,
+    ) Allocator.Error!void {
+        // KernelStorageBuilder.ensureCapacityForSideKernel ---------------------------------------------------|
+        // Reserve side-array capacity. The first large kernel uses the old bounded bulk hint to avoid many    |
+        // reallocations without reserving unbounded memory for very large adaptive plans.                     |
+        // ----------------------------------------------------------------------------------------------------|
+        const required_capacity = self.offsets_nm.items.len + count;
+        if (!self.reserved_from_first_side_kernel and self.expected_kernel_ref_count != 0) {
+            self.reserved_from_first_side_kernel = true;
+            const samples_per_kernel_hint = @min(count, initial_side_samples_per_kernel_cap);
+            const raw_capacity_hint = std.math.mul(
+                usize,
+                self.expected_kernel_ref_count,
+                samples_per_kernel_hint,
+            ) catch initial_side_storage_sample_cap;
+            const capacity_hint = @min(raw_capacity_hint, initial_side_storage_sample_cap);
+            const reserved_capacity = @max(required_capacity, capacity_hint);
+            try self.offsets_nm.ensureTotalCapacityPrecise(allocator, reserved_capacity);
+            try self.weights.ensureTotalCapacityPrecise(allocator, reserved_capacity);
+            return;
+        }
+
+        try self.offsets_nm.ensureUnusedCapacity(allocator, count);
+        try self.weights.ensureUnusedCapacity(allocator, count);
+    }
+
+    fn deinit(self: *KernelStorageBuilder, allocator: Allocator) void {
+        // KernelStorageBuilder.deinit ------------------------------------------------------------------------|
+        // Release temporary side-storage builders after their arrays have been moved into the owned table.    |
+        // ----------------------------------------------------------------------------------------------------|
+        self.offsets_nm.deinit(allocator);
+        self.weights.deinit(allocator);
+        self.* = .{};
+    }
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// SamplingTableWorker ----------------------------------------------------------------------------------------|
+// Worker context for filling spectrum sampling rows.                                                          |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// This row is not size-pinned because it carries borrowed slices and table views. Workers own no heap         |
+// storage; they write disjoint row chunks and append large kernels through KernelStorageBuilder's mutex.      |
+//                                                                                                             |
+// memory groups                                                                                               |
+//   inputs     : spectral grid or explicit nominals, instrument table, adaptive interval plan                 |
+//   outputs    : disjoint SpectrumSamplingRow chunks plus shared side-array samples                           |
+//   scheduling : shared ChunkQueue, worker index, first-error state                                           |
+const SamplingTableWorker = struct {
+    allocator: Allocator,
+    grid: o2_case.SpectralGrid,
+    explicit_nominals: ?[]const f64,
+    instrument: instrument_tables.InstrumentTable,
+    plan: *const AdaptiveIntervalPlan,
+    kernel_storage_builder: *KernelStorageBuilder,
+    rows: []SpectrumSamplingRow,
+    queue: *worker_partition.ChunkQueue,
+    error_state: *SamplingTableErrorState,
+    worker_index: usize,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
 pub fn buildO2SpectrumSamplingTable(
     allocator: Allocator,
     case: o2_case.O2Case,
@@ -499,59 +629,223 @@ fn buildO2SpectrumSamplingTableWithNominals(
     const rows = try allocator.alloc(SpectrumSamplingRow, row_count);
     errdefer allocator.free(rows);
 
-    var side_offsets = std.ArrayList(f64).empty;
-    errdefer side_offsets.deinit(allocator);
-    var side_weights = std.ArrayList(f64).empty;
-    errdefer side_weights.deinit(allocator);
+    var kernel_storage_builder = KernelStorageBuilder.init(row_count * 2);
+    defer kernel_storage_builder.deinit(allocator);
 
-    var radiance_kernel: IntegrationKernelScratch = .{};
-    var irradiance_kernel: IntegrationKernelScratch = .{};
+    try fillSamplingRows(
+        allocator,
+        case.spectral_grid,
+        explicit_nominals,
+        instrument,
+        &plan,
+        &kernel_storage_builder,
+        rows,
+    );
 
-    for (rows, 0..) |*row, index| {
-        const nominal_wavelength_nm = if (explicit_nominals) |nominals|
-            nominals[index]
-        else
-            nominalWavelengthNm(case.spectral_grid, index);
+    const kernel_offsets_nm = try kernel_storage_builder.offsets_nm.toOwnedSlice(allocator);
+    errdefer allocator.free(kernel_offsets_nm);
+    const kernel_weights = try kernel_storage_builder.weights.toOwnedSlice(allocator);
+    return .{
+        .rows = rows,
+        .kernel_offsets_nm = kernel_offsets_nm,
+        .kernel_weights = kernel_weights,
+    };
+}
 
-        if (!buildAdaptiveIntegrationKernelFromPlan(
-            &plan,
+fn fillSamplingRows(
+    allocator: Allocator,
+    grid: o2_case.SpectralGrid,
+    explicit_nominals: ?[]const f64,
+    instrument: instrument_tables.InstrumentTable,
+    plan: *const AdaptiveIntervalPlan,
+    kernel_storage_builder: *KernelStorageBuilder,
+    rows: []SpectrumSamplingRow,
+) !void {
+    // fillSamplingRows ---------------------------------------------------------------------------------------|
+    // Fill sampling rows either inline or through the old raw-worker wavelength-sampling loop.                |
+    //                                                                                                         |
+    // provenance                                                                                              |
+    //   Ports main:`src/forward_model/instrument_grid/grid_calculation/wavelength_sampling.zig`               |
+    //   `fillWavelengthSamplingPlans`: threshold 64 rows, ChunkQueue chunks of 16, raw worker spawn with      |
+    //   calling-thread-last fallback, and first-error capture.                                                |
+    // --------------------------------------------------------------------------------------------------------|
+    const worker_count = preferredSamplingWorkerCount(rows.len);
+    if (worker_count == 1) {
+        return fillSamplingRowRange(
+            allocator,
+            grid,
+            explicit_nominals,
             instrument,
-            nominal_wavelength_nm,
-            false,
-            &radiance_kernel,
-        )) return errors.Error.InvalidControl;
+            plan,
+            kernel_storage_builder,
+            rows,
+            0,
+            rows.len,
+        );
+    }
 
-        if (!buildAdaptiveIntegrationKernelFromPlan(
-            &plan,
-            instrument,
-            nominal_wavelength_nm,
-            true,
-            &irradiance_kernel,
-        )) return errors.Error.InvalidControl;
-
-        row.* = .{
-            .nominal_wavelength_nm = nominal_wavelength_nm,
-            .radiance_wavelength_nm = nominal_wavelength_nm,
-            .irradiance_wavelength_nm = nominal_wavelength_nm,
-            .radiance_integration = try compactIntegrationKernel(
-                allocator,
-                radiance_kernel,
-                &side_offsets,
-                &side_weights,
-            ),
-            .irradiance_integration = try compactIntegrationKernel(
-                allocator,
-                irradiance_kernel,
-                &side_offsets,
-                &side_weights,
-            ),
+    var error_state = SamplingTableErrorState{};
+    var queue = worker_partition.ChunkQueue.init(rows.len, wavelength_sampling_chunk_size);
+    var worker_storage: [worker_partition.max_workers]SamplingTableWorker = undefined;
+    const workers = worker_storage[0..worker_count];
+    for (workers, 0..) |*worker, worker_index| {
+        worker.* = .{
+            .allocator = allocator,
+            .grid = grid,
+            .explicit_nominals = explicit_nominals,
+            .instrument = instrument,
+            .plan = plan,
+            .kernel_storage_builder = kernel_storage_builder,
+            .rows = rows,
+            .queue = &queue,
+            .error_state = &error_state,
+            .worker_index = worker_index,
         };
     }
 
+    worker_partition.runWorkers(null, workers, samplingTableWorkerMain);
+    if (error_state.err) |err| return err;
+}
+
+fn samplingTableWorkerMain(worker: *SamplingTableWorker) void {
+    // samplingTableWorkerMain --------------------------------------------------------------------------------|
+    // Worker loop for plan-row construction. Each worker pulls row-index chunks, writes those rows directly,  |
+    // and appends large-kernel side samples through KernelStorageBuilder's mutex.                             |
+    // --------------------------------------------------------------------------------------------------------|
+    var thread_name_buffer: [64]u8 = undefined;
+    const thread_name = std.fmt.bufPrintZ(
+        &thread_name_buffer,
+        "zdisamar-sampling-{d}",
+        .{worker.worker_index},
+    ) catch "zdisamar-sampling-worker";
+
+    // instrumentation: trace thread label: wavelength sampling worker ----------------------------------------|
+    // captures: wavelength-sampling worker identity                                                           |
+    // why: makes parallel plan-fill lanes separable in timeline traces.                                       |
+    Trace.setThreadName(thread_name);
+    // end instrumentation: trace thread label: wavelength sampling worker ------------------------------------|
+
+    // instrumentation: trace zone: wavelength sampling worker ------------------------------------------------|
+    // captures: worker chunk timing and chunk sizes                                                           |
+    // why: inspects parallel wavelength-plan load balance.                                                    |
+    const worker_zone = Trace.staticZone(@src(), "wavelength_sampling.worker");
+    worker_zone.value(@intCast(worker.worker_index));
+    defer worker_zone.end();
+    // end instrumentation: trace zone: wavelength sampling worker --------------------------------------------|
+
+    while (worker.queue.next()) |chunk| {
+
+        // instrumentation: trace zone: wavelength sampling chunk ---------------------------------------------|
+        // captures: wavelength-sampling chunk wall time and row count                                         |
+        // why: reveals chunk imbalance while filling integration plans.                                       |
+        const chunk_zone = Trace.deepStaticZone(@src(), "wavelength_sampling.chunk");
+        chunk_zone.value(@intCast(chunk.end - chunk.start));
+        defer chunk_zone.end();
+        // end instrumentation: trace zone: wavelength sampling chunk -----------------------------------------|
+
+        fillSamplingRowRange(
+            worker.allocator,
+            worker.grid,
+            worker.explicit_nominals,
+            worker.instrument,
+            worker.plan,
+            worker.kernel_storage_builder,
+            worker.rows,
+            chunk.start,
+            chunk.end,
+        ) catch |err| {
+            worker.error_state.store(err);
+            return;
+        };
+    }
+}
+
+fn fillSamplingRowRange(
+    allocator: Allocator,
+    grid: o2_case.SpectralGrid,
+    explicit_nominals: ?[]const f64,
+    instrument: instrument_tables.InstrumentTable,
+    plan: *const AdaptiveIntervalPlan,
+    kernel_storage_builder: *KernelStorageBuilder,
+    rows: []SpectrumSamplingRow,
+    start: usize,
+    end: usize,
+) !void {
+    // fillSamplingRowRange -----------------------------------------------------------------------------------|
+    // Fill one contiguous output-index range. The IntegrationKernel scratch rows are worker-local so each     |
+    // nominal wavelength avoids temporary heap storage.                                                       |
+    // --------------------------------------------------------------------------------------------------------|
+    var radiance_kernel: IntegrationKernelScratch = .{};
+    var irradiance_kernel: IntegrationKernelScratch = .{};
+
+    for (start..end) |index| {
+        rows[index] = try buildSamplingRow(
+            allocator,
+            grid,
+            explicit_nominals,
+            instrument,
+            plan,
+            kernel_storage_builder,
+            &radiance_kernel,
+            &irradiance_kernel,
+            index,
+        );
+    }
+}
+
+fn buildSamplingRow(
+    allocator: Allocator,
+    grid: o2_case.SpectralGrid,
+    explicit_nominals: ?[]const f64,
+    instrument: instrument_tables.InstrumentTable,
+    plan: *const AdaptiveIntervalPlan,
+    kernel_storage_builder: *KernelStorageBuilder,
+    radiance_kernel: *IntegrationKernelScratch,
+    irradiance_kernel: *IntegrationKernelScratch,
+    index: usize,
+) !SpectrumSamplingRow {
+    // buildSamplingRow ---------------------------------------------------------------------------------------|
+    // Build the radiance and irradiance sampling description for one nominal output wavelength.               |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   lambda_i  = nominal output wavelength                                                                 |
+    //   lambda_ij = lambda_i + integration offset_j                                                           |
+    // --------------------------------------------------------------------------------------------------------|
+    const nominal_wavelength_nm = if (explicit_nominals) |nominals|
+        nominals[index]
+    else
+        nominalWavelengthNm(grid, index);
+
+    if (!buildAdaptiveIntegrationKernelFromPlan(
+        plan,
+        instrument,
+        nominal_wavelength_nm,
+        false,
+        radiance_kernel,
+    )) return errors.Error.InvalidControl;
+
+    if (!buildAdaptiveIntegrationKernelFromPlan(
+        plan,
+        instrument,
+        nominal_wavelength_nm,
+        true,
+        irradiance_kernel,
+    )) return errors.Error.InvalidControl;
+
     return .{
-        .rows = rows,
-        .kernel_offsets_nm = try side_offsets.toOwnedSlice(allocator),
-        .kernel_weights = try side_weights.toOwnedSlice(allocator),
+        .nominal_wavelength_nm = nominal_wavelength_nm,
+        .radiance_wavelength_nm = nominal_wavelength_nm,
+        .irradiance_wavelength_nm = nominal_wavelength_nm,
+        .radiance_integration = try compactIntegrationKernel(
+            allocator,
+            kernel_storage_builder,
+            radiance_kernel,
+        ),
+        .irradiance_integration = try compactIntegrationKernel(
+            allocator,
+            kernel_storage_builder,
+            irradiance_kernel,
+        ),
     };
 }
 
@@ -587,11 +881,17 @@ fn nominalWavelengthNm(grid: o2_case.SpectralGrid, index: usize) f64 {
     return grid.start_nm + (grid.end_nm - grid.start_nm) * fraction;
 }
 
+fn preferredSamplingWorkerCount(row_count: usize) usize {
+    // preferredSamplingWorkerCount -------------------------------------------------------------------------- |
+    // Resolve output-row count into the old wavelength-sampling worker threshold.                             |
+    // --------------------------------------------------------------------------------------------------------|
+    return worker_partition.preferredWorkerCount(row_count, min_parallel_wavelength_sample_count);
+}
+
 fn compactIntegrationKernel(
     allocator: Allocator,
-    kernel: IntegrationKernelScratch,
-    side_offsets: *std.ArrayList(f64),
-    side_weights: *std.ArrayList(f64),
+    kernel_storage_builder: *KernelStorageBuilder,
+    kernel: *const IntegrationKernelScratch,
 ) !IntegrationKernelRef {
     // compactIntegrationKernel ------------------------------------------------------------------------------ |
     // Move one scratch kernel into the retained row shape used by spectrum loops.                             |
@@ -605,22 +905,11 @@ fn compactIntegrationKernel(
     }
 
     if (kernel.sample_count <= inline_integration_sample_count) {
-        return inlineIntegrationKernelRef(kernel);
+        return inlineIntegrationKernelRef(kernel.*);
     }
-
-    if (side_offsets.items.len > std.math.maxInt(u32)) {
-        return errors.Error.InvalidControl;
-    }
-
-    const side_start: u32 = @intCast(side_offsets.items.len);
-    const active_offsets = kernel.offsets_nm[0..kernel.sample_count];
-    const active_weights = kernel.weights[0..kernel.sample_count];
-    try side_offsets.appendSlice(allocator, active_offsets);
-    errdefer side_offsets.shrinkRetainingCapacity(side_start);
-    try side_weights.appendSlice(allocator, active_weights);
 
     return .{
-        .side_start = side_start,
+        .side_start = try kernel_storage_builder.append(allocator, kernel),
         .sample_count = @intCast(kernel.sample_count),
         .encoding = .side_samples,
     };
