@@ -37,7 +37,7 @@ pub const AerosolLayerTable = struct {
 
 pub fn hashAll(hasher: *std.hash.Wyhash, aerosol: AerosolLayerTable) void {
     // hashAll ----------------------------------------------------------------------------------------------- |
-    // Hash scalar and explicit-profile aerosol controls used to fill per-wavelength layer optics.             |
+    // Hash scalar and explicit-profile aerosol controls uses fill per-wavelength layer optics.                |
     // --------------------------------------------------------------------------------------------------------|
     for ([_]f64{
         aerosol.optical_depth,

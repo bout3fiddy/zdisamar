@@ -21,7 +21,6 @@ test "asset readers load reference profile, line list, CIA, and solar rows" {
     try std.testing.expectEqual(@as(usize, 70), strong_lines.len);
 
     // Source: data/reference_data/cross_sections/o2a_lisa_sdf.dat first row, parsed with
-    // main:src/input/reference_data/ingest/reference_assets_formats.zig parseLisaSdf.
     try std.testing.expectApproxEqAbs(12965.107900, strong_lines[0].center_wavenumber_cm1, 0.0);
     try std.testing.expectApproxEqAbs(771.3009469053474, strong_lines[0].center_wavelength_nm, 1.0e-12);
     try std.testing.expectApproxEqAbs(0.0000510, strong_lines[0].population_t0, 1.0e-12);

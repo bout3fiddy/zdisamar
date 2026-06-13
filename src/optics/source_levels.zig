@@ -12,11 +12,8 @@ const max_source_interval_nodes: usize = 128;
 // source_levels.zig ------------------------------------------------------------------------------------------|
 // Builds the cached shared-RTM source-level rows consumed by integrated-source transport.                     |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Geometry follows main:`src/forward_model/optical_properties/state_build/shared_geometry.zig`: one level   |
 //   per layer boundary, boundary support rows for gas, first active support row above a boundary, and last    |
 //   active support row below a boundary. Level weights use the same interval-group Gauss-Legendre rule.       |
-//   Aerosol source Jacobian scale follows main:`state_build/rtm_quadrature.zig`                               |
 //   fillSharedAerosolSourceJacobianFromLayers.                                                                |
 //                                                                                                             |
 // boundary                                                                                                    |
@@ -180,7 +177,6 @@ fn fillSharedAerosolSourceJacobiansFromLayers(
     out_levels: []SourceLevel,
 ) void {
     // fillSharedAerosolSourceJacobiansFromLayers -------------------------------------------------------------|
-    // Port main:`state_build/rtm_quadrature.zig` fillSharedAerosolSourceJacobianFromLayers.                   |
     // Shared RTM quadrature spreads the layer aerosol-scattering derivative over active adjacent source       |
     // weights instead of using each level's local k_sca/tau fallback scale.                                   |
     //                                                                                                         |
@@ -262,7 +258,6 @@ fn fillIntervalWeights(
             const upper_altitude_km = layer_grid.layer_top_altitudes_km[interval_stop - 1];
             const altitude_span_km = @max(upper_altitude_km - lower_altitude_km, 0.0);
 
-            // main:`state_build/shared_geometry.zig` resolveGaussRule reads retained small rules first.
             if (interior_level_count <= 10) {
                 const rule = gauss_legendre.rule(@intCast(interior_level_count)) catch return error.InvalidShape;
                 for (0..interior_level_count) |offset| {

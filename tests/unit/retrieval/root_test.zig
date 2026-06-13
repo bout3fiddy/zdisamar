@@ -4,10 +4,7 @@ const internal = @import("internal");
 const algebra = internal.retrieval.algebra;
 const retrieval = internal.retrieval.root;
 
-test "native retrieval layouts match main optimal-estimation value owners" {
-
-    // Source: main:`tests/unit/optimal_estimation_test.zig` and
-    // main:`src/optimal_estimation/retrieval.zig` layout boxes.
+test "native retrieval layouts match canonical optimal-estimation value owners" {
     try std.testing.expectEqual(@as(usize, 104), @sizeOf(retrieval.StateSpec));
     try std.testing.expectEqual(@as(usize, 48), @sizeOf(retrieval.PressureAltitudeProfile));
     try std.testing.expectEqual(@as(usize, 48), @sizeOf(retrieval.MeasuredReflectanceRows));
@@ -60,7 +57,7 @@ test "pressure profile validates two-point samples before linear log-pressure sh
     try std.testing.expectEqual(@as(f64, 0.0), profile.second[1]);
 }
 
-test "pressure profile derivative matches main two-point log-pressure route" {
+test "pressure profile derivative matches the canonical expectation two-point log-pressure route" {
     const altitude_km = [_]f64{ 0.0, 1.0 };
     const pressure_hpa = [_]f64{ 900.0, 800.0 };
     const profile = try retrieval.buildPressureProfile(

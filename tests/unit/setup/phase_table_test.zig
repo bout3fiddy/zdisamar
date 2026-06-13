@@ -4,7 +4,7 @@ const internal = @import("internal");
 
 const phase_table = internal.setup.phase_table;
 
-test "PhaseTable keeps old fixed coefficient layout" {
+test "PhaseTable keeps fixed coefficient layout" {
     try std.testing.expectEqual(@as(usize, 1224), @sizeOf(phase_table.PhaseTable));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(phase_table.PhaseTable));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(phase_table.PhaseTable, "aerosol_phase_coefficients"));
@@ -12,7 +12,7 @@ test "PhaseTable keeps old fixed coefficient layout" {
     try std.testing.expectEqual(@as(usize, 1216), @offsetOf(phase_table.PhaseTable, "aerosol_asymmetry_factor"));
 }
 
-test "HG phase coefficients match old scalar formula" {
+test "HG phase coefficients match scalar formula" {
     const coefficients = phase_table.hgPhaseCoefficientsWithThreshold(0.7, 1.0e-8);
     const expected = scalarHgCoefficients(0.7, 1.0e-8);
 
@@ -62,7 +62,7 @@ test "zero and isotropic aerosol phase rows keep only l0 active" {
 
 fn scalarHgCoefficients(asymmetry_factor: f64, truncation_threshold: f64) [phase_table.coefficient_count]f64 {
     // scalarHgCoefficients -----------------------------------------------------------------------------------|
-    // Test-local reference for old `phase_functions.zig` `hgPhaseCoefficientsWithThreshold`.                  |
+    // Test-local reference for `phase_functions.zig` `hgPhaseCoefficientsWithThreshold`.                      |
     // --------------------------------------------------------------------------------------------------------|
     var coefficients = [_]f64{0.0} ** phase_table.coefficient_count;
     coefficients[0] = 1.0;

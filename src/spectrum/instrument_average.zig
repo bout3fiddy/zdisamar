@@ -14,10 +14,6 @@ pub const Error = error{
 // instrument_average.zig ------------------------------------------------------------------------------------ |
 // Product-grid radiance, irradiance, and reflectance assembly helpers.                                        |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   `assembleReflectanceResults` ports the old final conversion from main:                                    |
-//   `src/forward_model/instrument_grid/grid_calculation/simulate.zig` `assembleReflectance`.                  |
-//                                                                                                             |
 // boundary                                                                                                    |
 //   Earlier spectrum steps gather calibrated radiance and irradiance on the public product grid. This file    |
 //   performs the shared final conversion and summary accounting. It does not own wavelength planning, solar   |
@@ -27,17 +23,14 @@ pub const Error = error{
 // reflectance_denominator_floor ----------------------------------------------------------------------------- |
 // Minimum denominator for top-of-atmosphere reflectance conversion.                                           |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Old `simulate.zig` clamps `irradiance * mu0` to `1e-9` before dividing radiance by the solar denominator. |
+//   Reflectance conversion clamps `irradiance * mu0` to `1e-9` before dividing by the solar denominator.      |
 //   Telemetry still records how often raw denominators cross that guard.                                      |
 pub const reflectance_denominator_floor: f64 = 1.0e-9;
 // ------------------------------------------------------------------------------------------------------------|
 
 // default_slit_kernel --------------------------------------------------------------------------------------- |
-// Legacy five-tap response used when no integrated instrument sampling route has already averaged a channel.  |
+// Default five-tap response used when no integrated instrument sampling route has already averaged a channel. |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/forward_model/implementations/instrument/integration.zig` `slitKernelForScene` when       |
 //   `response.fwhm_nm <= 0.0`. `applySlitConvolution` normalizes the row before use.                          |
 pub const default_slit_kernel = [5]f64{ 1.0, 4.0, 6.0, 4.0, 1.0 };
 // ------------------------------------------------------------------------------------------------------------|
@@ -45,8 +38,6 @@ pub const default_slit_kernel = [5]f64{ 1.0, 4.0, 6.0, 4.0, 1.0 };
 // Calibration ------------------------------------------------------------------------------------------------|
 // Four scalar channel corrections used after radiance or irradiance sampling.                                 |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/forward_model/instrument_grid/spectral_math/calibration.zig` `Calibration`.               |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 32 B (0.031 KiB), align: 8 B                                                                          |
@@ -95,10 +86,8 @@ pub const ReflectanceAssemblySummary = struct {
 
 pub fn applySlitConvolution(signal: []const f64, kernel: []const f64, output: []f64) Error!void {
     // applySlitConvolution ---------------------------------------------------------------------------------- |
-    // Apply the legacy slit convolution used when instrument integration has not already averaged a channel.  |
+    // Apply the default slit convolution used when instrument integration has not already averaged a channel. |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/forward_model/instrument_grid/spectral_math/convolution.zig` `apply`.                 |
     //                                                                                                         |
     // math                                                                                                    |
     //                   sum_j signal[i + j - half_width] * kernel_j                                           |
@@ -139,12 +128,7 @@ pub fn postprocessSignal(
     noalias out_signal: []f64,
 ) Error!void {
     // postprocessSignal ------------------------------------------------------------------------------------- |
-    // Apply the old product-channel order: optional slit convolution, then scalar channel calibration.        |
-    //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports the scalar radiance and irradiance postprocess sections from main:                              |
-    //   `src/forward_model/instrument_grid/grid_calculation/simulate.zig` `fillRadianceSamples` and           |
-    //   `fillIrradianceSamples`.                                                                              |
+    // Apply the product-channel order: optional slit convolution, then scalar channel calibration.            |
     //                                                                                                         |
     // shape                                                                                                   |
     //   Integrated sampling already applied the instrument response, so this route skips slit convolution.    |
@@ -182,8 +166,6 @@ pub fn postprocessRadianceResults(
     // postprocessRadianceResults ---------------------------------------------------------------------------- |
     // Apply product-grid radiance postprocess while carrying active row-vector Jacobian lanes.                |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports the old `simulate.zig` order: radiance convolution/calibration first, then each active          |
     //   Jacobian column gets the same convolution guard and derivative calibration.                           |
     //                                                                                                         |
     // math                                                                                                    |
@@ -254,11 +236,9 @@ pub fn assembleReflectanceResults(
     //   rho_i      = pi * L_i / max(E0_i * mu0, 1e-9)                                                         |
     //   d rho_i/dx = pi * dL_i/dx / max(E0_i * mu0, 1e-9) for active RTM states                               |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Old `spectral_forward.zig` converts LABOS reflectance derivatives into radiance units by multiplying  |
-    //   by `mu0 * E0 / pi`. Old `simulate.zig` inverts that scale for reflectance after product-grid          |
-    //   averaging. The Jacobian states here do not perturb solar irradiance or geometry, so no extra          |
-    //   product-rule term is present.                                                                         |
+    //   Dense transport stores derivatives in radiance units. Reflectance assembly applies the inverse solar  |
+    //   denominator scale after product-grid averaging. The Jacobian states here do not perturb solar         |
+    //   irradiance or geometry, so no extra product-rule term is present.                                     |
     //                                                                                                         |
     // shape                                                                                                   |
     //   Requested Jacobians require a full output vector per sample. Inactive lanes are written as zero so    |
@@ -305,7 +285,7 @@ pub fn assembleReflectanceResults(
 
 fn initialSummary(sample_count: usize) ReflectanceAssemblySummary {
     // initialSummary ---------------------------------------------------------------------------------------- |
-    // Start reflectance summary extrema in the same empty-spectrum shape as the old route.                    |
+    // Start reflectance summary extrema in the same empty-spectrum shape as the current route.                |
     // --------------------------------------------------------------------------------------------------------|
     var min_denominator: f64 = 0.0;
     var max_reflectance: f64 = 0.0;
@@ -341,12 +321,12 @@ fn addReflectanceSample(
 
 fn emitReflectanceTelemetry(summary: ReflectanceAssemblySummary) void {
     // emitReflectanceTelemetry ------------------------------------------------------------------------------ |
-    // Preserve old reflectance-assembly telemetry after either scalar or Jacobian-aware assembly.             |
+    // Preserve reflectance-assembly telemetry after either scalar or Jacobian-aware assembly.                 |
     // --------------------------------------------------------------------------------------------------------|
 
     // instrumentation: calculation telemetry: reflectance assembly -----------------------------------------  |
     // captures: denominator clamps and final reflectance extrema                                              |
-    // why: preserves old simulate.reflectanceAssembly telemetry for numerical guard analysis.                 |
+    // why: preserves simulate.reflectanceAssembly telemetry for numerical guard analysis.                     |
     telemetry.reflectanceAssembly(
         summary.sample_count,
         summary.denominator_clamp_count,

@@ -15,9 +15,9 @@ const default_output_isotopes = [_]usize{ 1, 2, 3 };
 // boundary                                                                                                    |
 //   Python emits O2AInput.to_native_json_bytes() with resolved asset paths and a few Python bookkeeping       |
 //   fields. This parser turns that API shape into O2Case, validates controls that are intentionally inert     |
-//   for this WP4 forward-only route, and rejects unsupported route changes before compute sees the case.      |
+//   for this O2 A forward-only route, and rejects unsupported route changes before compute sees the case.     |
 //                                                                                                             |
-// compatibility                                                                                               |
+// JSON input normalization                                                                                    |
 //   Python's json encoder emits bare NaN for optional altitude placeholders. Zig's JSON scanner is strict,    |
 //   so the input boundary rewrites bare NaN tokens to null before typed parsing. Those fields are not model   |
 //   controls on this route; pressure bounds are the consumed vertical coordinates.                            |
@@ -195,7 +195,7 @@ fn validateO2Assets(inputs: O2InputsJson) !void {
 
 fn validateObservation(observation: ObservationJson, solar_reference_asset_id: []const u8) !void {
     // validateObservation ------------------------------------------------------------------------------------|
-    // Accept the current O2 A instrument route and pass explicit sparse product axes to O2Case validation.   |
+    // Accept the current O2 A instrument route and pass explicit sparse product axes to O2Case validation.    |
     // --------------------------------------------------------------------------------------------------------|
     if (!std.mem.eql(u8, observation.regime, "nadir")) return errors.Error.UnsupportedJsonInput;
     if (!std.mem.eql(u8, observation.sampling, "native")) return errors.Error.UnsupportedJsonInput;
@@ -211,7 +211,7 @@ fn validateRtm(
     performance_thresholds: transport_controls.PerformanceThresholds,
 ) !void {
     // validateRtm --------------------------------------------------------------------------------------------|
-    // Keep WP4 on the proven Stage 2/3 route while consuming case-owned LABOS threshold controls.             |
+    // Keep O2 A on the supported integrated-source route while consuming case-owned LABOS threshold controls. |
     // --------------------------------------------------------------------------------------------------------|
     if (!std.mem.eql(u8, rtm.scattering, "multiple")) return errors.Error.UnsupportedJsonInput;
     if (rtm.n_streams != defaults.referenceCase().rtm.stream_count) return errors.Error.UnsupportedJsonInput;
@@ -237,14 +237,14 @@ fn validateAerosol(aerosol: AerosolJson) !void {
 
 fn aerosolScalarOpticalDepth(aerosol: AerosolJson) f64 {
     // aerosolScalarOpticalDepth ------------------------------------------------------------------------------|
-    // Preserve old single-profile-layer behavior by folding one layer into the scalar aerosol controls.       |
+    // Preserve single-profile-layer behavior by folding one layer into the scalar aerosol controls.           |
     // --------------------------------------------------------------------------------------------------------|
     return if (aerosol.profile.len == 1) aerosol.profile[0].optical_depth else aerosol.optical_depth;
 }
 
 fn aerosolScalarSingleScatterAlbedo(aerosol: AerosolJson) f64 {
     // aerosolScalarSingleScatterAlbedo -----------------------------------------------------------------------|
-    // Preserve old single-profile-layer behavior by folding one layer into the scalar aerosol controls.       |
+    // Preserve single-profile-layer behavior by folding one layer into the scalar aerosol controls.           |
     // --------------------------------------------------------------------------------------------------------|
     return if (aerosol.profile.len == 1)
         aerosol.profile[0].single_scatter_albedo
@@ -254,14 +254,14 @@ fn aerosolScalarSingleScatterAlbedo(aerosol: AerosolJson) f64 {
 
 fn aerosolScalarAsymmetryFactor(aerosol: AerosolJson) f64 {
     // aerosolScalarAsymmetryFactor ---------------------------------------------------------------------------|
-    // Preserve old single-profile-layer behavior by folding one layer into the scalar aerosol controls.       |
+    // Preserve single-profile-layer behavior by folding one layer into the scalar aerosol controls.           |
     // --------------------------------------------------------------------------------------------------------|
     return if (aerosol.profile.len == 1) aerosol.profile[0].asymmetry_factor else aerosol.asymmetry_factor;
 }
 
 fn aerosolScalarAngstromExponent(aerosol: AerosolJson) f64 {
     // aerosolScalarAngstromExponent --------------------------------------------------------------------------|
-    // Preserve old single-profile-layer behavior by folding one layer into the scalar aerosol controls.       |
+    // Preserve single-profile-layer behavior by folding one layer into the scalar aerosol controls.           |
     // --------------------------------------------------------------------------------------------------------|
     return if (aerosol.profile.len == 1)
         aerosol.profile[0].angstrom_exponent
@@ -271,7 +271,7 @@ fn aerosolScalarAngstromExponent(aerosol: AerosolJson) f64 {
 
 fn aerosolScalarReferenceWavelengthNm(aerosol: AerosolJson) f64 {
     // aerosolScalarReferenceWavelengthNm ---------------------------------------------------------------------|
-    // Preserve old single-profile-layer behavior by folding one layer into the scalar aerosol controls.       |
+    // Preserve single-profile-layer behavior by folding one layer into the scalar aerosol controls.           |
     // --------------------------------------------------------------------------------------------------------|
     return if (aerosol.profile.len == 1)
         aerosol.profile[0].reference_wavelength_nm
@@ -281,7 +281,7 @@ fn aerosolScalarReferenceWavelengthNm(aerosol: AerosolJson) f64 {
 
 fn aerosolScalarTopPressureHpa(aerosol: AerosolJson) f64 {
     // aerosolScalarTopPressureHpa ----------------------------------------------------------------------------|
-    // Preserve old single-profile-layer behavior by folding one layer into explicit pressure placement.       |
+    // Preserve single-profile-layer behavior by folding one layer into explicit pressure placement.           |
     // --------------------------------------------------------------------------------------------------------|
     return if (aerosol.profile.len == 1)
         aerosol.profile[0].top_pressure_hpa
@@ -291,7 +291,7 @@ fn aerosolScalarTopPressureHpa(aerosol: AerosolJson) f64 {
 
 fn aerosolScalarBottomPressureHpa(aerosol: AerosolJson) f64 {
     // aerosolScalarBottomPressureHpa -------------------------------------------------------------------------|
-    // Preserve old single-profile-layer behavior by folding one layer into explicit pressure placement.       |
+    // Preserve single-profile-layer behavior by folding one layer into explicit pressure placement.           |
     // --------------------------------------------------------------------------------------------------------|
     return if (aerosol.profile.len == 1)
         aerosol.profile[0].bottom_pressure_hpa
@@ -301,7 +301,7 @@ fn aerosolScalarBottomPressureHpa(aerosol: AerosolJson) f64 {
 
 fn aerosolProfileRows(aerosol: AerosolJson) []const o2_case.AerosolProfileLayer {
     // aerosolProfileRows -------------------------------------------------------------------------------------|
-    // Preserve old single-layer folding while passing explicit multi-layer profile rows into setup.           |
+    // Preserve single-layer folding while passing explicit multi-layer profile rows into setup.               |
     // --------------------------------------------------------------------------------------------------------|
     return if (aerosol.profile.len > 1) aerosol.profile else &.{};
 }
@@ -339,7 +339,7 @@ fn optionalU16FromJson(value: ?usize) !?u16 {
 
 fn u16FromJson(value: usize) !u16 {
     // u16FromJson --------------------------------------------------------------------------------------------|
-    // Narrow JSON counters to the LABOS control width used by the old route.                                  |
+    // Narrow JSON counters to the LABOS control width used by the current route.                              |
     // --------------------------------------------------------------------------------------------------------|
     return std.math.cast(u16, value) orelse errors.Error.UnsupportedJsonInput;
 }
@@ -461,7 +461,7 @@ const NormalizedJson = struct {
 
     fn deinit(self: NormalizedJson, allocator: Allocator) void {
         // NormalizedJson.deinit ------------------------------------------------------------------------------|
-        // Free the compatibility copy only when bare NaN replacement allocated one.                           |
+        // Free the normalization copy only when bare NaN replacement allocated one.                           |
         // ----------------------------------------------------------------------------------------------------|
         if (self.owned) allocator.free(self.bytes);
     }

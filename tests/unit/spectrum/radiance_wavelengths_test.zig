@@ -62,10 +62,10 @@ test "RadianceWavelengthList deduplicates only exact f64 bit keys" {
     try std.testing.expectEqual(@as(u32, 2), list.sample_indices[4]);
 }
 
-test "RadianceWavelengthList evidence anchors keep WP1 exact-key route shape" {
+test "RadianceWavelengthList evidence anchors keep O2 A exact-key route shape" {
 
-    // Source: scratch/refactor/2026-06-11-explicit-dataflow-refactor/evidence/
-    // baseline-main-56605387/internal-dump-baseline.json sampling_table.forward_misses.
+    // Source: canonical O2 A radiance-wavelength evidence fixtures.
+    // Canonical expected values owned by this repository.
 
     try std.testing.expectEqual(@as(usize, 3874), radiance_wavelength_evidence.count);
     try std.testing.expectEqual(@as(u64, 4649845583965292708), radiance_wavelength_evidence.first_key);
@@ -83,7 +83,7 @@ test "RadianceWavelengthList evidence anchors keep WP1 exact-key route shape" {
 }
 
 // RadianceWavelengthEvidence -------------------------------------------------------------------------------- |
-// Exact-key old-route radiance wavelength evidence from the WP1 internal dump.                                |
+// Exact-key canonical radiance wavelength evidence from the O2 A internal dump.                               |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 40 B (0.039 KiB), align: 8 B                                                                          |

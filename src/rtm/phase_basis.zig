@@ -7,9 +7,7 @@ const rows = @import("rows.zig");
 // phase_basis.zig --------------------------------------------------------------------------------------------|
 // LABOS Fourier phase-basis rows used by layer phase kernels and reflectance weighting.                       |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/forward_model/radiative_transfer/labos/phase_basis.zig` `FourierPlmBasis.init` and        |
-//   `minusParitySign`. The fixed row dimensions come from the old LABOS `types.zig` phase/stream caps.        |
+//   `minusParitySign`. The fixed row dimensions come from the LABOS `types.zig` phase/stream caps.            |
 //                                                                                                             |
 // math                                                                                                        |
 //   m           : Fourier index                                                                               |
@@ -20,7 +18,7 @@ const rows = @import("rows.zig");
 //                                                                                                             |
 // memory                                                                                                      |
 //   FourierPlmBasis stores weighted plus-basis rows for one Fourier term and one geometry. PhaseKernel and    |
-//   PhaseKernelRow store full or row-local Z+/Z- products. The minus basis derives from parity.               |
+//   PhaseKernelRow store full or row-local Z+/Z- products. The minus basis derives from canonical.            |
 // ------------------------------------------------------------------------------------------------------------|
 
 // PlmArrays --------------------------------------------------------------------------------------------------|
@@ -194,7 +192,7 @@ pub const FourierPlmBasis = struct {
 
 pub inline fn minusParitySign(fourier_index: usize, phase_index: usize) f64 {
     // minusParitySign --------------------------------------------------------------------------------------- |
-    // Return the Z- parity sign for coefficient l at Fourier index m.                                         |
+    // Return the Z- canonical sign for coefficient l at Fourier index m.                                      |
     //                                                                                                         |
     // math                                                                                                    |
     //   sign = (-1)^(l - m)                                                                                   |
@@ -210,8 +208,6 @@ fn computePlm(
     // computePlm -------------------------------------------------------------------------------------------- |
     // Build one weighted associated-Legendre row when it was not already cached in FourierPlmBasis.           |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports old `phase_basis.zig` `computePlm`; same recurrence as `FourierPlmBasis.init`.                  |
     // --------------------------------------------------------------------------------------------------------|
     if (phase_index < fourier_index) {
         return .{ .plus = .{0.0} ** gauss_angles.max_stream_count };
@@ -286,8 +282,6 @@ pub fn fillZplusZminFromWeightedPhaseLimited(
     // fillZplusZminFromWeightedPhaseLimited ----------------------------------------------------------------- |
     // Build dense Z+/Z- matrices after mixing aerosol phase with the Rayleigh l=2 coefficient.                |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports old `phase_basis.zig` `fillZplusZminFromWeightedPhaseLimited`.                                  |
     //                                                                                                         |
     // math                                                                                                    |
     //   beta_0 = 1                                                                                            |
@@ -416,7 +410,7 @@ inline fn chooseCoefficient(
     rayleigh2_weight: f64,
 ) f64 {
     // chooseCoefficient ------------------------------------------------------------------------------------- |
-    // Select either the direct phase row or the old aerosol/Rayleigh mixed coefficient.                       |
+    // Select either the direct phase row or the aerosol/Rayleigh mixed coefficient.                           |
     // --------------------------------------------------------------------------------------------------------|
     if (use_weighted_phase) {
         return weightedPhaseCoefficient(

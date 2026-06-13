@@ -1,36 +1,33 @@
 const std = @import("std");
 const spline = @import("../common/math/spline.zig");
 
-// hitran_partition_tables.zig -------------------------------------------------------------------------------|
-// Embedded HITRAN TIPS partition-sum tables used by line-strength temperature scaling.                       |
-//                                                                                                            |
-// provenance                                                                                                 |
-//   Ported from main worktree `src/input/hitran_partition_tables.zig`, which retained HITRAN TIPS            |
-//   temperature grids and partition sums for isotopologues used by the O2 A line route. The q_* names follow |
-//   HITRAN isotopologue codes: H2O uses 161/181/171/162/182/172, CO2 uses 626/636/628/627/638/637, and O2    |
-//   uses 66/68/67. Codes are the same compact gas-isotope identifiers produced by the old spectroscopy       |
-//   `deriveIsotopologueCode` helper.                                                                         |
-//                                                                                                            |
-// called from                                                                                                |
-//   cache/profile_line_memory.zig calls ratioT0OverT while evaluating weak-line profile rows. Unknown        |
-//   isotopologue codes fall back at the caller to the old-route exponent family from                         |
-//   main:`src/input/reference/spectroscopy/strong_lines.zig`: O2/O3 = 1.0, CO2 = 1.35, H2O = 1.10, and       |
-//   otherwise 1.0 + 0.04 * (isotope_number - 1).                                                             |
-//   tests/unit/hitran_partition_tables_test.zig checks representative O2-family codes and interpolation.     |
-//                                                                                                            |
-// table model                                                                                                |
-//   temperature_grid is the shared kelvin grid. q_* tables are keyed by HITRAN isotopologue code in          |
-//   ratioT0OverT. Most tables are f64; q_67 is f32 to keep the embedded constant block smaller.              |
-//                                                                                                            |
-// main paths                                                                                                 |
-//   ratioT0OverT switches from isotopologue code to the matching partition table, samples Q(T) and Q(T0),    |
-//   and returns Q(T0) / Q(T).                                                                                |
-//   interpolatePartitionTable clamps temperature to the grid range, then uses the endpoint-secant spline     |
-//   helper. The f32 table is widened on the stack before using the same interpolation path.                  |
-//                                                                                                            |
-// runtime shape                                                                                              |
-//   These tables are compile-time constants. There is no heap ownership, parser state, or runtime mutation.  |
-// -----------------------------------------------------------------------------------------------------------|
+// hitran_partition_tables.zig ------------------------------------------------------------------------------- |
+// Embedded HITRAN TIPS partition-sum tables used by line-strength temperature scaling.                        |
+//                                                                                                             |
+//   temperature grids and partition sums for isotopologues used by the O2 A line route. The q_* names follow  |
+//   HITRAN isotopologue codes: H2O uses 161/181/171/162/182/172, CO2 uses 626/636/628/627/638/637, and O2     |
+//   uses 66/68/67. Codes are the same compact gas-isotope identifiers produced by the spectroscopy            |
+//   `deriveIsotopologueCode` helper.                                                                          |
+//                                                                                                             |
+// called from                                                                                                 |
+//   cache/profile_line_memory.zig calls ratioT0OverT while evaluating weak-line profile rows. Unknown         |
+//   isotopologue codes fall back at the caller to the canonical exponent family from                          |
+//   otherwise 1.0 + 0.04 * (isotope_number - 1).                                                              |
+//   tests/unit/hitran_partition_tables_test.zig checks representative O2-family codes and interpolation.      |
+//                                                                                                             |
+// table model                                                                                                 |
+//   temperature_grid is the shared kelvin grid. q_* tables are keyed by HITRAN isotopologue code in           |
+//   ratioT0OverT. Most tables are f64; q_67 is f32 to keep the embedded constant block smaller.               |
+//                                                                                                             |
+// primary paths                                                                                               |
+//   ratioT0OverT switches from isotopologue code to the matching partition table, samples Q(T) and Q(T0),     |
+//   and returns Q(T0) / Q(T).                                                                                 |
+//   interpolatePartitionTable clamps temperature to the grid range, then uses the endpoint-secant spline      |
+//   helper. The f32 table is widened on the stack before using the same interpolation path.                   |
+//                                                                                                             |
+// runtime shape                                                                                               |
+//   These tables are compile-time constants. There is no heap ownership, parser state, or runtime mutation.   |
+// ----------------------------------------------------------------------------------------------------------- |
 
 const temperature_grid = [_]f64{
     60.0,   85.0,   110.0,  135.0,  160.0,  185.0,  210.0,  235.0,
@@ -522,9 +519,9 @@ const q_5111 = [_]f64{
 };
 
 pub fn ratioT0OverT(isotopologue_code: i32, temperature_k: f64, reference_temperature_k: f64) ?f64 {
-    // ratioT0OverT ------------------------------------------------------------------------------------------|
-    // Return Q(reference_temperature_k) / Q(temperature_k) for a retained HITRAN isotopologue table.         |
-    // -------------------------------------------------------------------------------------------------------|
+    // ratioT0OverT ------------------------------------------------------------------------------------------ |
+    // Return Q(reference_temperature_k) / Q(temperature_k) for a retained HITRAN isotopologue table.          |
+    // ------------------------------------------------------------------------------------------------------- |
     if (isotopologue_code == 67) {
         return ratioT0OverTFromF32Table(q_67[0..], temperature_k, reference_temperature_k);
     }
@@ -564,22 +561,22 @@ pub fn ratioT0OverT(isotopologue_code: i32, temperature_k: f64, reference_temper
 }
 
 fn ratioT0OverTFromF32Table(table: []const f32, temperature_k: f64, reference_temperature_k: f64) f64 {
-    // ratioT0OverTFromF32Table ------------------------------------------------------------------------------|
-    // Preserve the retained f32 table literals for isotope 67 before sampling through the shared path.       |
-    // -------------------------------------------------------------------------------------------------------|
+    // ratioT0OverTFromF32Table ------------------------------------------------------------------------------ |
+    // Preserve the retained f32 table literals for isotope 67 before sampling through the shared path.        |
+    // ------------------------------------------------------------------------------------------------------- |
     const q_t = interpolatePartitionTableF32(table, temperature_k);
     const q_ref = interpolatePartitionTableF32(table, reference_temperature_k);
     return q_ref / @max(q_t, 1.0e-12);
 }
 
 fn interpolatePartitionTable(table: []const f64, temperature_k: f64) f64 {
-    // interpolatePartitionTable -----------------------------------------------------------------------------|
-    // Samples one partition table on the shared HITRAN temperature grid.                                     |
-    //                                                                                                        |
-    // units                                                                                                  |
-    //   temperature_k is in kelvin. Values outside the table range clamp to the nearest endpoint before the  |
-    //   endpoint-secant spline helper runs.                                                                  |
-    // -------------------------------------------------------------------------------------------------------|
+    // interpolatePartitionTable ----------------------------------------------------------------------------- |
+    // Samples one partition table on the shared HITRAN temperature grid.                                      |
+    //                                                                                                         |
+    // units                                                                                                   |
+    //   temperature_k is in kelvin. Values outside the table range clamp to the nearest endpoint before the   |
+    //   endpoint-secant spline helper runs.                                                                   |
+    // ------------------------------------------------------------------------------------------------------- |
 
     const safe_temperature = std.math.clamp(
         temperature_k,
@@ -592,9 +589,9 @@ fn interpolatePartitionTable(table: []const f64, temperature_k: f64) f64 {
 }
 
 fn interpolatePartitionTableF32(table: []const f32, temperature_k: f64) f64 {
-    // interpolatePartitionTableF32 --------------------------------------------------------------------------|
-    // Widen the retained f32 partition table into stack storage, then use the f64 spline sampler.            |
-    // -------------------------------------------------------------------------------------------------------|
+    // interpolatePartitionTableF32 -------------------------------------------------------------------------- |
+    // Widen the retained f32 partition table into stack storage, then use the f64 spline sampler.             |
+    // ------------------------------------------------------------------------------------------------------- |
     var widened: [temperature_grid.len]f64 = undefined;
     for (table, 0..) |value, index| {
         widened[index] = @as(f64, value);

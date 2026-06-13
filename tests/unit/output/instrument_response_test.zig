@@ -6,9 +6,8 @@ const instrument_response = internal.output.instrument_response;
 const allocator = std.testing.allocator;
 
 // RowEvidence ------------------------------------------------------------------------------------------------|
-// Test-local instrument-response evidence derived from the old main worktree public Python route:             |
 // `rtm.instrument_response(o2a.reference_case(), [758.0, 760.0, 765.0, 767.0, 776.0])`.                       |
-// The WP1 public artifact records no instrument-response rows, so this old-route probe is the source oracle.  |
+// The O2 A public artifact records no instrument-response rows, so this canonical probe is the source oracle. |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 104 B (0.102 KiB), align: 8 B                                                                         |
@@ -177,7 +176,7 @@ const expected_rows = [_]RowEvidence{
     },
 };
 
-test "instrument response rows match old public route at probe wavelengths" {
+test "instrument response rows match public route at probe wavelengths" {
     var prepared = try internal.public.prepareO2A(allocator, internal.input.defaults.referenceCase());
     defer prepared.deinit(allocator);
 
@@ -263,7 +262,7 @@ fn expectRowEqual(
 
 fn expectF64Bits(expected: f64, actual: f64) !void {
     // expectF64Bits ------------------------------------------------------------------------------------------|
-    // Enforce exact f64 bits for old-route probe values that are copied from kernel rows without new math.    |
+    // Enforce exact f64 bits for canonical probe values that are copied from kernel rows without new math.    |
     // --------------------------------------------------------------------------------------------------------|
     const expected_bits: u64 = @bitCast(expected);
     const actual_bits: u64 = @bitCast(actual);

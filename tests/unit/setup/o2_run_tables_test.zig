@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-test "O2RunTables match WP1 baseline table evidence" {
+test "O2RunTables match O2 A baseline table evidence" {
     var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         std.testing.allocator,
         internal.input.defaults.referenceCase(),
@@ -16,7 +16,7 @@ test "O2RunTables match WP1 baseline table evidence" {
     try std.testing.expectEqual(@as(usize, 45), tables.layers.layer_temperatures_k.len);
     try std.testing.expectEqual(@as(usize, 226), tables.layers.support_temperatures_k.len);
 
-    // Source: evidence/baseline-main-56605387/public-python-baseline.json
+    // Canonical expected values owned by this repository.
     // diagnostics.atmospheric_budget.rows for the 758 nm probe.
     for (support_thermodynamic_evidence) |expected| {
         try std.testing.expectApproxEqAbs(
@@ -31,7 +31,7 @@ test "O2RunTables match WP1 baseline table evidence" {
         );
     }
 
-    // Source: evidence/baseline-main-56605387/public-python-baseline.json
+    // Canonical expected values owned by this repository.
     // diagnostics.atmospheric_budget.rows[layer_support_start] for the 758 nm probe.
     for (layer_thermodynamic_evidence) |expected| {
         try std.testing.expectEqual(expected.support_index, tables.layers.layer_support_starts[expected.index]);
@@ -51,14 +51,13 @@ test "O2RunTables match WP1 baseline table evidence" {
     try std.testing.expectEqual(@as(usize, 70), tables.lines.strong_lines.len);
     try std.testing.expectEqual(@as(usize, 70), tables.lines.relaxation_matrix.line_count);
 
-    // Source: evidence/baseline-main-56605387/internal-dump-baseline.json
-    // first diagnostic line anchor from the old internal dump.
+    // Canonical expected values owned by this repository.
+    // first diagnostic line anchor from the internal dump.
 
     const diagnostic_line = findLineByWavenumber(tables.lines.rows, 13165.249392) orelse return error.MissingLine;
     try std.testing.expectApproxEqAbs(759.5754324317322, diagnostic_line.center_wavelength_nm, 1.0e-12);
 
     // Source: data/reference_data/cross_sections/o2a_lisa_sdf.dat and o2a_lisa_rmf.dat first rows,
-    // parsed with main:src/input/reference_data/ingest/reference_assets_formats.zig parseLisaSdf/parseLisaRmf.
     try std.testing.expectApproxEqAbs(12965.107900, tables.lines.strong_lines[0].center_wavenumber_cm1, 0.0);
     try std.testing.expectApproxEqAbs(0.02764486, tables.lines.relaxation_matrix.weightAt(0, 0), 0.0);
 
@@ -74,7 +73,7 @@ test "O2RunTables match WP1 baseline table evidence" {
     try std.testing.expectEqual(@as(usize, 2501), tables.solar.rows.len);
 }
 
-test "LayerQuadrature rows match old per-call quadrature builders" {
+test "LayerQuadrature rows match per-call quadrature builders" {
     const allocator = std.testing.allocator;
     const gauss_legendre = internal.common.math.gauss_legendre;
 

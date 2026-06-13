@@ -17,8 +17,6 @@ const max_curved_fast_samples: usize = 512;
 // attenuation.zig ------------------------------------------------------------------------------------------- |
 // Direct-beam attenuation tables for LABOS transport.                                                         |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/forward_model/radiative_transfer/labos/attenuation.zig` runtime and dynamic buffer-fill   |
 //   paths over the new explicit `LayerOptics`, `GaussGeometry`, and `CurvedSunPathSample` rows.               |
 //                                                                                                             |
 // math                                                                                                        |
@@ -250,9 +248,7 @@ pub fn fillDynamicTangent(
     // fillDynamicTangent ------------------------------------------------------------------------------------ |
     // Fill the derivative of the full direct-beam attenuation table for one Jacobian state.                   |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`radiative_transfer/labos/attenuation.zig` `fillAttenuationTangentDynamic` without the     |
-    //   old heap allocation. The non-integrated LABOS tangent route uses this only for layer optical-depth    |
+    //   heap allocation. The non-integrated LABOS tangent route uses this only for layer optical-depth        |
     //   derivatives; pseudo-spherical Jacobian weighting is an integrated-source route.                       |
     //                                                                                                         |
     // math                                                                                                    |
@@ -479,7 +475,7 @@ fn applyCurvedTopToLevelRuntime(
 
     // --------------------------------------------------------------------------------------------------------|
     // tradeoff: runtime pseudo-spherical prepared-grid cap                                                    |
-    // Use the old prepared-grid fast path only for <= 65 levels and <= 512 support samples.                   |
+    // Use the prepared-grid fast path only for <= 65 levels and <= 512 support samples.                       |
     // --------------------------------------------------------------------------------------------------------|
     // Larger support grids use the same spherical slant-depth formula in the generic loop below.              |
     if (level_count <= max_levels and curved_grid.samples.len <= max_curved_fast_samples) {
@@ -512,7 +508,7 @@ fn applyCurvedTopToLevelDynamic(
 
     // --------------------------------------------------------------------------------------------------------|
     // tradeoff: dynamic pseudo-spherical prepared-grid cap                                                    |
-    // Use the old prepared-grid fast path only for <= 65 levels and <= 512 support samples.                   |
+    // Use the prepared-grid fast path only for <= 65 levels and <= 512 support samples.                       |
     // --------------------------------------------------------------------------------------------------------|
     // The dynamic table writes only the top-to-level row; other level pairs keep layer-product attenuation.   |
     if (level_count <= max_levels and curved_grid.samples.len <= max_curved_fast_samples) {
@@ -536,10 +532,8 @@ fn applyCurvedTopToLevelRuntimePreparedGrid(
     top_level: usize,
 ) void {
     // applyCurvedTopToLevelRuntimePreparedGrid -------------------------------------------------------------- |
-    // Use old-route precomputed radius terms while writing runtime top-to-level attenuation.                  |
+    // Use canonical precomputed radius terms while writing runtime top-to-level attenuation.                  |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`radiative_transfer/labos/attenuation.zig`                                                 |
     //   applyPseudoSphericalRuntimeTopToLevelWithPreparedGrid.                                                |
     // --------------------------------------------------------------------------------------------------------|
     const level_count = top_level + 1;
@@ -590,10 +584,8 @@ fn applyCurvedTopToLevelDynamicPreparedGrid(
     top_level: usize,
 ) void {
     // applyCurvedTopToLevelDynamicPreparedGrid -------------------------------------------------------------- |
-    // Use old-route precomputed radius terms while writing the full dynamic top-path row.                     |
+    // Use canonical precomputed radius terms while writing the full dynamic top-path row.                     |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`radiative_transfer/labos/attenuation.zig`                                                 |
     //   applyPseudoSphericalTopLevelAttenuationDynamicWithPreparedGrid.                                       |
     // --------------------------------------------------------------------------------------------------------|
     const level_count = top_level + 1;

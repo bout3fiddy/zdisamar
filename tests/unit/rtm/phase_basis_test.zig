@@ -6,7 +6,7 @@ const gauss_angles = internal.rtm.gauss_angles;
 const phase_basis = internal.rtm.phase_basis;
 const phase_table = internal.setup.phase_table;
 
-test "Fourier PLM basis keeps old fixed layout" {
+test "Fourier PLM basis keeps fixed layout" {
     try std.testing.expectEqual(@as(usize, 14512), @sizeOf(phase_basis.FourierPlmBasis));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(phase_basis.FourierPlmBasis));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(phase_basis.FourierPlmBasis, "fourier_index"));
@@ -14,7 +14,7 @@ test "Fourier PLM basis keeps old fixed layout" {
     try std.testing.expectEqual(@as(usize, 16), @offsetOf(phase_basis.FourierPlmBasis, "plus"));
 }
 
-test "phase kernel rows keep old fixed layouts" {
+test "phase kernel rows keep fixed layouts" {
     try std.testing.expectEqual(@as(usize, 2320), @sizeOf(phase_basis.PhaseKernel));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(phase_basis.PhaseKernel));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(phase_basis.PhaseKernel, "zplus"));
@@ -85,7 +85,7 @@ test "Fourier PLM basis handles high-order seed" {
     }
 }
 
-test "minus parity sign follows old coefficient parity" {
+test "minus canonical sign follows coefficient canonical" {
     try std.testing.expectEqual(@as(f64, 1.0), phase_basis.minusParitySign(0, 0));
     try std.testing.expectEqual(@as(f64, -1.0), phase_basis.minusParitySign(0, 1));
     try std.testing.expectEqual(@as(f64, 1.0), phase_basis.minusParitySign(2, 4));
@@ -218,7 +218,7 @@ test "phase row builders return zero rows for inactive inputs" {
 
 fn scalarM0Coefficient(phase_index: usize, mu: f64, weight: f64) f64 {
     // scalarM0Coefficient ----------------------------------------------------------------------------------- |
-    // Test-local reference for old `phase_basis.zig` m=0 PLM rows used by Z+/Z- outer products.               |
+    // Test-local reference for `phase_basis.zig` m=0 PLM rows used by Z+/Z- outer products.                   |
     // --------------------------------------------------------------------------------------------------------|
     return switch (phase_index) {
         0 => weight,

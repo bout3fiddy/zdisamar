@@ -19,7 +19,7 @@ pub const Vector = [max_state_count]f64;
 //   columns, so one- and two-state retrievals share stack storage and avoid heap-backed linalg.               |
 //                                                                                                             |
 // retrieval math                                                                                              |
-//   Later WP5 solver code builds the Rodgers normal system and update in these arrays:                        |
+//   Later O2 A solver code builds the Rodgers normal system and update in these arrays:                       |
 //                                                                                                             |
 //     G = sqrt(Sa) * Jt * Se^-1 * J * sqrt(Sa)                                                                |
 //     b = sqrt(Sa) * Jt * Se^-1 * residual                                                                    |
@@ -32,8 +32,6 @@ pub const Vector = [max_state_count]f64;
 //   allocators, dynamic dispatch, and product-layer owners unless max_state_count changes with benchmark      |
 //   evidence.                                                                                                 |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/optimal_estimation/algebra.zig` for WP5 cutover.                                          |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn zeroVector() Vector {
@@ -61,7 +59,7 @@ pub fn identityMatrix(state_count: usize) Matrix {
 
 fn symmetrize(matrix: *Matrix, state_count: usize) void {
     // symmetrize ---------------------------------------------------------------------------------------------|
-    // Average mirrored off-diagonal entries before symmetric eigensolve or inversion.                         |
+    // Average symmetric off-diagonal entries before symmetric eigensolve or inversion.                        |
     // --------------------------------------------------------------------------------------------------------|
     for (0..state_count) |row| {
         for (row + 1..state_count) |col| {

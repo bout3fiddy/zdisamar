@@ -3,14 +3,9 @@ const std = @import("std");
 const jacobian_states = @import("jacobian_states.zig");
 
 // controls.zig ---------------------------------------------------------------------------------------------- |
-// Validated RTM control rows for the WP3 LABOS transport port.                                                |
+// Validated RTM control rows for the O2 A LABOS transport implementation.                                     |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Control names, defaults, validation rules, and order-cap helpers follow main:                             |
-//   `src/forward_model/radiative_transfer/root.zig` RadiativeTransferControls,                                |
-//   RadiativeTransferPerformanceThresholds, SolveConfig, and prepareSolveConfig.                              |
-//   The Jacobian mask field replaces the old SolveConfig derivative_state_mask field and uses the state order |
-//   in `rtm/jacobian_states.zig`.                                                                             |
+//   The Jacobian mask field uses the state order in `rtm/jacobian_states.zig`.                                |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const PrepareError = error{
@@ -103,7 +98,7 @@ pub const PerformanceThresholds = struct {
 
     pub fn resolvedNumOrdersMax(self: PerformanceThresholds, scattering_optical_depth: f64) u16 {
         // resolvedNumOrdersMax ------------------------------------------------------------------------------ |
-        // Use a non-zero caller cap directly; otherwise keep the old optical-depth rule.                      |
+        // Use a non-zero caller cap directly; otherwise keep the optical-depth rule.                          |
         //                                                                                                     |
         // math                                                                                                |
         //   default cap = clamp(max(scattering_optical_depth, 0) + 15, 1, max_u16)                            |

@@ -6,8 +6,8 @@ const atmospheric_budget = internal.output.atmospheric_budget;
 const allocator = std.testing.allocator;
 
 // RowEvidence ------------------------------------------------------------------------------------------------|
-// Test-local public atmospheric-budget evidence from WP1 baseline artifact:                                   |
-// scratch/refactor/2026-06-11-explicit-dataflow-refactor/evidence/baseline-main-56605387/                     |
+// Test-local public atmospheric-budget evidence from O2 A baseline artifact:                                  |
+// Canonical expected values owned by this repository.                                                         |
 // public-python-baseline.json .diagnostics.atmospheric_budget.rows.                                           |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -190,7 +190,7 @@ const expected_budget_rows = [_]RowEvidence{
     },
 };
 
-test "atmospheric budget rows match WP1 public Python evidence at probe wavelengths" {
+test "atmospheric budget rows match O2 A public Python evidence at probe wavelengths" {
     var prepared = try internal.public.prepareO2A(allocator, internal.input.defaults.referenceCase());
     defer prepared.deinit(allocator);
 
@@ -245,7 +245,7 @@ fn expectRowEqual(
 
 fn expectF64Bits(expected: f64, actual: f64) !void {
     // expectF64Bits ------------------------------------------------------------------------------------------|
-    // Enforce the WP4 diagnostic rule: use exact f64 bits when WP1 JSON round-trips the value.                |
+    // Enforce the O2 A diagnostic rule: use exact f64 bits when O2 A JSON round-trips the value.              |
     // --------------------------------------------------------------------------------------------------------|
     const expected_bits: u64 = @bitCast(expected);
     const actual_bits: u64 = @bitCast(actual);
@@ -254,8 +254,8 @@ fn expectF64Bits(expected: f64, actual: f64) !void {
 
 fn expectOpticalDepthUlp(expected: f64, actual: f64) !void {
     // expectOpticalDepthUlp ----------------------------------------------------------------------------------|
-    // Optical-depth products are compared as ULPs rather than prose tolerance. WP1 JSON values are the        |
-    // expected source; this permits only the one-ULP product-order difference already present in the WP3      |
+    // Optical-depth products are compared as ULPs rather than prose tolerance. O2 A JSON values are the       |
+    // expected source; this permits only the one-ULP product-order difference already present in the O2 A     |
     // optics rows, and still fails larger drift.                                                              |
     // --------------------------------------------------------------------------------------------------------|
     const expected_bits: u64 = @bitCast(expected);

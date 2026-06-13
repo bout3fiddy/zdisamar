@@ -7,8 +7,6 @@ const max_spline_window_points: usize = 256;
 // cia_absorption.zig ---------------------------------------------------------------------------------------- |
 // O2-O2 collision-induced absorption coefficient sampling for support-row optics.                             |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ported from main:`src/input/reference/cia.zig`. WP2 keeps the parsed BIRA rows in O2CiaTable; WP3 uses    |
 //   the same endpoint-secant coefficient interpolation and temperature polynomial in the optics hot path.     |
 //                                                                                                             |
 // math                                                                                                        |

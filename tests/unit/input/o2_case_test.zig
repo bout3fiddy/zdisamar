@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-test "default O2 case consumes every WP2 setup control" {
+test "default O2 case consumes every O2 A setup control" {
     const case = internal.input.defaults.referenceCase();
     try internal.input.validate.o2Case(case);
 

@@ -4,8 +4,6 @@ const layer_depths = @import("layer_depths.zig");
 // curved_sun_path.zig ----------------------------------------------------------------------------------------|
 // Builds pseudo-spherical direct-beam attenuation samples from shared support-row optics.                     |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Route follows main:`src/forward_model/optical_properties/state_build/pseudo_spherical.zig` carrier-cache  |
 //   path, which delegates to shared support rows and emits only active support samples for the shared-RTM     |
 //   geometry. The support-row optical depths are already wavelength-specific.                                 |
 //                                                                                                             |

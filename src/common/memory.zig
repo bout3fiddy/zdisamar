@@ -3,7 +3,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 // memory.zig -------------------------------------------------------------------------------------------------|
-// Shared allocation helpers for retained explicit-dataflow memory owners.                                     |
+// Shared allocation helpers for retained explicit row memory owners.                                          |
 //                                                                                                             |
 // ownership boundary                                                                                          |
 //   Helpers in this file resize caller-owned storage only. They do not store allocator state, active counts,  |
@@ -17,7 +17,7 @@ pub fn ensureSliceCapacity(
     required_len: usize,
 ) Allocator.Error!bool {
     // ensureSliceCapacity ----------------------------------------------------------------------------------- |
-    // Replace backing storage when the retained slice is too small; old values are intentionally discarded.   |
+    // Replace backing storage when the retained slice is too small; values are intentionally discarded.       |
     //                                                                                                         |
     // result                                                                                                  |
     //   false : existing allocation was large enough                                                          |

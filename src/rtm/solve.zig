@@ -25,10 +25,8 @@ pub const Error = controls.PrepareError || attenuation.Error || gauss_angles.Err
 };
 
 // solve.zig ------------------------------------------------------------------------------------------------- |
-// Transport-solve dispatch for explicit WP3 optical rows.                                                     |
+// Transport-solve dispatch for explicit O2 A optical rows.                                                    |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports the non-integrated branch of main:`src/forward_model/radiative_transfer/labos/execute.zig`:         |
 //   `directSurfaceOnly`, geometry setup, attenuation fill, RT layer build, scattering-order propagation,      |
 //   Fourier weighting, tail stop, public clamp, and aerosol tangents.                                         |
 //                                                                                                             |
@@ -36,7 +34,7 @@ pub const Error = controls.PrepareError || attenuation.Error || gauss_angles.Err
 //   Inputs are explicit rows and scalars: angles, surface albedo, layer optics, source levels, curved-path    |
 //   samples, and prepared transport controls. This file stores no scene, request, product storage, or cache.  |
 //                                                                                                             |
-// main paths                                                                                                  |
+// primary paths                                                                                               |
 //   solveReflectance                                                                                          |
 //     -> directSurfaceOnly                       when scattering is disabled                                  |
 //     -> solveLayerResolvedScattering            when LABOS layer transport is active                         |
@@ -47,7 +45,7 @@ pub const Error = controls.PrepareError || attenuation.Error || gauss_angles.Err
 //        -> Fourier weighting and supported Jacobian columns                                                  |
 //                                                                                                             |
 // direct route                                                                                                |
-//   The old scalar direct path used one total optical depth. The new explicit boundary has layer rows, so the |
+//   The scalar direct path used one total optical depth. The new explicit boundary has layer rows, so the     |
 //   direct route sums layer total optical depths before applying the same scalar formula.                     |
 //                                                                                                             |
 // hot path                                                                                                    |
@@ -166,7 +164,7 @@ pub fn solveReflectance(
     work: *TransportWorkArrays,
 ) Error!ReflectanceResult {
     // solveReflectance -------------------------------------------------------------------------------------  |
-    // Dispatch one explicit transport solve. The direct route follows old LABOS scalar behavior; the          |
+    // Dispatch one explicit transport solve. The direct route follows LABOS scalar behavior; the              |
     // scattering route wires the non-integrated Fourier path through caller-owned work arrays.                |
     //                                                                                                         |
     // steps                                                                                                   |
@@ -176,8 +174,7 @@ pub fn solveReflectance(
     //   4. return reflectance plus fixed-order Jacobian vector                                                |
     //                                                                                                         |
     // prepared controls                                                                                       |
-    //   Callers pass the result of `controls.prepareSolveConfig`. This matches old main:                      |
-    //   `radiative_transfer/root.zig` `executePreparedWithLabosWorkspace`, where wavelength workers do not    |
+    //   Callers pass the result of `controls.prepareSolveConfig`. Wavelength workers do not                   |
     //   re-validate stream counts, thresholds, or derivative masks inside each LABOS solve.                   |
     //                                                                                                         |
     // direct math                                                                                             |
@@ -240,14 +237,14 @@ pub fn directSurfaceOnly(
     derivative_state_mask: jacobian_states.StateMask,
 ) ReflectanceResult {
     // directSurfaceOnly ------------------------------------------------------------------------------------  |
-    // Scalar direct-surface path from old LABOS execute.zig.                                                  |
+    // Scalar direct-surface path from LABOS execute.zig.                                                      |
     //                                                                                                         |
     // math                                                                                                    |
     //   direct path = exp(-tau / mu0) * exp(-tau / muv)                                                       |
     //   reflectance = surface_albedo * direct path                                                            |
     //                                                                                                         |
     // numerical guard                                                                                         |
-    //   `0.05` is the old LABOS direct-route cosine floor. It prevents grazing directions from producing      |
+    //   `0.05` is the LABOS direct-route cosine floor. It prevents grazing directions from producing          |
     //   unstable direct-beam exponentials.                                                                    |
     // --------------------------------------------------------------------------------------------------------|
     const mu0 = @max(angles.solar_mu, direct_direction_cosine_floor);
@@ -264,7 +261,7 @@ pub fn directSurfaceOnly(
 
 fn totalLayerOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {
     // totalLayerOpticalDepth -------------------------------------------------------------------------------  |
-    // Reduce explicit layer rows into the scalar tau consumed by the old direct-surface formula.              |
+    // Reduce explicit layer rows into the scalar tau consumed by the direct-surface formula.                  |
     // --------------------------------------------------------------------------------------------------------|
     var total: f64 = 0.0;
     for (layers) |layer| total += layer.total_optical_depth;
@@ -284,17 +281,17 @@ fn solveLayerResolvedScattering(
     work: *TransportWorkArrays,
 ) Error!ReflectanceResult {
     // solveLayerResolvedScattering -----------------------------------------------------------------------    |
-    // Run the old layer-resolved LABOS Fourier route with caller-owned storage.                               |
+    // Run the layer-resolved LABOS Fourier route with caller-owned storage.                                   |
     //                                                                                                         |
     // steps                                                                                                   |
     //   1. build direction geometry and direct-beam attenuation                                               |
     //   2. prepare per-layer phase limits and layer-doubling suffix rows                                      |
     //   3. loop retained Fourier terms: PLM basis -> RT layers -> scattering orders -> rho_m                  |
     //   4. add Fourier-weighted rho_m and requested supported tangents                                        |
-    //   5. stop at the old Fourier tail gate and clamp the public reflectance                                 |
+    //   5. stop at the Fourier tail gate and clamp the public reflectance                                     |
     //                                                                                                         |
     // aerosol Jacobians                                                                                       |
-    //   Non-integrated AOD uses the old tangent-order solve. Integrated-source AOD and pressure use the old   |
+    //   Non-integrated AOD uses the tangent-order solve. Integrated-source AOD and pressure use the           |
     //   RTM-quadrature weighting route over source levels and local order sums.                               |
     //                                                                                                         |
     // hot path                                                                                                |
@@ -319,7 +316,6 @@ fn solveLayerResolvedScattering(
         work.geometry.view_mu != muv;
     if (geometry_miss) {
         // geometry cache ------------------------------------------------------------------------------------ |
-        // Port main:`src/forward_model/radiative_transfer/labos/workspace.zig` geometryWithStatus.            |
         //                                                                                                     |
         // cache key                                                                                           |
         //   n_gauss, solar direction cosine, and viewing direction cosine.                                    |
@@ -646,7 +642,7 @@ fn solveLayerResolvedScattering(
 
             // instrumentation: perturbation: non-integrated aerosol-depth tangent --------------------------- |
             // captures: Fourier-weighted tangent-order aerosol optical-depth contribution                     |
-            // why: compare old non-integrated tangent-order sensitivity against retained AOD gates.           |
+            // why: compare non-integrated tangent-order sensitivity against retained AOD gates.               |
 
             aerosol_optical_depth_tangent += Perturbation.scalar(
                 .aerosol_aod_tangent,
@@ -726,11 +722,9 @@ fn resolvedFourierMax(
     // resolvedFourierMax -----------------------------------------------------------------------------------  |
     // Return the retained LABOS Fourier ceiling for one explicit RTM solve.                                   |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/forward_model/radiative_transfer/labos/reflectance.zig` `resolvedFourierMax`.         |
     //                                                                                                         |
     // tradeoff: near-normal scalar Fourier route                                                              |
-    //   When either direction cosine is within 1.0e-5 of normal, old LABOS evaluates only m=0.                |
+    //   When either direction cosine is within 1.0e-5 of normal, LABOS evaluates only m=0.                    |
     //   The O2 A reference case exercises this route because the viewing angle is nadir.                      |
     // --------------------------------------------------------------------------------------------------------|
     if (layer_count == 0) return 0;
@@ -747,7 +741,6 @@ fn fillSourcePhaseMaxIndicesFromLayers(
     layer_phase_max_indices: []const usize,
 ) void {
     // fillSourcePhaseMaxIndicesFromLayers --------------------------------------------------------------------|
-    // Port main:`radiative_transfer/labos/reflectance.zig` fillAdjacentLayerPhaseMaxIndices.                  |
     // Integrated-source RTM quadrature levels use the larger phase ceiling from adjacent transport layers.    |
     // --------------------------------------------------------------------------------------------------------|
     const layer_count = layer_phase_max_indices.len;
@@ -769,7 +762,7 @@ fn fillSourcePhaseMaxIndicesFromLayers(
 
 fn totalScatteringOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {
     // totalScatteringOpticalDepth --------------------------------------------------------------------------  |
-    // Sum layer scattering optical depth for the old default scattering-order cap.                            |
+    // Sum layer scattering optical depth for the default scattering-order cap.                                |
     // --------------------------------------------------------------------------------------------------------|
     var total: f64 = 0.0;
     for (layers) |layer| total += layer.total_scattering_optical_depth;

@@ -32,8 +32,6 @@ const phase_odd_reciprocal = build_phase_odd_reciprocal: {
 // layer_reflect_transmit.zig ---------------------------------------------------------------------------------|
 // Single-layer LABOS reflection/transmission matrix fills and layer-doubling support math.                    |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/forward_model/radiative_transfer/labos/layers.zig` `fillSingleScatterR`,                  |
 //   `fillSingleScatterR12`, `fillSingleScatterT`, `fillSingleScatterT12`, `classifyLayerDoubling`,            |
 //   `doDouble`, `doDouble12x10`, `doDouble12x10Step`, `gaussTrace`, and `squareAttenuation`.                  |
 //                                                                                                             |
@@ -47,13 +45,13 @@ const phase_odd_reciprocal = build_phase_odd_reciprocal: {
 //   E <- E * E after each layer-doubling step                                                                 |
 //                                                                                                             |
 // memory                                                                                                      |
-//   The functions write caller-owned Mat rows and allocate no storage. Fixed stream_count=12 keeps the old    |
+//   The functions write caller-owned Mat rows and allocate no storage. Fixed stream_count=12 keeps the        |
 //   constant-bound loop shape used by the O2 A LABOS route.                                                   |
 //                                                                                                             |
 // hot path                                                                                                    |
 //   solve.zig enters fillLayerReflectTransmitRowsWithBasis for every retained Fourier term. Each active       |
 //   layer builds a Z+/Z- phase kernel, fills single-scatter R/T, and may run layer doubling. The 12x10 route  |
-//   keeps the old O2 A loop order and phase-timing buckets so trace output remains comparable to LABOS.       |
+//   keeps the O2 A loop order and phase-timing buckets so trace output remains comparable to LABOS.           |
 //                                                                                                             |
 // instrumentation                                                                                             |
 //   Trace counters count layer visits, skip reasons, phase-row work, doubled layers, q-series decisions, and  |
@@ -81,8 +79,6 @@ pub fn fillSurface(
     // fillSurface ------------------------------------------------------------------------------------------- |
     // Build the Lambertian surface boundary as RT layer 0.                                                    |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports old `layers.zig` `fillSurface`.                                                                 |
     //                                                                                                         |
     // math                                                                                                    |
     //   R[i,j] = w[i] * albedo * w[j] only for Fourier index 0                                                |
@@ -110,8 +106,6 @@ pub fn fillLayerPhaseMaxIndices(
     // fillLayerPhaseMaxIndices ------------------------------------------------------------------------------ |
     // Store the highest active phase coefficient for each layer.                                              |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports old `layers.zig` `fillLayerPhaseMaxIndices` over the new explicit `LayerOptics` row shape.      |
     // --------------------------------------------------------------------------------------------------------|
     std.debug.assert(layer_phase_max_indices.len >= layers.len);
 
@@ -175,8 +169,6 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
     // fillLayerReflectTransmitRowsWithBasis ----------------------------------------------------------------- |
     // Build LABOS layer reflection/transmission rows for one Fourier term.                                    |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports old `layers.zig` `calcRTlayersIntoWithBasisTimed` over explicit WP3 optics rows.                |
     //                                                                                                         |
     // math                                                                                                    |
     //   layer RT maps tau, omega, and beta_l into reflection R and transmission T                             |
@@ -229,7 +221,7 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
 
             // instrumentation: trace counter: Fourier beyond layer phase ------------------------------------ |
             // captures: layer/Fourier pairs skipped because this layer has no active beta_l                   |
-            // why: validate phase-limit pruning against old LABOS layer rows.                                 |
+            // why: validate phase-limit pruning against LABOS layer rows.                                     |
 
             Trace.plotU("layer_skipped_fourier_out_of_range", 1);
 
@@ -347,8 +339,8 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
             renormalizeZeroFourierPhaseKernel(geometry, &z.zplus, &z.zmin);
 
             // instrumentation: trace counter: phase renormalization ----------------------------------------- |
-            // captures: old zero-Fourier phase-renormalization branch                                         |
-            // why: verify when O2 A uses the legacy normalized phase function path.                           |
+            // captures: zero-Fourier phase-renormalization branch                                             |
+            // why: verify when O2 A uses the default normalized phase function path.                          |
 
             Trace.plotU("phase_renormalizations", 1);
 
@@ -379,7 +371,7 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
         if (doubling_decision.uses_doubling) {
 
             // instrumentation: trace counter: doubled layer ------------------------------------------------- |
-            // captures: layers entering old doubling recurrence                                               |
+            // captures: layers entering doubling recurrence                                                   |
             // why: correlate threshold decisions with expensive q-series work.                                |
 
             Trace.plotU("doubled_layers", 1);
@@ -417,10 +409,8 @@ pub fn fillLayerReflectTransmitTangentRowsWithBasis(
     plm_basis: *const phase_basis.FourierPlmBasis,
 ) void {
     // fillLayerReflectTransmitTangentRowsWithBasis ---------------------------------------------------------- |
-    // Build derivative RT rows for one Jacobian state using the old central-difference route.                 |
+    // Build derivative RT rows for one Jacobian state using the central-difference route.                     |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`radiative_transfer/labos/layers.zig` `calcRTlayersTangentIntoWithBasis`. The old route    |
     //   perturbs optical depth, scattering optical depth, and single-scatter albedo; phase rows are copied    |
     //   from the base layer and are not recomputed from the perturbation.                                     |
     //                                                                                                         |
@@ -563,7 +553,7 @@ fn layerPhaseWeights(
     rayleigh_phase_coefficient2: f64,
 ) LayerPhaseWeights {
     // layerPhaseWeights ------------------------------------------------------------------------------------- |
-    // Convert layer gas/aerosol scattering depths into the old compact phase mixture weights.                 |
+    // Convert layer gas/aerosol scattering depths into the compact phase mixture weights.                     |
     // --------------------------------------------------------------------------------------------------------|
     const total_scattering =
         layer.gas_scattering_optical_depth +
@@ -589,7 +579,7 @@ fn layerPhaseCoefficient(
     index: usize,
 ) f64 {
     // layerPhaseCoefficient --------------------------------------------------------------------------------- |
-    // Read one beta_l coefficient from the old gas/aerosol layer phase mixture.                               |
+    // Read one beta_l coefficient from the gas/aerosol layer phase mixture.                                   |
     // --------------------------------------------------------------------------------------------------------|
     if (index == 0) return 1.0;
 
@@ -732,8 +722,6 @@ pub fn renormalizeZeroFourierPhaseKernel(
     // renormalizeZeroFourierPhaseKernel --------------------------------------------------------------------- |
     // Adjust zero-Fourier phase rows so their Gaussian integral is 2.                                         |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports old `layers.zig` `renormalizeZeroFourierPhaseKernel`.                                           |
     // --------------------------------------------------------------------------------------------------------|
     if (geometry.n_gauss == 0 or geometry.stream_count == 0) return;
 
@@ -849,8 +837,6 @@ pub fn classifyLayerDoubling(
     // classifyLayerDoubling --------------------------------------------------------------------------------- |
     // Choose whether a layer needs doubling and how thin the starting layer should be.                        |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports old `layers.zig` `classifyLayerDoubling`.                                                       |
     //                                                                                                         |
     // math                                                                                                    |
     //   effective_scattering_depth = effective_scattering_coefficient * optical_depth                         |
@@ -927,8 +913,7 @@ pub fn fillSingleScatterReflection(
     // fillSingleScatterReflection ----------------------------------------------------------------------------|
     // Fill one homogeneous layer reflection matrix.                                                           |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Formula and fixed stream_count=12 dispatch follow old `layers.zig` `fillSingleScatterR`.              |
+    //   Formula and fixed stream_count=12 dispatch follow `layers.zig` `fillSingleScatterR`.                  |
     //                                                                                                         |
     // math                                                                                                    |
     //   R[i,j] = omega * Zmin[i,j] * (1 - E[i] * E[j]) * dmu_plus[i,j]                                        |
@@ -965,8 +950,7 @@ pub fn fillSingleScatterTransmission(
     // fillSingleScatterTransmission --------------------------------------------------------------------------|
     // Fill one homogeneous layer transmission matrix.                                                         |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Formula and fixed stream_count=12 dispatch follow old `layers.zig` `fillSingleScatterT`.              |
+    //   Formula and fixed stream_count=12 dispatch follow `layers.zig` `fillSingleScatterT`.                  |
     //                                                                                                         |
     // math                                                                                                    |
     //   T[i,j] = omega * Zplus[i,j] * EET[i,j] * dmu_min[i,j]                                                 |
@@ -1008,8 +992,6 @@ pub fn gaussianBlockTrace(n: usize, n_gauss: usize, matrix: *const rows.Mat) f64
     // gaussianBlockTrace ------------------------------------------------------------------------------------ |
     // Sum the diagonal of the Gaussian block used by LABOS layer-doubling threshold gates.                    |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports old `layers.zig` `gaussTrace`.                                                                  |
     //                                                                                                         |
     // Fixed n=12, n_gauss=10 uses literal row-major diagonal indexes: k*12 + k = 13*k.                        |
     // Generic stream counts use k*n + k.                                                                      |
@@ -1039,8 +1021,6 @@ pub inline fn squareAttenuation(n: usize, attenuation: *rows.Vec) void {
     // squareAttenuation ------------------------------------------------------------------------------------- |
     // One doubling step turns half-layer attenuation into full-layer attenuation: E <- E * E.                 |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports old `layers.zig` `squareAttenuation`.                                                           |
     // --------------------------------------------------------------------------------------------------------|
 
     if (n == rows.max_stream_count) return squareAttenuation12(attenuation);
@@ -1067,8 +1047,6 @@ pub fn doubleLayer(
     // doubleLayer --------------------------------------------------------------------------------------------|
     // Dynamic-shape LABOS layer doubling for one layer and Fourier term.                                      |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports old `layers.zig` `doDouble`, with a fixed 12x10 dispatch for the O2 A route.                    |
     //                                                                                                         |
     // math                                                                                                    |
     //   Q = inverse(I - R*R) - I                                                                              |
@@ -1184,15 +1162,13 @@ fn doubleLayer12x10(
     // doubleLayer12x10 ---------------------------------------------------------------------------------------|
     // Fixed 12x10 layer doubling for the O2 A LABOS route.                                                    |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports old `layers.zig` `doDouble12x10`.                                                               |
     //                                                                                                         |
     // memory                                                                                                  |
     //   Uses two stack scratch matrices and pointer swaps. The fixed kernels write caller-owned storage and   |
     //   keep constant loop bounds visible to the optimizer.                                                   |
     //                                                                                                         |
     // instrumentation                                                                                         |
-    //   Trace and phase_timing counters keep the old `doDouble12x10` step and attenuation-square buckets.     |
+    //   Trace and phase_timing counters keep the `doDouble12x10` step and attenuation-square buckets.         |
     //   The per-step q-series and downstream-product gates live in doubleLayer12x10Step so the counters stay  |
     //   next to the fixed matrix kernels they measure.                                                        |
     // --------------------------------------------------------------------------------------------------------|
@@ -1259,10 +1235,8 @@ fn doubleLayerStep(
     doubling_step_index: usize,
 ) void {
     // doubleLayerStep ----------------------------------------------------------------------------------------|
-    // One generic layer-doubling step using the old trace-threshold branch sequence.                          |
+    // One generic layer-doubling step using the trace-threshold branch sequence.                              |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports the body of old `layers.zig` `doDouble`.                                                        |
     //                                                                                                         |
     // math                                                                                                    |
     //   The q-series gate decides D. The downstream R-D, T-U, and T-D gates then choose between retained      |
@@ -1400,17 +1374,15 @@ inline fn doubleLayer12x10Step(
     trace_phase_timing: ?phase_timing.Active,
 ) void {
     // doubleLayer12x10Step -----------------------------------------------------------------------------------|
-    // One fixed 12x10 doubling step with old LABOS gate order and phase-timing buckets.                       |
+    // One fixed 12x10 doubling step with LABOS gate order and phase-timing buckets.                           |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports old `layers.zig` `doDouble12x10Step`.                                                           |
     //                                                                                                         |
     // math                                                                                                    |
     //   Uses the same Q/D/U/R/T equations as doubleLayerStep, with fixed matrix helper kernels for each       |
     //   retained or skipped product branch.                                                                   |
     //                                                                                                         |
     // instrumentation                                                                                         |
-    //   Trace counters keep old matrix-kernel names. phase_timing buckets split q-series, R-D, T-U, and T-D   |
+    //   Trace counters keep matrix-kernel names. phase_timing buckets split q-series, R-D, T-U, and T-D       |
     //   work without changing the fixed update order. Perturbation and telemetry share the same Coord fields  |
     //   as the dynamic route so sensitivity sweeps can compare both kernels.                                  |
     // --------------------------------------------------------------------------------------------------------|

@@ -6,8 +6,8 @@ const o2_o2_cia = internal.output.o2_o2_cia;
 const allocator = std.testing.allocator;
 
 // RowEvidence ------------------------------------------------------------------------------------------------|
-// Test-local public O2-O2 CIA evidence from WP1 baseline artifact:                                            |
-// scratch/refactor/2026-06-11-explicit-dataflow-refactor/evidence/baseline-main-56605387/                     |
+// Test-local public O2-O2 CIA evidence from O2 A baseline artifact:                                           |
+// Canonical expected values owned by this repository.                                                         |
 // public-python-baseline.json .diagnostics.collision_induced_absorption.rows.                                 |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -130,7 +130,7 @@ const expected_cia_rows = [_]RowEvidence{
     },
 };
 
-test "O2-O2 CIA diagnostics match WP1 public Python evidence at probe wavelengths" {
+test "O2-O2 CIA diagnostics match O2 A public Python evidence at probe wavelengths" {
     var prepared = try internal.public.prepareO2A(allocator, internal.input.defaults.referenceCase());
     defer prepared.deinit(allocator);
 
@@ -174,7 +174,7 @@ fn expectRowEqual(expected: o2_o2_cia.O2O2CIARow, actual: o2_o2_cia.O2O2CIARow) 
 
 fn expectF64Bits(expected: f64, actual: f64) !void {
     // expectF64Bits ------------------------------------------------------------------------------------------|
-    // Enforce exact f64 bits for WP1 JSON values that round-trip without local derived math.                  |
+    // Enforce exact f64 bits for O2 A JSON values that round-trip without local derived math.                 |
     // --------------------------------------------------------------------------------------------------------|
     const expected_bits: u64 = @bitCast(expected);
     const actual_bits: u64 = @bitCast(actual);
@@ -184,7 +184,7 @@ fn expectF64Bits(expected: f64, actual: f64) !void {
 fn expectOpticalDepthUlp(expected: f64, actual: f64) !void {
     // expectOpticalDepthUlp ----------------------------------------------------------------------------------|
     // CIA optical columns inherit the atmospheric-budget one-ULP product-order exception and add only the     |
-    // old-route ratio projection. Larger drift still fails deterministically.                                 |
+    // canonical ratio projection. Larger drift still fails deterministically.                                 |
     // --------------------------------------------------------------------------------------------------------|
     const expected_bits: u64 = @bitCast(expected);
     const actual_bits: u64 = @bitCast(actual);

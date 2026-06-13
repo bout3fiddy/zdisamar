@@ -8,10 +8,6 @@ pub const max_matrix_entries: usize = gauss_angles.max_pair_count;
 // rows.zig -------------------------------------------------------------------------------------------------- |
 // Fixed LABOS stream rows shared by matrix kernels, layer reflection/transmission, orders, and reflectance.   |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Field order, fixed capacities, and zero/identity/get/set helpers follow main:                             |
-//   `src/forward_model/radiative_transfer/labos/types.zig` Mat, Vec, Vec2, LayerRT, UDField, and UDLocal.     |
-//                                                                                                             |
 // runtime                                                                                                     |
 //   These rows own no heap memory. The transport workspace will retain slices of these fixed rows so the      |
 //   per-wavelength LABOS solve writes caller-owned or workspace-owned storage without allocation.             |

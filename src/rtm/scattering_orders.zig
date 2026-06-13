@@ -12,8 +12,6 @@ const Trace = @import("../instrumentation/trace.zig");
 // scattering_orders.zig ------------------------------------------------------------------------------------- |
 // LABOS scattering-order transport over prepared layer reflection/transmission rows.                          |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/forward_model/radiative_transfer/labos/orders.zig` `ordersScatInternal`,                  |
 //   `transportToOtherLevels`, the fixed 12-direction transport variants, active-layer scanning, and the       |
 //   paired Gaussian dot-product route.                                                                        |
 //                                                                                                             |
@@ -177,17 +175,15 @@ pub fn solveOrdersTangent(
     num_orders_max: usize,
 ) OrdersView {
     // solveOrdersTangent ------------------------------------------------------------------------------------ |
-    // Propagate non-integrated derivative order fields through the old LABOS scattering-order recurrence.     |
+    // Propagate non-integrated derivative order fields through the LABOS scattering-order recurrence.         |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`radiative_transfer/labos/orders.zig` `ordersScatTangent` without allocation.              |
     //                                                                                                         |
     // math                                                                                                    |
     //   d(T * attenuation) = dT * attenuation + T * d attenuation                                             |
     //   d(R * U) = dR * U + R * dU                                                                            |
     //                                                                                                         |
     // convergence                                                                                             |
-    //   The base current order controls the same first/multiple-order stop gates as the old route.            |
+    //   The base current order controls the same first/multiple-order stop gates as the current route.        |
     // --------------------------------------------------------------------------------------------------------|
     const stream_count = geometry.stream_count;
     const gaussian_count = geometry.n_gauss;
@@ -333,8 +329,8 @@ fn solveOrdersInternal(
     //   writes   : workspace U/D fields and optional local-source sums                                        |
     //                                                                                                         |
     // instrumentation                                                                                         |
-    //   trace counters mirror old `orders.zig` names; perturbation hooks gate the same first and multiple     |
-    //   convergence decisions as the old route.                                                               |
+    //   trace counters uses `orders.zig` names; perturbation hooks gate the same first and multiple           |
+    //   convergence decisions as the current route.                                                           |
     // --------------------------------------------------------------------------------------------------------|
     const stream_count = geometry.stream_count;
     const gaussian_count = geometry.n_gauss;
@@ -667,7 +663,7 @@ fn fillInitialTangentDirectAndLocalSources(
     rt_active: []const bool,
 ) void {
     // fillInitialTangentDirectAndLocalSources --------------------------------------------------------------- |
-    // Build base and derivative first-order local sources using the old non-integrated product rule.          |
+    // Build base and derivative first-order local sources using the non-integrated product rule.              |
     // --------------------------------------------------------------------------------------------------------|
     const stream_count = geometry.stream_count;
     const gaussian_count = geometry.n_gauss;
@@ -1074,7 +1070,6 @@ fn transportToOtherLevels(
 fn isDynamicAttenuationPointer(comptime T: type) bool {
     // isDynamicAttenuationPointer --------------------------------------------------------------------------- |
     // Compile-time route check for the full [direction, from_level, to_level] attenuation table.              |
-    // provenance: main:`radiative_transfer/labos/orders.zig` `isDynamicAttenPointer`.                         |
     // --------------------------------------------------------------------------------------------------------|
     return switch (@typeInfo(T)) {
         .pointer => |ptr| ptr.child == attenuation_mod.DynamicAttenuation,
@@ -1085,7 +1080,6 @@ fn isDynamicAttenuationPointer(comptime T: type) bool {
 fn isRuntimeAttenuationPointer(comptime T: type) bool {
     // isRuntimeAttenuationPointer --------------------------------------------------------------------------- |
     // Compile-time route check for the compact runtime attenuation table used by integrated-source LABOS.     |
-    // provenance: main:`radiative_transfer/labos/orders.zig` `isRuntimeAttenPointer`.                         |
     // --------------------------------------------------------------------------------------------------------|
     return switch (@typeInfo(T)) {
         .pointer => |ptr| ptr.child == attenuation_mod.RuntimeAttenuation,
@@ -1101,7 +1095,6 @@ fn dynamicAttenuationAt(
 ) f64 {
     // dynamicAttenuationAt ---------------------------------------------------------------------------------- |
     // Direct row-major lookup for DynamicAttenuation without redoing the index decomposition in `get`.        |
-    // provenance: main:`radiative_transfer/labos/orders.zig` `dynamicAttenAt`.                                |
     // --------------------------------------------------------------------------------------------------------|
     return attenuation.data[stream_index * stream_stride + level_offset];
 }
@@ -1115,7 +1108,6 @@ fn transportToOtherLevelsDynamic12(
 ) void {
     // transportToOtherLevelsDynamic12 ----------------------------------------------------------------------- |
     // Fixed 12-direction transport for the full dynamic attenuation table.                                    |
-    // provenance: main:`radiative_transfer/labos/orders.zig` `transportToOtherLevelsDynamic12`.               |
     // hot path: avoids generic `get` calls inside scattering-order propagation.                               |
     // --------------------------------------------------------------------------------------------------------|
     const level_count = attenuation.level_count;
@@ -1168,7 +1160,6 @@ fn transportToOtherLevelsRuntime12(
 ) void {
     // transportToOtherLevelsRuntime12 ----------------------------------------------------------------------- |
     // Fixed 12-direction transport for compact runtime attenuation.                                           |
-    // provenance: main:`radiative_transfer/labos/orders.zig` `transportToOtherLevelsRuntime12`.               |
     // hot path: integrated-source transport only needs adjacent layer transmittance here.                     |
     // --------------------------------------------------------------------------------------------------------|
     ud_orde[start_level].U = ud_local[start_level].U;

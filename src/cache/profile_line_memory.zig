@@ -20,7 +20,6 @@ const min_parallel_profile_cache_build_count: usize = 32;
 const profile_cache_build_chunk_size: usize = 8;
 
 // min_hitran_temperature_k -----------------------------------------------------------------------------------|
-// Old provenance: main:`src/input/reference/spectroscopy/physics_core.zig` clamps weak-line temperatures to   |
 // 150 K before HITRAN strength scaling. This protects the partition ratio, Boltzmann factor, Doppler width,   |
 // and finite-difference derivative from nonphysical low-temperature inputs.                                   |
 // ------------------------------------------------------------------------------------------------------------|
@@ -30,7 +29,7 @@ const min_hitran_temperature_k = line_physics.min_hitran_temperature_k;
 // Retained weak-line cross-section values for exact setup wavelengths and layer profile nodes.                |
 //                                                                                                             |
 // setup boundary                                                                                              |
-//   WP2 builds a preparation-time line-value grid from the parsed HITRAN rows and the computed layer grid.    |
+//   O2 A builds a preparation-time line-value grid from the parsed HITRAN rows and the computed layer grid.   |
 //   Rows are indexed as wavelength-major, then layer-node minor, so later optics code can read a contiguous   |
 //   profile column for each exact wavelength without rebuilding weak-line Voigt terms.                        |
 // ------------------------------------------------------------------------------------------------------------|
@@ -112,7 +111,7 @@ pub const ProfileSupportLineValue = struct {
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   values owns wavelength_count * profile_node_count rows. support_profile_values owns                       |
-//   wavelength_count * support_profile_node_count rows used to interpolate support-row sigma. Root spectrum   |
+//   wavelength_count * support_profile_node_count rows uses interpolate support-row sigma. Root spectrum      |
 //   runs may set profile_node_count to zero when diagnostics are not requested; support rows still exist.     |
 pub const ProfileLineValues = struct {
     values: []ProfileLineValue = &.{},
@@ -138,10 +137,8 @@ pub const ProfileLineValues = struct {
         out_sigma_cm2_per_molecule: []f64,
     ) !void {
         // ProfileLineValues.fillSupportLineSigmaAtWavelengthIndex --------------------------------------------|
-        // Sample retained old-route sigma_total profile rows onto the setup support grid.                     |
+        // Sample retained canonical sigma_total profile rows onto the setup support grid.                     |
         //                                                                                                     |
-        // provenance                                                                                          |
-        //   Ports main:`state_build/layer_spectroscopy.zig` profile-cache sampling for the O2 A route.        |
         //   The line list has already been evaluated into support_profile_values; this helper only prepares   |
         //   endpoint-secant spline curvature and samples total_sigma_cm2_per_molecule by support altitude.    |
         //                                                                                                     |
@@ -227,7 +224,7 @@ pub fn buildO2ProfileLineValuesForWavelengths(
     wavelengths_nm: []const f64,
 ) !ProfileLineValues {
     // buildO2ProfileLineValuesForWavelengths -----------------------------------------------------------------|
-    // Build retained line values with the scalar weak-line cutoff fallback used by setup/profile parity tests.|
+    // Build retained line values with the scalar weak-line cutoff fallback used by canonical setup tests.     |
     // --------------------------------------------------------------------------------------------------------|
     return buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
         allocator,
@@ -254,15 +251,13 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
     // buildO2ProfileLineValuesForWavelengthsWithCutoffGrid ---------------------------------------------------|
     // Build retained line values over a caller-provided exact wavelength list.                                |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports the old profile-line cache fill from main:`state_build/state_spectroscopy.zig`, but accepts     |
     //   the exact radiance wavelengths selected by `spectrum/radiance_wavelengths.zig` instead of assuming    |
     //   a uniform public product grid.                                                                        |
     //                                                                                                         |
     // row contract                                                                                            |
     //   Output rows stay wavelength-major and preserve the input wavelength order exactly. Dense spectrum     |
     //   prefetch can therefore use its `RadianceWavelengthList` index as the ProfileLineValues index.         |
-    //   `build_layer_values` keeps the WP2 diagnostic layer rows for evidence paths. The public spectrum      |
+    //   `build_layer_values` keeps the O2 A diagnostic layer rows for evidence paths. The public spectrum     |
     //   route uses only support_profile_values, so root skips preparing unused layer rows.                    |
     // --------------------------------------------------------------------------------------------------------|
     var layers = try atmosphere_layers.build(allocator, case);
@@ -332,10 +327,10 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
         allocator.free(active_lines);
     };
 
-    // The old-route temperature derivative is a centered finite difference at T +/- 0.5 K. The public WP4
+    // The canonical temperature derivative is a centered finite difference at T +/- 0.5 K. The public O2 A
     // Jacobian states are surface/aerosol controls, so root spectrum runs do not read d_sigma/dT and skip
-    // these two full weak-line state families. Explicit profile-line parity builders still request the rows
-    // directly, and the reuse stamp records the choice so incompatible session caches cannot mix.
+    // these two full weak-line state families. Explicit profile-line canonical builders still request the rows
+    // directly, and the reuse stamp records the choice so mismatched session caches cannot mix.
     var upper_weak_states: []WeakLinePreparedState = &.{};
     var lower_weak_states: []WeakLinePreparedState = &.{};
     if (build_layer_values and include_temperature_derivatives) {
@@ -495,12 +490,12 @@ fn buildProfileLineValuesByWavelength(
     support_profile_values: []ProfileSupportLineValue,
 ) !void {
     // buildProfileLineValuesByWavelength ---------------------------------------------------------------------|
-    // Fill retained profile-line values over exact wavelengths, partitioned exactly like the old profile      |
+    // Fill retained profile-line values over exact wavelengths, partitioned exactly like the profile          |
     // spectroscopy cache build: threshold 32, static worker ranges, chunk size 8, and optional session pool.  |
     //                                                                                                         |
     // instrumentation                                                                                         |
     //   `profile_spectroscopy_cache.build` measures this whole setup phase. Worker and chunk zones live in    |
-    //   `profileLineBuildWorkerMain` and retain the old trace names for profile-cache construction.           |
+    //   `profileLineBuildWorkerMain` and retain the trace names for profile-cache construction.               |
     // --------------------------------------------------------------------------------------------------------|
     if (worker_count == 0 or worker_count > worker_partition.max_workers) return error.InvalidShape;
     if (wavelengths_nm.len == 0) return;
@@ -512,7 +507,7 @@ fn buildProfileLineValuesByWavelength(
 
     // instrumentation: trace zone: profile spectroscopy cache build ----------------------------------------- |
     // captures: profile-line cache build wall time and exact-wavelength count                                 |
-    // why: shows setup cost that WP4 compares before forward prefetch starts.                                 |
+    // why: shows setup cost that O2 A compares before forward prefetch starts.                                |
     const zone = Trace.staticZone(@src(), "profile_spectroscopy_cache.build");
     zone.value(@intCast(wavelengths_nm.len));
     defer zone.end();
@@ -585,7 +580,7 @@ fn profileLineBuildWorkerMain(worker: *ProfileLineBuildWorker) void {
 
         // instrumentation: trace zone: profile spectroscopy cache build chunk --------------------------------|
         // captures: chunk wall time and exact-wavelength row count                                            |
-        // why: preserves the old chunk boundary while showing uneven wavelength-window costs.                 |
+        // why: preserves the chunk boundary while showing uneven wavelength-window costs.                     |
         const chunk_zone = Trace.deepStaticZone(@src(), "profile_spectroscopy_cache.build");
         chunk_zone.value(@intCast(chunk.len()));
         defer chunk_zone.end();
@@ -725,7 +720,7 @@ fn fillSupportProfileLineValueRowsAtWavelength(worker: *ProfileLineBuildWorker, 
 
 fn preferredProfileLineWorkerCount(wavelength_count: usize) usize {
     // preferredProfileLineWorkerCount ------------------------------------------------------------------------|
-    // Resolve the old profile-cache build worker-count policy for retained exact-wavelength spectroscopy.     |
+    // Resolve the profile-cache build worker-count policy for retained exact-wavelength spectroscopy.         |
     // --------------------------------------------------------------------------------------------------------|
     return worker_partition.preferredWorkerCount(
         wavelength_count,
@@ -735,7 +730,7 @@ fn preferredProfileLineWorkerCount(wavelength_count: usize) usize {
 
 fn preferredProfileLineStateWorkerCount(profile_count: usize) usize {
     // preferredProfileLineStateWorkerCount -------------------------------------------------------------------|
-    // Resolve the old thermodynamic profile-line state worker-count policy.                                   |
+    // Resolve the thermodynamic profile-line state worker-count policy.                                       |
     // --------------------------------------------------------------------------------------------------------|
     return worker_partition.preferredWorkerCount(
         profile_count,
@@ -766,9 +761,6 @@ fn prepareCutoffGrid(allocator: Allocator, support_wavelengths_nm: []const f64) 
     // prepareCutoffGrid --------------------------------------------------------------------------------------|
     // Sort and merge the realized weak-line support grid before computing matching wavenumbers.               |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/input/o2a_reference/run.zig` installVendorWeakCutoffGrid and old                      |
-    //   main:`instrument/adaptive_plan.zig` buildAdaptiveSupportWavelengths merge tolerance.                  |
     // --------------------------------------------------------------------------------------------------------|
     if (support_wavelengths_nm.len < 2) return .{};
 
@@ -799,7 +791,7 @@ fn prepareCutoffGrid(allocator: Allocator, support_wavelengths_nm: []const f64) 
 
 fn lessThanF64(_: void, lhs: f64, rhs: f64) bool {
     // lessThanF64 --------------------------------------------------------------------------------------------|
-    // Sort finite support wavelengths in ascending wavelength order for old cutoff-grid index searches.       |
+    // Sort finite support wavelengths in ascending wavelength order for cutoff-grid index searches.           |
     // --------------------------------------------------------------------------------------------------------|
     return lhs < rhs;
 }
@@ -869,8 +861,6 @@ const StrongLinePreparedState = line_physics.StrongLinePreparedState;
 // WeakLinePreparedLineState ----------------------------------------------------------------------------------|
 // Per-line weak-lane constants prepared for one temperature and pressure.                                     |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/input/reference/spectroscopy/types.zig` WeakLinePreparedLineState.                        |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 32 B (0.031 KiB), align: 8 B                                                                          |
@@ -886,8 +876,6 @@ const WeakLinePreparedLineState = line_physics.WeakLinePreparedLineState;
 // WeakLinePreparedState --------------------------------------------------------------------------------------|
 // Header over weak-line constants prepared for one temperature and pressure.                                  |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/input/reference/spectroscopy/types.zig` WeakLinePreparedState.                            |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 40 B (0.039 KiB), align: 8 B                                                                          |
@@ -945,7 +933,7 @@ fn collectRuntimeLines(
     active_isotopes: []const u8,
 ) ![]readers.O2LineAssetRow {
     // collectRuntimeLines ------------------------------------------------------------------------------------|
-    // Copy O2 rows that participate in old total-sigma evaluation, without applying the weak-line threshold.  |
+    // Copy O2 rows that participate in total-sigma evaluation, without applying the weak-line threshold.      |
     // --------------------------------------------------------------------------------------------------------|
     var active_count: usize = 0;
     for (lines) |line| {
@@ -1072,7 +1060,7 @@ fn prepareLayerStrongLineStates(
     pressures_hpa: []const f64,
 ) ![]StrongLinePreparedState {
     // prepareLayerStrongLineStates ---------------------------------------------------------------------------|
-    // Prepare one strong-line ConvTP state per layer profile node through the old raw worker policy.          |
+    // Prepare one strong-line ConvTP state per layer profile node through the raw worker policy.              |
     // --------------------------------------------------------------------------------------------------------|
     if (temperatures_k.len != pressures_hpa.len) return error.InvalidShape;
 
@@ -1098,7 +1086,7 @@ fn prepareProfileStrongLineStates(
     profile_rows: []const readers.AtmosphereProfileRow,
 ) ![]StrongLinePreparedState {
     // prepareProfileStrongLineStates -------------------------------------------------------------------------|
-    // Prepare one strong-line ConvTP state per spectroscopy-profile row through the old raw worker policy.    |
+    // Prepare one strong-line ConvTP state per spectroscopy-profile row through the raw worker policy.        |
     // --------------------------------------------------------------------------------------------------------|
     if (profile_rows.len > max_spectroscopy_profile_nodes) return error.InvalidShape;
 
@@ -1129,10 +1117,9 @@ fn fillProfileLineStates(
     strong_states: ?[]StrongLinePreparedState,
 ) void {
     // fillProfileLineStates ----------------------------------------------------------------------------------|
-    // Fill weak and/or strong line states with the old profile-line-state worker policy.                      |
+    // Fill weak and/or strong line states with the profile-line-state worker policy.                          |
     //                                                                                                         |
     // scheduling                                                                                              |
-    //   Threshold 4 and chunk size 2 match main:`state_build/absorbers.zig` for thermodynamic profile nodes.  |
     //   This phase always uses raw spawn mode; the session pool is reserved for forward-miss cache builds.    |
     // --------------------------------------------------------------------------------------------------------|
     const row_count = temperatures_k.len;
@@ -1191,7 +1178,7 @@ fn profileLineStateWorkerMain(worker: *ProfileLineStateWorker) void {
 
         // instrumentation: trace zone: profile line-state chunk ----------------------------------------------|
         // captures: profile-line state chunk wall time and row count                                          |
-        // why: preserves the old chunk boundary for P/T spectroscopy preparation.                             |
+        // why: preserves the chunk boundary for P/T spectroscopy preparation.                                 |
         const chunk_zone = Trace.deepStaticZone(@src(), "optical_prepare.profile_line_state_chunk");
         chunk_zone.value(@intCast(chunk.len()));
         defer chunk_zone.end();
@@ -1247,7 +1234,7 @@ fn activeLine(
     line_strength_threshold: f64,
 ) bool {
     // activeLine ---------------------------------------------------------------------------------------------|
-    // Apply the WP2 line-gas isotope and weak-line threshold controls to one parsed HITRAN row.               |
+    // Apply the O2 A line-gas isotope and weak-line threshold controls to one parsed HITRAN row.              |
     // --------------------------------------------------------------------------------------------------------|
     if (line.gas_index != 7) return false;
 
@@ -1264,7 +1251,7 @@ fn activeLine(
 
 fn runtimeLine(line: readers.O2LineAssetRow, active_isotopes: []const u8) bool {
     // runtimeLine --------------------------------------------------------------------------------------------|
-    // Apply the old total-sigma gas/isotope controls without the weak-line threshold filter.                  |
+    // Apply the total-sigma gas/isotope controls without the weak-line threshold filter.                      |
     // --------------------------------------------------------------------------------------------------------|
     if (line.gas_index != 7) return false;
 

@@ -7,10 +7,8 @@ const o2_case = @import("../input/o2_case.zig");
 const Allocator = std.mem.Allocator;
 
 // SolarTable -------------------------------------------------------------------------------------------------|
-// Owner for parsed solar irradiance rows plus DISAMAR-compatible spline state.                                |
+// Owner for parsed solar irradiance rows plus DISAMAR spline state.                                           |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Spline preparation ports main:`src/input/instrument/solar_spectrum.zig` `prepareInterpolation`. The old   |
 //   route prepared second derivatives once on the operational solar table, then reused them on irradiance     |
 //   cache misses.                                                                                             |
 //                                                                                                             |
@@ -23,7 +21,7 @@ const Allocator = std.mem.Allocator;
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   rows owns parsed solar irradiance rows. spline_second_derivatives owns one f64 per row when the table has |
-//   enough samples for the old endpoint-secant spline route.                                                  |
+//   enough samples for the endpoint-secant spline route.                                                      |
 pub const SolarTable = struct {
     rows: []readers.SolarAssetRow,
     spline_second_derivatives: []f64 = &.{},
@@ -50,7 +48,7 @@ pub fn hashAll(hasher: *std.hash.Wyhash, table: SolarTable) void {
 
 pub fn build(allocator: Allocator, case: o2_case.O2Case) !SolarTable {
     // build --------------------------------------------------------------------------------------------------|
-    // Load solar reference rows and prepare the old operational-table spline state once during setup.         |
+    // Load solar reference rows and prepare the operational-table spline state once during setup.             |
     // --------------------------------------------------------------------------------------------------------|
     const rows = try readers.readSolarReference(allocator, case.observation.solar_reference.path);
     errdefer allocator.free(rows);
@@ -69,10 +67,10 @@ fn buildSplineSecondDerivatives(
     rows: []const readers.SolarAssetRow,
 ) ![]f64 {
     // buildSplineSecondDerivatives ---------------------------------------------------------------------------|
-    // Prepare DISAMAR-compatible endpoint-secant spline second derivatives for the operational solar table.   |
+    // Prepare DISAMAR endpoint-secant spline second derivatives for the operational solar table.              |
     //                                                                                                         |
     // math                                                                                                    |
-    //   This mirrors old `OperationalSolarSpectrum.prepareInterpolation`: endpoint slopes are adjacent        |
+    //   This uses `OperationalSolarSpectrum.prepareInterpolation`: endpoint slopes are adjacent               |
     //   secants, a tridiagonal solve recovers first derivatives, then the values are converted to the         |
     //   `splint` second-derivative form consumed by `spectrum/solar_lookup.zig`.                              |
     //                                                                                                         |

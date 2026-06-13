@@ -5,7 +5,7 @@ const internal = @import("internal");
 const radiance_wavelengths = internal.spectrum.radiance_wavelengths;
 const sampling_table = internal.spectrum.sampling_table;
 
-test "IntegrationKernelRef keeps old direct inline and side sample contracts" {
+test "IntegrationKernelRef keeps direct inline and side sample contracts" {
     const direct = sampling_table.IntegrationKernelRef.disabled();
     const direct_storage_values = [_]f64{0.0};
     const direct_storage = sampling_table.IntegrationKernelStorage{
@@ -45,7 +45,7 @@ test "IntegrationKernelRef keeps old direct inline and side sample contracts" {
     try std.testing.expectApproxEqAbs(0.2, side_ref.weight(side_storage, 0), 0.0);
 }
 
-test "SpectrumSamplingTable summary matches WP1 aggregate sampling evidence shape" {
+test "SpectrumSamplingTable summary matches O2 A aggregate sampling evidence shape" {
     const side_offsets = [_]f64{ -0.02, 0.0, 0.02, -0.01, 0.01 };
     const side_weights = [_]f64{ 0.25, 0.5, 0.25, 0.5, 0.5 };
     const rows = [_]sampling_table.SpectrumSamplingRow{
@@ -89,15 +89,15 @@ test "SpectrumSamplingTable summary matches WP1 aggregate sampling evidence shap
     try std.testing.expectEqual(@as(usize, 5), summary.side_sample_count);
     try std.testing.expectEqual(@as(usize, 3), summary.max_kernel_sample_count);
 
-    // Source: scratch/refactor/2026-06-11-explicit-dataflow-refactor/evidence/
-    // baseline-main-56605387/internal-dump-baseline.json sampling_table aggregate fields.
+    // Source: canonical O2 A sampling evidence fixtures.
+    // Canonical expected values owned by this repository.
     try std.testing.expectEqual(@as(usize, 701), sampling_evidence.row_count);
     try std.testing.expectEqual(@as(usize, 565776), sampling_evidence.kernel_offsets_len);
     try std.testing.expectEqual(@as(usize, 282888), sampling_evidence.radiance_sample_count);
     try std.testing.expectEqual(@as(usize, 3874), sampling_evidence.forward_miss_count);
 }
 
-test "O2 SpectrumSamplingTable builder matches WP1 aggregate and exact-key evidence" {
+test "O2 SpectrumSamplingTable builder matches O2 A aggregate and exact-key evidence" {
     var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         std.testing.allocator,
         internal.input.defaults.referenceCase(),
@@ -115,8 +115,8 @@ test "O2 SpectrumSamplingTable builder matches WP1 aggregate and exact-key evide
     const table = owned.view();
     const summary = sampling_table.summarize(table);
 
-    // Source: scratch/refactor/2026-06-11-explicit-dataflow-refactor/evidence/
-    // baseline-main-56605387/internal-dump-baseline.json sampling_table aggregate fields.
+    // Source: canonical O2 A sampling evidence fixtures.
+    // Canonical expected values owned by this repository.
     try std.testing.expectEqual(@as(usize, 701), summary.row_count);
     try std.testing.expectEqual(@as(usize, 701), summary.radiance_integrated_rows);
     try std.testing.expectEqual(@as(usize, 701), summary.irradiance_integrated_rows);
@@ -127,7 +127,7 @@ test "O2 SpectrumSamplingTable builder matches WP1 aggregate and exact-key evide
     var list = try radiance_wavelengths.buildRadianceWavelengthList(std.testing.allocator, table);
     defer list.deinit(std.testing.allocator);
 
-    // Source: same WP1 internal dump, sampling_table.forward_misses first/last rows.
+    // Source: same O2 A internal dump, sampling_table.forward_misses first/last rows.
     try std.testing.expectEqual(@as(usize, 3874), list.wavelengths.len);
     try std.testing.expectEqual(@as(u64, 4649845583965292708), list.wavelengths[0].key);
     try std.testing.expectApproxEqAbs(754.240334835155, list.wavelengths[0].wavelength_nm, 0.0);
@@ -281,7 +281,7 @@ fn expectResolvedKernelEqual(
 }
 
 // SamplingEvidence ------------------------------------------------------------------------------------------ |
-// Aggregate old-route sampling-table evidence from the WP1 internal dump.                                     |
+// Aggregate canonical sampling-table evidence from the O2 A internal dump.                                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 32 B (0.031 KiB), align: 8 B                                                                          |

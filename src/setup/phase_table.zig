@@ -10,8 +10,6 @@ pub const vendor_hg_truncation_threshold: f64 = 1.0e-8;
 // phase_table.zig --------------------------------------------------------------------------------------------|
 // Prepared aerosol phase-function coefficients consumed by LABOS phase-basis and layer builders.              |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/forward_model/optical_properties/shared/phase_functions.zig` HG coefficient preparation:  |
 //   fixed [151] coefficient storage, vendor max phase index 150, and case truncation threshold.               |
 //                                                                                                             |
 // math                                                                                                        |
@@ -58,8 +56,6 @@ pub fn build(case: o2_case.O2Case) PhaseTable {
     // build --------------------------------------------------------------------------------------------------|
     // Prepare the case aerosol HG phase row for later LABOS phase-kernel construction.                        |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Multi-layer profile collapse follows main:`state_build/layer_accumulation.zig`                        |
     //   profileEquivalentPhaseCoefficients: one equivalent HG g is weighted by midpoint-wavelength            |
     //   scattering optical depth.                                                                             |
     // --------------------------------------------------------------------------------------------------------|
@@ -80,7 +76,7 @@ pub fn build(case: o2_case.O2Case) PhaseTable {
 
 pub fn zeroPhaseCoefficients() [coefficient_count]f64 {
     // zeroPhaseCoefficients ----------------------------------------------------------------------------------|
-    // Return the old fixed phase row with only the isotropic l=0 term active.                                 |
+    // Return the fixed phase row with only the isotropic l=0 term active.                                     |
     // --------------------------------------------------------------------------------------------------------|
     var coefficients = [_]f64{0.0} ** coefficient_count;
     coefficients[0] = 1.0;
@@ -89,7 +85,7 @@ pub fn zeroPhaseCoefficients() [coefficient_count]f64 {
 
 pub fn hgPhaseCoefficients(asymmetry_factor: f64) [coefficient_count]f64 {
     // hgPhaseCoefficients ------------------------------------------------------------------------------------|
-    // Build the old vendor-threshold Henyey-Greenstein aerosol coefficient row.                               |
+    // Build the vendor-threshold Henyey-Greenstein aerosol coefficient row.                                   |
     // --------------------------------------------------------------------------------------------------------|
     return hgPhaseCoefficientsWithThreshold(asymmetry_factor, vendor_hg_truncation_threshold);
 }
@@ -101,8 +97,7 @@ pub fn hgPhaseCoefficientsWithThreshold(
     // hgPhaseCoefficientsWithThreshold ---------------------------------------------------------------------- |
     // Fill the Henyey-Greenstein coefficient tail until the normalized tail falls below the threshold.        |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Formula and tail gate port old `phase_functions.zig` `hgPhaseCoefficientsWithThreshold`.              |
+    //   Formula and tail gate use the Henyey-Greenstein `hgPhaseCoefficientsWithThreshold`.                   |
     //                                                                                                         |
     // math                                                                                                    |
     //   coefficient[l] = (2l + 1) * g^l                                                                       |
@@ -128,7 +123,7 @@ pub fn hgPhaseCoefficientsWithThreshold(
 
 pub fn maxPhaseCoefficientIndex(coefficients: *const [coefficient_count]f64) usize {
     // maxPhaseCoefficientIndex ------------------------------------------------------------------------------ |
-    // Return the highest non-negligible coefficient index used by old LABOS phase support.                    |
+    // Return the highest non-negligible coefficient index used by LABOS phase support.                        |
     // --------------------------------------------------------------------------------------------------------|
     var index = coefficient_count;
     while (index > 1) {
@@ -174,7 +169,7 @@ fn scaleOpticalDepth(
     wavelength_nm: f64,
 ) f64 {
     // scaleOpticalDepth --------------------------------------------------------------------------------------|
-    // Apply old aerosol Angstrom scaling with the same safe wavelength/reference guard.                       |
+    // Apply aerosol Angstrom scaling with the same safe wavelength/reference guard.                           |
     // --------------------------------------------------------------------------------------------------------|
     if (optical_depth == 0.0 or angstrom_exponent == 0.0 or reference_wavelength_nm == wavelength_nm) {
         return optical_depth;

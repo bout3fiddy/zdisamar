@@ -11,7 +11,7 @@ const fillDisamarDivPointsIntervalNodes = gauss_legendre.fillDisamarDivPointsInt
 const scaleIntervalNodes = gauss_legendre.scaleIntervalNodes;
 const Rule = gauss_legendre.Rule;
 
-const legacy_fixed_rules = [_]Rule{
+const canonical_fixed_rules = [_]Rule{
     .{
         .count = 1,
         .nodes = .{
@@ -284,8 +284,8 @@ const legacy_fixed_rules = [_]Rule{
     },
 };
 
-test "gauss-legendre generated fixed rules match legacy literals bit-for-bit" {
-    for (legacy_fixed_rules, 1..) |expected, order| {
+test "gauss-legendre generated fixed rules match default literals bit-for-bit" {
+    for (canonical_fixed_rules, 1..) |expected, order| {
         const actual = try rule(@intCast(order));
         try expectRuleBits(expected, actual);
     }
@@ -376,7 +376,7 @@ test "disamar interval node-only fill scales nodes" {
     }
 }
 
-test "canonical disamar interval nodes rescale to old fill bit-for-bit" {
+test "canonical disamar interval nodes rescale to fill bit-for-bit" {
     var old_nodes = [_]f64{0.0} ** 28;
     var canonical_nodes = [_]f64{0.0} ** 28;
     var scaled_nodes = [_]f64{0.0} ** 28;
@@ -390,7 +390,7 @@ test "canonical disamar interval nodes rescale to old fill bit-for-bit" {
 
 fn expectEqualF64Bits(expected: []const f64, actual: []const f64) !void {
     // expectEqualF64Bits -------------------------------------------------------------------------------------|
-    // Compare retained quadrature rows exactly so setup reuse cannot change support placement by one ULP.    |
+    // Compare retained quadrature rows exactly so setup reuse cannot change support placement by one ULP.     |
     // --------------------------------------------------------------------------------------------------------|
     try std.testing.expectEqual(expected.len, actual.len);
     for (expected, actual) |expected_value, actual_value| {

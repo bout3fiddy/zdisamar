@@ -15,14 +15,14 @@ pub const no_lower_bound = -std.math.inf(f64);
 pub const no_upper_bound = std.math.inf(f64);
 
 // root.zig ---------------------------------------------------------------------------------------------------|
-// Retrieval value layer, fixed state-space scratch, and retained result owners for WP5 O2 A cutover.          |
+// Retrieval value layer, fixed state-space scratch, and retained result owners for O2 A O2 A release.         |
 //                                                                                                             |
 // route map                                                                                                   |
 //   api/c.zig converts Python/C request rows into StateSpec, MeasuredReflectanceRows, and result owners.      |
-//   Future WP5 solver slices mutate these retrieval values and call root.zig forward functions with updated   |
+//   Future O2 A solver slices mutate these retrieval values and call root.zig forward functions with updated  |
 //   aerosol/scalar state, while session memory stays warm.                                                    |
 //                                                                                                             |
-// main paths                                                                                                  |
+// primary paths                                                                                               |
 //   buildPressureProfile/freePressureProfile build the pressure-to-altitude spline side data used by the      |
 //   aerosol-layer pressure state. MeasuredReflectanceRows copies caller measurement arrays into dense SoA     |
 //   buffers. Result, BatchResult, and FastmodeBatchResult retain contiguous arrays borrowed by C/Python.      |
@@ -30,10 +30,6 @@ pub const no_upper_bound = std.math.inf(f64);
 // state-space storage                                                                                         |
 //   Retrieval state math is capped at max_state_count = 2. Vector and Matrix live in algebra.zig and are      |
 //   stack values; no heap-backed linalg or generic owner object sits in the iteration path.                   |
-//                                                                                                             |
-// provenance                                                                                                  |
-//   Ports value/layout behavior from main:`src/optimal_estimation/retrieval.zig`; the old broad Scene and     |
-//   ProductStorage route is intentionally absent from this explicit-dataflow module.                          |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const Error = error{
@@ -88,7 +84,7 @@ pub const StateSpec = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // PressureAltitudeProfile ------------------------------------------------------------------------------------|
-// Pressure-altitude table used to convert native altitude tangents to hPa tangents.                           |
+// Pressure-altitude table uses convert native altitude tangents to hPa tangents.                              |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 48 B (0.047 KiB), align: 8 B                                                                          |
@@ -123,7 +119,6 @@ pub const PressureAltitudeProfile = struct {
 
     pub fn altitudeDerivativeAtPressure(self: PressureAltitudeProfile, pressure_hpa: f64) !f64 {
         // PressureAltitudeProfile.altitudeDerivativeAtPressure -----------------------------------------------|
-        // Convert d altitude / d pressure through the same finite-difference route used by the main tree.     |
         //                                                                                                     |
         // math                                                                                                |
         //   step_hpa = max(abs(pressure_hpa) * 1.0e-4, 1.0e-3)                                                |
@@ -132,8 +127,6 @@ pub const PressureAltitudeProfile = struct {
         //   derivative = ------------------------------------------------------------------                   |
         //                         upper_pressure - lower_pressure                                             |
         //                                                                                                     |
-        // provenance                                                                                          |
-        //   Ports main:`src/optimal_estimation/retrieval.zig` `PressureAltitudeProfile.altitudeDerivative...` |
         // ----------------------------------------------------------------------------------------------------|
         if (self.altitude_km.len < 2 or
             self.altitude_km.len != self.pressure_hpa.len or
@@ -155,7 +148,7 @@ pub const PressureAltitudeProfile = struct {
 
     fn altitudeAtPressure(self: PressureAltitudeProfile, pressure_hpa: f64) !f64 {
         // PressureAltitudeProfile.altitudeAtPressure ---------------------------------------------------------|
-        // Invert the monotonic pressure-altitude spline with the old 80-step bisection route.                 |
+        // Invert the monotonic pressure-altitude spline with the 80-step bisection route.                     |
         // ----------------------------------------------------------------------------------------------------|
         if (!std.math.isFinite(pressure_hpa)) return error.InvalidPressureProfile;
         const lower_pressure = self.pressure_hpa[self.pressure_hpa.len - 1];
@@ -691,7 +684,7 @@ pub const StateSpace = struct {
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   All slices borrow the forward spectrum result. Jacobian rows are reflectance-space fixed vectors, not the |
-//   old active-column radiance buffer.                                                                        |
+//   active-column radiance buffer.                                                                            |
 pub const ReflectanceEvaluationRows = struct {
     wavelength_nm: []const f64,
     reflectance: []const f64,
@@ -764,8 +757,6 @@ pub fn initializeStateSpace(state_specs: []const StateSpec, result: ?*Result) Er
     // initializeStateSpace ---------------------------------------------------------------------------------- |
     // Convert validated state-spec rows into fixed two-lane vectors used by the Rodgers update.               |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/optimal_estimation/retrieval.zig` `initializeStateSpace`, with surface albedo         |
     //   removed from the state vector.                                                                        |
     // --------------------------------------------------------------------------------------------------------|
     if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
@@ -830,9 +821,8 @@ pub fn accumulateNormalSystem(
     //   b += sqrt(Sa) * Jt * Se^-1 * residual                                                                 |
     //                                                                                                         |
     // units                                                                                                   |
-    //   Unlike main:`src/optimal_estimation/retrieval.zig`, this path receives reflectance-space Jacobians    |
     //   from `O2Spectrum`, so no radiance-to-reflectance scale is applied here. The pressure lane still       |
-    //   follows the old aerosol-layer pressure-shift projection through altitudeDerivativeAtPressure.         |
+    //   follows the aerosol-layer pressure-shift projection through altitudeDerivativeAtPressure.             |
     // --------------------------------------------------------------------------------------------------------|
     if (evaluation.wavelength_nm.len != measurement.wavelength_nm.len or
         evaluation.reflectance.len != measurement.wavelength_nm.len or
@@ -907,8 +897,6 @@ pub fn solveStep(
     //   dx_new_k = (lambda_scale * rhs_k + lambda_k * dx_k) / (lambda_k + 1)                                  |
     //   state   = prior + sqrt(Sa) * eigenvectors * dx_new                                                    |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/optimal_estimation/retrieval.zig` `solveStep`, with max_state_count reduced to two.   |
     // --------------------------------------------------------------------------------------------------------|
     const eig = algebra.jacobiEigenSymmetric(g, state_count);
     scratch.eigenvectors = eig.vectors;
@@ -1031,8 +1019,6 @@ pub fn validateStateSpecs(state_specs: []const StateSpec) Error!void {
     //   pressure-state lanes  : carry interval placement, thickness, and pressure-to-altitude profile rows    |
     //   non-pressure lanes    : carry no pressure-placement side data                                         |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/optimal_estimation/retrieval.zig` `validateStateSpec`.                                |
     // --------------------------------------------------------------------------------------------------------|
     if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
     for (state_specs) |spec| try validateStateSpec(spec);
@@ -1047,11 +1033,9 @@ pub fn buildPressureProfile(
     // Build pressure-profile curvature for aerosol-layer pressure-state tangent conversion.                   |
     //                                                                                                         |
     // math                                                                                                    |
-    //   The old route splines log(pressure_hpa) over altitude_km. A two-point profile is valid and keeps      |
+    //   The current route splines log(pressure_hpa) over altitude_km. A two-point profile is valid and keeps  |
     //   zero curvature, giving linear interpolation in log-pressure.                                          |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/optimal_estimation/retrieval.zig` `buildPressureProfile`.                             |
     // --------------------------------------------------------------------------------------------------------|
     if (altitude_km.len < 2 or altitude_km.len != pressure_hpa.len) return error.InvalidPressureProfile;
 
@@ -1204,7 +1188,6 @@ fn endpointSplineSecondDerivatives(
     //                                                                                                         |
     //     rhs_i = 6 * (slope_right - slope_left)                                                              |
     //                                                                                                         |
-    //   Endpoint rows keep the main-tree clamped form. count <= 3 uses fixed Matrix/Vector storage; larger    |
     //   pressure profiles use a temporary tridiagonal solve.                                                  |
     // --------------------------------------------------------------------------------------------------------|
     const count = x.len;

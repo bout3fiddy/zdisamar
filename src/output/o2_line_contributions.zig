@@ -17,8 +17,6 @@ const vendor_cutoff_prewindow_margin_cm1 = line_physics.vendor_cutoff_prewindow_
 //   The builder renders explanation rows from prepared setup tables into the fixed Python C ABI row order.    |
 //   It does not parse inputs, own C handles, call transport, or feed the forward solve.                       |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/output/o2_line_contributions.zig` over the explicit WP2/WP3 setup rows. The scalar weak   |
 //   line and ConvTP sidecar math is delegated to `src/spectrum/line_physics.zig`; this file only attaches     |
 //   diagnostic row metadata and public row-status labels.                                                     |
 //                                                                                                             |
@@ -315,7 +313,7 @@ fn weakLineRow(
     runtime: RuntimeControls,
 ) O2LineContributionRow {
     // weakLineRow --------------------------------------------------------------------------------------------|
-    // Project one HITRAN weak-line row and its old-route inclusion status into the public diagnostic shape.   |
+    // Project one HITRAN weak-line row and its canonical inclusion status into the public diagnostic shape.   |
     // --------------------------------------------------------------------------------------------------------|
     const line = runtime_line.line;
     const matched_strong_index = matchedStrongIndexForRelevantLine(strong_lines, line, vendor_partition);
@@ -431,7 +429,7 @@ fn strongLineRow(
 
 fn resolveStrongAnchorFields(anchor: ?StrongAnchorMatch) StrongAnchorFields {
     // resolveStrongAnchorFields ------------------------------------------------------------------------------|
-    // Copy weak-line metadata for sidecars, or keep the old complete-row O2 defaults when no anchor exists.   |
+    // Copy weak-line metadata for sidecars, or keep the complete-row O2 defaults when no anchor exists.       |
     // --------------------------------------------------------------------------------------------------------|
     if (anchor) |owned| {
         return .{
@@ -497,7 +495,7 @@ fn relevantLineWindow(
     cutoff_cm1: f64,
 ) !LineWindow {
     // relevantLineWindow -------------------------------------------------------------------------------------|
-    // Fill a wavelength-local weak-line prewindow, preserving old filtered source order for equal centers.    |
+    // Fill a wavelength-local weak-line prewindow, preserving filtered source order for equal centers.        |
     // --------------------------------------------------------------------------------------------------------|
     rows.clearRetainingCapacity();
     if (lines.len == 0) return .{ .lines = rows.items };
@@ -522,7 +520,7 @@ fn collectRuntimeLines(
     active_isotopes: []const u8,
 ) ![]RuntimeLine {
     // collectRuntimeLines ------------------------------------------------------------------------------------|
-    // Copy O2 rows that participate in old diagnostic evaluation, without applying the weak-line threshold.   |
+    // Copy O2 rows that participate in diagnostic evaluation, without applying the weak-line threshold.       |
     // --------------------------------------------------------------------------------------------------------|
     var active_count: usize = 0;
     for (lines) |line| {
@@ -548,14 +546,14 @@ fn collectRuntimeLines(
 
 fn lessRuntimeLineByCenter(_: void, lhs: RuntimeLine, rhs: RuntimeLine) bool {
     // lessRuntimeLineByCenter --------------------------------------------------------------------------------|
-    // Match old sortLineList: pdq sort by center wavelength only. Equal-center ordering is the pdq result.    |
+    // Match sortLineList: pdq sort by center wavelength only. Equal-center ordering is the pdq result.        |
     // --------------------------------------------------------------------------------------------------------|
     return lhs.line.center_wavelength_nm < rhs.line.center_wavelength_nm;
 }
 
 fn runtimeLine(line: readers.O2LineAssetRow, active_isotopes: []const u8) bool {
     // runtimeLine --------------------------------------------------------------------------------------------|
-    // Apply the old total-sigma gas/isotope controls without the weak-line threshold filter.                  |
+    // Apply the total-sigma gas/isotope controls without the weak-line threshold filter.                      |
     // --------------------------------------------------------------------------------------------------------|
     if (line.gas_index != 7) return false;
     if (active_isotopes.len == 0) return true;
@@ -570,7 +568,7 @@ fn usesVendorStrongLinePartition(
     strong_lines: []const readers.O2StrongLineAssetRow,
 ) bool {
     // usesVendorStrongLinePartition --------------------------------------------------------------------------|
-    // Detect the old O2 A sidecar partition from retained HITRAN branch metadata.                             |
+    // Detect the O2 A sidecar partition from retained HITRAN branch metadata.                                 |
     // --------------------------------------------------------------------------------------------------------|
     if (strong_lines.len == 0) return false;
 
@@ -593,7 +591,7 @@ fn matchedStrongIndexForRelevantLine(
     vendor_partition: bool,
 ) ?usize {
     // matchedStrongIndexForRelevantLine ----------------------------------------------------------------------|
-    // Report the sidecar index associated with a weak line when the old partition rules assign one.           |
+    // Report the sidecar index associated with a weak line when the partition rules assign one.               |
     // --------------------------------------------------------------------------------------------------------|
     if (vendor_partition and !line_physics.isVendorO2AStrongCandidateFromSource(line)) return null;
     return line_physics.findStrongLineMatch(strong_lines, line.center_wavelength_nm);
@@ -607,7 +605,7 @@ fn shouldExcludeWeakLine(
     vendor_partition: bool,
 ) bool {
     // shouldExcludeWeakLine ----------------------------------------------------------------------------------|
-    // Keep lines covered by old O2 strong-line sidecars out of the weak-line contribution.                    |
+    // Keep lines covered by O2 strong-line sidecars out of the weak-line contribution.                        |
     // --------------------------------------------------------------------------------------------------------|
     if (vendor_partition) {
         if (!line_physics.isVendorO2AStrongCandidateFromSource(line)) return false;
@@ -623,7 +621,7 @@ fn strongestWindowAnchorForSidecar(
     strong_line: readers.O2StrongLineAssetRow,
 ) usize {
     // strongestWindowAnchorForSidecar ------------------------------------------------------------------------|
-    // Select the old generic sidecar anchor: closest line center, then strongest line on an equal delta.      |
+    // Select the generic sidecar anchor: closest line center, then strongest line on an equal delta.          |
     // --------------------------------------------------------------------------------------------------------|
     var best_index: usize = 0;
     var best_delta = std.math.inf(f64);

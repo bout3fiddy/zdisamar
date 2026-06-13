@@ -27,7 +27,7 @@ test "top reflectance coefficient reads solar column at viewing stream" {
     );
 }
 
-test "Fourier contribution applies old azimuthal weight and tail floor" {
+test "Fourier contribution applies azimuthal weight and tail floor" {
     const thresholds = controls.PerformanceThresholds{
         .fourier_tail_reflectance_epsilon = 1.0e-6,
         .fourier_floor_scalar = 2,
@@ -119,7 +119,7 @@ test "integrated aerosol paired weighting matches separate helper routes" {
     try std.testing.expect(@abs(pressure) > 1.0e-12);
 }
 
-test "public reflectance clamp keeps old output range" {
+test "public reflectance clamp keeps output range" {
     try std.testing.expectEqual(@as(f64, 0.0), reflectance.clampPublicReflectance(-0.25));
     try std.testing.expectEqual(@as(f64, 0.5), reflectance.clampPublicReflectance(0.5));
     try std.testing.expectEqual(@as(f64, 2.0), reflectance.clampPublicReflectance(2.5));

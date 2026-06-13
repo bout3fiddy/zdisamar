@@ -3,7 +3,7 @@ const internal = @import("internal");
 
 const metrics = internal.validation.o2a_band_metrics;
 
-test "O2A band metrics preserve old morphology windows and residual formulas" {
+test "O2A band metrics preserve morphology windows and residual formulas" {
     const wavelengths = [_]f64{ 755.0, 758.0, 760.2, 760.6, 761.0, 762.0, 764.0, 765.0, 770.0 };
     const generated = [_]f64{ 0.51, 0.61, 0.41, 0.31, 0.36, 0.46, 0.56, 0.66, 0.76 };
     const reference = [_]metrics.ReferenceSample{
@@ -60,7 +60,7 @@ test "O2A band metric interpolation clamps and checks shapes" {
     );
 }
 
-test "O2A band assessment verdicts preserve old baseline trend rules" {
+test "O2A band assessment verdicts preserve baseline trend rules" {
     const baseline = metrics.ComparisonMetrics{
         .sample_count = 2,
         .nonzero_sample_count = 2,

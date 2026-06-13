@@ -27,10 +27,6 @@ pub const vendor_cutoff_prewindow_margin_cm1 = 0.25;
 //   scalars, and optional cutoff-grid slices; cache and diagnostic owners attach storage, row metadata, and   |
 //   public ABI details outside this module.                                                                   |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/input/reference/spectroscopy/physics_core.zig`,                                           |
-//   main:`src/input/reference/spectroscopy/line_list.zig`, and                                                |
-//   main:`src/input/reference/spectroscopy/strong_lines.zig` over the explicit WP2 setup row names.           |
 // ------------------------------------------------------------------------------------------------------------|
 
 // SpectroscopyComponents ------------------------------------------------------------------------------------ |
@@ -167,7 +163,7 @@ pub fn fillWeakLineStateInto(
     pressure_atm: f64,
 ) void {
     // fillWeakLineStateInto --------------------------------------------------------------------------------- |
-    // Fill old-route weak-line constants for one already-allocated thermodynamic state row.                   |
+    // Fill canonical weak-line constants for one already-allocated thermodynamic state row.                   |
     // --------------------------------------------------------------------------------------------------------|
     const safe_temperature = @max(temperature_k, min_hitran_temperature_k);
     const safe_pressure = @max(pressure_atm, min_spectroscopy_pressure_atm);
@@ -248,7 +244,7 @@ pub fn totalSpectroscopyAt(
     prepared_weak_state: ?*const WeakLinePreparedState,
 ) SpectroscopyComponents {
     // totalSpectroscopyAt ----------------------------------------------------------------------------------- |
-    // Sum old-route weak, strong-line, and line-mixing sigma for one profile-node row.                        |
+    // Sum canonical weak, strong-line, and line-mixing sigma for one profile-node row.                        |
     // --------------------------------------------------------------------------------------------------------|
     if (runtime_lines.len == 0) return .{};
 
@@ -375,7 +371,7 @@ pub fn weakLineSigmaAtPreparedFiniteDifference(
     cutoff_grid_wavenumbers_cm1: []const f64,
 ) f64 {
     // weakLineSigmaAtPreparedFiniteDifference --------------------------------------------------------------- |
-    // Evaluate T +/- 0.5 K rows with the scalar old-route multiplication order for d_sigma/dT evidence.       |
+    // Evaluate T +/- 0.5 K rows with the scalar canonical multiplication order for d_sigma/dT evidence.       |
     // --------------------------------------------------------------------------------------------------------|
     std.debug.assert(state.line_count == active_lines.len);
     std.debug.assert(state.lines.len == active_lines.len);
@@ -406,7 +402,7 @@ pub fn relevantLineWindow(
     cutoff_cm1: f64,
 ) LineWindow {
     // relevantLineWindow ------------------------------------------------------------------------------------ |
-    // Return the center-wavelength slice that can fall inside the old-route cutoff prewindow.                 |
+    // Return the center-wavelength slice that can fall inside the canonical cutoff prewindow.                 |
     // --------------------------------------------------------------------------------------------------------|
     if (active_lines.len == 0) return .{ .lines = active_lines, .start_index = 0 };
 
@@ -427,7 +423,7 @@ fn usesVendorStrongLinePartition(
     strong_lines: []const readers.O2StrongLineAssetRow,
 ) bool {
     // usesVendorStrongLinePartition ------------------------------------------------------------------------- |
-    // Detect the old O2 A sidecar partition from retained HITRAN branch metadata.                             |
+    // Detect the O2 A sidecar partition from retained HITRAN branch metadata.                                 |
     // --------------------------------------------------------------------------------------------------------|
     if (strong_lines.len == 0) return false;
 
@@ -453,7 +449,7 @@ fn shouldExcludeWeakLine(
     vendor_partition: bool,
 ) bool {
     // shouldExcludeWeakLine --------------------------------------------------------------------------------- |
-    // Keep lines covered by old O2 strong-line sidecars out of the total weak-line contribution.              |
+    // Keep lines covered by O2 strong-line sidecars out of the total weak-line contribution.                  |
     // --------------------------------------------------------------------------------------------------------|
     if (vendor_partition) {
         if (!isVendorO2AStrongCandidateFromSource(line)) return false;
@@ -469,7 +465,7 @@ fn strongestWindowAnchorForSidecar(
     strong_line: readers.O2StrongLineAssetRow,
 ) usize {
     // strongestWindowAnchorForSidecar ----------------------------------------------------------------------- |
-    // Select the old generic sidecar anchor: closest line center, then strongest line on an equal delta.      |
+    // Select the generic sidecar anchor: closest line center, then strongest line on an equal delta.          |
     // --------------------------------------------------------------------------------------------------------|
     var best_index: usize = 0;
     var best_delta = std.math.inf(f64);
@@ -492,7 +488,7 @@ fn strongestWindowAnchorForSidecar(
 
 pub fn findStrongLineMatch(strong_lines: []const readers.O2StrongLineAssetRow, wavelength_nm: f64) ?usize {
     // findStrongLineMatch ----------------------------------------------------------------------------------- |
-    // Return the closest LISA sidecar center within the old tolerance rule.                                   |
+    // Return the closest LISA sidecar center within the tolerance rule.                                       |
     // --------------------------------------------------------------------------------------------------------|
     var best_index: ?usize = null;
     var best_delta = std.math.inf(f64);
@@ -508,7 +504,7 @@ pub fn findStrongLineMatch(strong_lines: []const readers.O2StrongLineAssetRow, w
 
 pub fn isVendorO2AStrongCandidateFromSource(line: readers.O2LineAssetRow) bool {
     // isVendorO2AStrongCandidateFromSource ------------------------------------------------------------------ |
-    // Match old support.zig: only source-marked O2 isotope-1 P-branch rows participate in vendor partition.   |
+    // Match support.zig: only source-marked O2 isotope-1 P-branch rows participate in vendor partition.       |
     // --------------------------------------------------------------------------------------------------------|
     return line.vendor_filter_metadata_from_source and
         line.gas_index == 7 and
@@ -531,7 +527,7 @@ pub fn weakLineContribution(
     cutoff_grid_wavenumbers_cm1: []const f64,
 ) f64 {
     // weakLineContribution ---------------------------------------------------------------------------------- |
-    // Evaluate one HITRAN weak-line contribution with the old scalar fallback cutoff and CPF route.           |
+    // Evaluate one HITRAN weak-line contribution with the scalar fallback cutoff and CPF route.               |
     //                                                                                                         |
     // math                                                                                                    |
     //   nu0       = center_wavenumber_cm1 + pressure_shift_cm1 * pressure_atm                                 |
@@ -630,7 +626,7 @@ fn weakLinePreparedContribution(
     thermodynamic_scale: f64,
 ) f64 {
     // weakLinePreparedContribution -------------------------------------------------------------------------- |
-    // Evaluate one prepared weak-line contribution with the old scalar fallback cutoff and CPF route.         |
+    // Evaluate one prepared weak-line contribution with the scalar fallback cutoff and CPF route.             |
     // --------------------------------------------------------------------------------------------------------|
     if (!preparedInsideCutoff(
         prepared_line,
@@ -712,7 +708,7 @@ pub fn prepareStrongLineState(
     pressure_atm: f64,
 ) StrongLinePreparedState {
     // prepareStrongLineState -------------------------------------------------------------------------------- |
-    // Prepare old O2 ConvTP line-mixing state for one profile-node temperature and pressure.                  |
+    // Prepare O2 ConvTP line-mixing state for one profile-node temperature and pressure.                      |
     // --------------------------------------------------------------------------------------------------------|
     const safe_temperature = @max(temperature_k, min_hitran_temperature_k);
     const temperature_ratio = hitran_reference_temperature_k / safe_temperature;
@@ -753,7 +749,7 @@ fn fillStrongLineState(
     pressure_atm: f64,
 ) void {
     // fillStrongLineState ----------------------------------------------------------------------------------- |
-    // Fill old DISAMAR O2 line-mixing relaxation state for all retained strong-line sidecars.                 |
+    // Fill DISAMAR O2 line-mixing relaxation state for all retained strong-line sidecars.                     |
     // --------------------------------------------------------------------------------------------------------|
     for (0..line_count) |row_index| {
         const strong_line = strong_lines[row_index];
@@ -881,7 +877,7 @@ pub fn strongLineContribution(
     pressure_atm: f64,
 ) SpectroscopyComponents {
     // strongLineContribution -------------------------------------------------------------------------------- |
-    // Evaluate one prepared O2 strong-line sidecar with the old CPF line-mixing formula.                      |
+    // Evaluate one prepared O2 strong-line sidecar with the CPF line-mixing formula.                          |
     // --------------------------------------------------------------------------------------------------------|
     const safe_temperature = @max(temperature_k, min_hitran_temperature_k);
     const safe_pressure = @max(pressure_atm, min_spectroscopy_pressure_atm);
@@ -960,7 +956,7 @@ fn insideCutoff(
 
 pub fn shiftedCenterWavenumberCm1(line: readers.O2LineAssetRow, pressure_atm: f64) f64 {
     // shiftedCenterWavenumberCm1 ---------------------------------------------------------------------------- |
-    // Apply the old pressure-shifted line-center floor before cutoff checks and public row projection.        |
+    // Apply the pressure-shifted line-center floor before cutoff checks and public row projection.            |
     // --------------------------------------------------------------------------------------------------------|
     return @max(line.center_wavenumber_cm1 + line.pressure_shift_cm1 * pressure_atm, 1.0);
 }
@@ -1000,7 +996,7 @@ fn shiftedCenterInsideCutoff(
     cutoff_grid_wavenumbers_cm1: []const f64,
 ) bool {
     // shiftedCenterInsideCutoff ----------------------------------------------------------------------------- |
-    // Apply old weak-line cutoff behavior, preferring the realized support-grid index route when present.     |
+    // Apply weak-line cutoff behavior, preferring the realized support-grid index route when present.         |
     // --------------------------------------------------------------------------------------------------------|
     if (cutoff_grid_wavenumbers_cm1.len >= 2 and
         cutoff_grid_wavenumbers_cm1.len == cutoff_grid_wavelengths_nm.len)
@@ -1041,7 +1037,7 @@ fn lowerBoundByCenterWavelength(lines: []const readers.O2LineAssetRow, wavelengt
 
 fn nearestWavenumberGridIndexFromWavenumbers(wavenumbers_cm1: []const f64, target_wavenumber_cm1: f64) usize {
     // nearestWavenumberGridIndexFromWavenumbers ------------------------------------------------------------- |
-    // Return the nearest support-grid index in wavenumber space with old minloc tie handling.                 |
+    // Return the nearest support-grid index in wavenumber space with minloc tie handling.                     |
     // --------------------------------------------------------------------------------------------------------|
     std.debug.assert(wavenumbers_cm1.len != 0);
     if (wavenumbers_cm1.len == 1) return 0;
@@ -1187,7 +1183,7 @@ fn dopplerWidthCm1(temperature_k: f64, wavenumber_cm1: f64, molecular_weight_g_p
 
 fn partitionRatioT0OverT(line: readers.O2LineAssetRow, temperature_k: f64) f64 {
     // partitionRatioT0OverT --------------------------------------------------------------------------------- |
-    // Return HITRAN partition Q(T0) / Q(T) from the retained TIPS tables, with old-route fallback exponents.  |
+    // Return HITRAN partition Q(T0) / Q(T) from the retained TIPS tables, with canonical fallback exponents.  |
     // --------------------------------------------------------------------------------------------------------|
     const isotopologue_code = deriveIsotopologueCode(line.gas_index, line.isotope_number);
     if (hitran_partition_tables.ratioT0OverT(

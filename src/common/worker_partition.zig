@@ -4,12 +4,6 @@ const builtin = @import("builtin");
 // worker_partition.zig ---------------------------------------------------------------------------------------|
 // Shared worker partitioning and spawn orchestration for the explicit O2 A route.                             |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/forward_model/work_partition.zig`,                                                        |
-//   main:`src/forward_model/first_worker_error_state.zig`, and the repeated pool/raw spawn loops in           |
-//   main:`src/forward_model/instrument_grid/grid_calculation/spectral_forward.zig`,                           |
-//   main:`src/forward_model/instrument_grid/grid_calculation/simulate.zig`, and                               |
-//   main:`src/forward_model/optical_properties/state_build/*.zig`.                                            |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   This module owns worker count, deterministic ranges, chunk claims, first-error capture, and shared        |
@@ -19,12 +13,12 @@ const builtin = @import("builtin");
 // policies                                                                                                    |
 //   staticRange assigns deterministic half-open ranges when the full item list exists before launch.          |
 //   ChunkQueue assigns dynamic chunks when item cost varies enough that static ranges can leave late work.    |
-//   runWorkers preserves old ordering: helpers start first, the calling thread runs the last worker, and      |
+//   runWorkers preserves ordering: helpers start first, the calling thread runs the last worker, and          |
 //   joins happen after the calling-thread worker finishes.                                                    |
 //                                                                                                             |
 // platform note                                                                                               |
 //   The C library links libc so std.Thread reaches pthreads when loaded by CPython. This file keeps the       |
-//   old std.Thread model and does not add an application scheduler.                                           |
+//   std.Thread model and does not add an application scheduler.                                               |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const max_workers: usize = 64;
@@ -87,7 +81,7 @@ pub const ChunkQueue = struct {
 
     pub fn init(item_count: usize, chunk_size: usize) ChunkQueue {
         // ChunkQueue.init ------------------------------------------------------------------------------------|
-        // Build a queue over `item_count` items. A zero chunk would stall workers, so assert the old          |
+        // Build a queue over `item_count` items. A zero chunk would stall workers, so assert the              |
         // policy precondition before any worker can enter next().                                             |
         // ----------------------------------------------------------------------------------------------------|
         std.debug.assert(chunk_size != 0);
@@ -174,7 +168,7 @@ pub fn staticRange(item_count: usize, worker_count: usize, worker_index: usize) 
 
 pub fn nextStaticChunk(start_index: *usize, end_index: usize, chunk_size: usize) ?Range {
     // nextStaticChunk ----------------------------------------------------------------------------------------|
-    // Drain one worker-owned static range in the caller's old-route chunk shape.                              |
+    // Drain one worker-owned static range in the caller's canonical chunk shape.                              |
     // --------------------------------------------------------------------------------------------------------|
     std.debug.assert(chunk_size != 0);
     if (start_index.* >= end_index) return null;
@@ -226,7 +220,7 @@ pub fn preferredWorkerCountForCpuCount(
 
 pub fn runWorkers(pool: ?*std.Thread.Pool, workers: anytype, comptime workerMain: anytype) void {
     // runWorkers ---------------------------------------------------------------------------------------------|
-    // Run one site-local worker row per worker through the old shared pool/raw-spawn choreography.            |
+    // Run one site-local worker row per worker through the shared pool/raw-spawn choreography.                |
     //                                                                                                         |
     // scheduling                                                                                              |
     //   worker_count == 1 : calling thread runs worker 0 inline                                               |
@@ -283,7 +277,7 @@ pub fn runWorkers(pool: ?*std.Thread.Pool, workers: anytype, comptime workerMain
 
 fn configuredWorkerLimit() ?usize {
     // configuredWorkerLimit ----------------------------------------------------------------------------------|
-    // Preserve old `ZDISAMAR_WORKER_LIMIT` behavior: absent means no extra limit; invalid or zero values      |
+    // Preserve `ZDISAMAR_WORKER_LIMIT` behavior: absent means no extra limit; invalid or zero values          |
     // panic before worker launch.                                                                             |
     // --------------------------------------------------------------------------------------------------------|
     const limit = std.process.parseEnvVarInt(worker_limit_env, usize, 10) catch |err| switch (err) {

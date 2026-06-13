@@ -8,19 +8,13 @@ const Allocator = std.mem.Allocator;
 // radiance_wavelengths.zig ---------------------------------------------------------------------------------- |
 // Exact high-resolution radiance wavelengths required by a SpectrumSamplingTable.                             |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   This ports the forward-miss list from main:                                                               |
-//   `src/forward_model/instrument_grid/grid_calculation/wavelength_plan.zig` and                              |
-//   `src/forward_model/instrument_grid/grid_calculation/wavelength_sampling.zig`.                             |
-//                                                                                                             |
-// old names -> new names                                                                                      |
-//   ForwardCacheMiss      -> RadianceWavelength                                                               |
-//   ForwardSampleIndexRef -> RadianceSampleIndexRef                                                           |
-//   ForwardMissPlan       -> RadianceWavelengthList                                                           |
+// data shape                                                                                                  |
+//   RadianceWavelength is the unique exact sample list. RadianceSampleIndexRef points from nominal rows       |
+//   into sample-index storage. RadianceWavelengthList owns both arrays.                                       |
 //                                                                                                             |
 // key contract                                                                                                |
-//   `keyFor` is the old `SpectralEvaluationCache.keyFor`: the exact f64 bit pattern is the key. No rounding,  |
-//   binning, decimal formatting, or tolerance comparison is allowed here.                                     |
+//   The exact f64 bit pattern is the key. No rounding, binning, decimal formatting, or tolerance comparison   |
+//   is allowed here.                                                                                          |
 // ------------------------------------------------------------------------------------------------------------|
 
 // RadianceWavelength ---------------------------------------------------------------------------------------- |
@@ -198,7 +192,7 @@ pub fn buildRadianceWavelengthList(
 
     // instrumentation: calculation telemetry: radiance wavelength list -------------------------------------- |
     // captures: nominal row count, sample-index count, unique radiance wavelength count                       |
-    // why: preserves old wavelength_sampling.forwardMissPlan telemetry at the new spectrum boundary.          |
+    // why: preserves wavelength_sampling.forwardMissPlan telemetry at the new spectrum boundary.              |
     telemetry.forwardMissPlan(table.rows.len, sample_indices.items.len, wavelengths.items.len);
     // end instrumentation: calculation telemetry: radiance wavelength list ---------------------------------- |
 

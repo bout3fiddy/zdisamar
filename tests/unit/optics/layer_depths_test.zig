@@ -9,8 +9,8 @@ const jacobian = internal.rtm.jacobian_states;
 const allocator = std.testing.allocator;
 
 // SupportEvidence ------------------------------------------------------------------------------------------- |
-// Test-local support-row optics evidence from WP1 baseline artifact:                                          |
-// scratch/refactor/2026-06-11-explicit-dataflow-refactor/evidence/baseline-main-56605387/                     |
+// Test-local support-row optics evidence from O2 A baseline artifact:                                         |
+// Canonical expected values owned by this repository.                                                         |
 // public-python-baseline.json .diagnostics.atmospheric_budget.rows.                                           |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -168,8 +168,8 @@ const layer_zero_758_rows = [_]SupportEvidence{
 };
 
 // LayerAerosolEvidence ---------------------------------------------------------------------------------------|
-// Test-local aerosol layer evidence from WP1 baseline artifact:                                               |
-// scratch/refactor/2026-06-11-explicit-dataflow-refactor/evidence/baseline-main-56605387/                     |
+// Test-local aerosol layer evidence from O2 A baseline artifact:                                              |
+// Canonical expected values owned by this repository.                                                         |
 // internal-dump-baseline.json .probe_forward_inputs[0].layers.                                                |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -188,11 +188,10 @@ const LayerAerosolEvidence = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // LayerJacobianEvidence --------------------------------------------------------------------------------------|
-// Test-local aerosol Jacobian values derived from old-route evidence and formula.                             |
+// Test-local aerosol Jacobian values derived from canonical evidence and formula.                             |
 //                                                                                                             |
 // source                                                                                                      |
-//   Scalars come from baseline-main-56605387/internal-dump-baseline.json                                      |
-//   .probe_forward_inputs[0].layers. The formula is main:`state_build/forward_layers.zig`                     |
+// Canonical expected values owned by this repository.                                                         |
 //   attachAerosolOpticalDepthJacobian with aerosol optical depth = 0.3.                                       |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -388,7 +387,7 @@ test "layer optics place aerosol optical depth on the configured explicit interv
     }
 }
 
-test "layer optics fill aerosol optical-depth jacobian lanes from old route formula" {
+test "layer optics fill aerosol optical-depth jacobian lanes from current route formula" {
     var tables = try setup.buildO2RunTables(allocator, defaults.referenceCase());
     defer tables.deinit(allocator);
 

@@ -9,7 +9,7 @@ const radiance_wavelengths = internal.spectrum.radiance_wavelengths;
 const sampling_table = internal.spectrum.sampling_table;
 const solve = internal.rtm.solve;
 
-test "scaleReflectanceToRadiance ports old solar radiance scale and active Jacobian lanes" {
+test "scaleReflectanceToRadiance applies solar radiance scale and active Jacobian lanes" {
     const mask = jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa);
     const reflectance = solve.ReflectanceResult{
         .reflectance = 0.42,

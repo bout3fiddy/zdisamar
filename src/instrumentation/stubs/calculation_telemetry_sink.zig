@@ -26,7 +26,7 @@
 pub const available = false;
 
 // Stage ------------------------------------------------------------------------------------------------------|
-// Stable stage tags mirrored from the retained telemetry sink.                                                |
+// Stable stage tags using the retained telemetry sink.                                                        |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 8 B (0.008 KiB), align: 8 B                                                                           |

@@ -6,9 +6,7 @@ const Allocator = std.mem.Allocator;
 // solar_irradiance_memory.zig ------------------------------------------------------------------------------- |
 // Exact-wavelength solar irradiance memory for spectrum irradiance integration.                               |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/forward_model/instrument_grid/grid_calculation/cache.zig` `SpectralEvaluationCache`.      |
-//   The old cache deliberately stored only solar irradiance values keyed by exact high-resolution wavelength  |
+//   The cache deliberately stored only solar irradiance values keyed by exact high-resolution wavelength      |
 //   bits during one product simulation.                                                                       |
 //                                                                                                             |
 // key contract                                                                                                |

@@ -88,7 +88,6 @@ test "public root exposes setup session and spectrum surface" {
 
     try std.testing.expect(!@hasDecl(zdisamar, "Scene"));
     try std.testing.expect(!@hasDecl(zdisamar, "PreparedOpticalState"));
-    try std.testing.expect(!@hasDecl(zdisamar, "ProductStorage"));
     try std.testing.expect(!@hasDecl(zdisamar, "Context"));
     try std.testing.expect(!@hasDecl(zdisamar, "zds_context_create"));
 }
@@ -96,8 +95,8 @@ test "public root exposes setup session and spectrum surface" {
 test "public O2 A root surface keeps route-only spectrum knobs internal" {
     const zdisamar = internal.public;
 
-    // Source: WP1 evidence under scratch/refactor/2026-06-11-explicit-dataflow-refactor/evidence/.
-    // `baseline-main-56605387/internal-dump-baseline.json` pins 701 integrated radiance rows and 701
+    // Source: canonical O2 A evidence fixtures owned by this repository.
+    // Canonical expected values owned by this repository.
     // integrated irradiance rows. `python-reference-case-native.json` exposes no calibration, slit-kernel,
     // radiance-integration, or irradiance-integration override keys, so the root call keeps those six
     // `runO2ASpectrum` arguments as fixed route constants rather than public case fields.

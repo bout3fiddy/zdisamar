@@ -10,38 +10,33 @@ pub const Error = error{
     ShapeMismatch,
 };
 
-// radiance_results.zig --------------------------------------------------------------------------------------  |
-// Dense high-resolution radiance rows and nominal-row gathering.                                               |
-//                                                                                                              |
-// provenance                                                                                                   |
-//   `integratePrefetchedRadianceAtNominal` ports main:                                                         |
-//   `src/forward_model/instrument_grid/grid_calculation/spectral_eval.zig`                                     |
-//   `integratePrefetchedForwardAtNominal`.                                                                     |
-//                                                                                                              |
-// data flow                                                                                                    |
-//   RadianceWavelengthList rows give each nominal wavelength a slice of dense result indexes.                  |
-//   SpectrumSamplingRow carries the matching integration weights. This module applies those weights exactly    |
-//   once to radiance and active Jacobian lanes.                                                                |
-//   The dense prefetch route scales top-of-atmosphere reflectance into radiance units.                         |
-//                                                                                                              |
-// allocation                                                                                                   |
-//   This file allocates nothing. The caller owns dense result arrays, sample-index arrays, and kernel storage. |
-// ------------------------------------------------------------------------------------------------------------ |
+// radiance_results.zig -------------------------------------------------------------------------------------- |
+// Dense high-resolution radiance rows and nominal-row gathering.                                              |
+//                                                                                                             |
+// data flow                                                                                                   |
+//   RadianceWavelengthList rows give each nominal wavelength a slice of dense result indexes.                 |
+//   SpectrumSamplingRow carries the matching integration weights. This module applies those weights exactly   |
+//   once to radiance and active Jacobian lanes.                                                               |
+//   The dense prefetch route scales top-of-atmosphere reflectance into radiance units.                        |
+//                                                                                                             |
+// allocation                                                                                                  |
+//   This file allocates nothing. The caller owns dense result arrays, sample-index arrays, and kernel storage.|
+// ------------------------------------------------------------------------------------------------------------|
 
-// RadianceResult --------------------------------------------------------------------------------------------  |
-// One high-resolution or nominal radiance result with fixed Jacobian lanes.                                    |
-//                                                                                                              |
-// layout(64-bit)                                                                                               |
-// size: 24 B (0.023 KiB), align: 8 B                                                                           |
-//                                                                                                              |
-// memory                                                                                                       |
-// [ 0.. 7] radiance : f64                                                                                      |
-// [ 8..23] jacobian : [2]f64                                                                                   |
+// RadianceResult -------------------------------------------------------------------------------------------- |
+// One high-resolution or nominal radiance result with fixed Jacobian lanes.                                   |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 24 B (0.023 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] radiance : f64                                                                                     |
+// [ 8..23] jacobian : [2]f64                                                                                  |
 pub const RadianceResult = struct {
     radiance: f64 = 0.0,
     jacobian: jacobian_states.Vector = jacobian_states.zero(),
 };
-// ------------------------------------------------------------------------------------------------------------ |
+// ------------------------------------------------------------------------------------------------------------|
 
 pub fn scaleReflectanceToRadiance(
     solve_config: controls.SolveConfig,
@@ -49,23 +44,21 @@ pub fn scaleReflectanceToRadiance(
     solar_cosine: f64,
     solar_irradiance: f64,
 ) RadianceResult {
-    // scaleReflectanceToRadiance ---------------------------------------------------------------------------   |
-    // Pack one transport reflectance solve into the dense high-resolution radiance row used by spectrum        |
-    // gathering.                                                                                               |
-    //                                                                                                          |
-    // provenance                                                                                               |
-    //   Ports main:`src/forward_model/instrument_grid/grid_calculation/spectral_forward.zig`                   |
-    //   `radianceScaleFromForward` and `integratedSampleFromForward`.                                          |
-    //                                                                                                          |
-    // math                                                                                                     |
-    //   reflectance_factor = pi * L / (mu0 * E0)                                                               |
-    //   L                  = reflectance_factor * mu0 * E0 / pi                                                |
-    //   dL/dx              = d(reflectance_factor)/dx * mu0 * E0 / pi for active RTM states x                  |
-    //                                                                                                          |
-    // why no derivative of scale                                                                               |
-    //   The fixed Jacobian states perturb RTM reflectance, not solar irradiance or geometry, so the            |
-    //   product rule reduces to scale * d(reflectance_factor)/dx.                                              |
-    // ---------------------------------------------------------------------------------------------------------|
+    // scaleReflectanceToRadiance ---------------------------------------------------------------------------  |
+    // Pack one transport reflectance solve into the dense high-resolution radiance row used by spectrum       |
+    // gathering.                                                                                              |
+    //                                                                                                         |
+    //   `radianceScaleFromForward` and `integratedSampleFromForward`.                                         |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   reflectance_factor = pi * L / (mu0 * E0)                                                              |
+    //   L                  = reflectance_factor * mu0 * E0 / pi                                               |
+    //   dL/dx              = d(reflectance_factor)/dx * mu0 * E0 / pi for active RTM states x                 |
+    //                                                                                                         |
+    // why no derivative of scale                                                                              |
+    //   The fixed Jacobian states perturb RTM reflectance, not solar irradiance or geometry, so the           |
+    //   product rule reduces to scale * d(reflectance_factor)/dx.                                             |
+    // --------------------------------------------------------------------------------------------------------|
     const scale = solar_cosine * solar_irradiance / std.math.pi;
 
     const active_state_count = jacobian_states.activeStateCount(solve_config.derivative_state_mask);
@@ -89,23 +82,23 @@ pub fn integratePrefetchedRadianceAtNominal(
     integration: *const sampling_table.IntegrationKernelRef,
     kernel_storage: sampling_table.IntegrationKernelStorage,
 ) Error!RadianceResult {
-    // integratePrefetchedRadianceAtNominal ------------------------------------------------------------------  |
-    // Accumulate one nominal radiance row from already-prefetched high-resolution radiance results.            |
-    //                                                                                                          |
-    // data flow                                                                                                |
-    //   row_ref.start -> sample_indices[start..start + count] -> results[result_index]                         |
-    //                                                                                                          |
-    // math                                                                                                     |
-    //   L_i     = sum_j weight_ij * L(lambda_i + offset_ij)                                                    |
-    //   dL_i/dx = sum_j weight_ij * dL(lambda_i + offset_ij)/dx for active derivative states                   |
-    //                                                                                                          |
-    // disabled-kernel row                                                                                      |
-    //   count = 1, weight = 1, offset = 0. The function returns the single prefetched result directly.         |
-    //                                                                                                          |
-    // integrated row                                                                                           |
-    //   The instrument integration builder already normalized the weights. This loop applies them exactly      |
-    //   once and does not renormalize.                                                                         |
-    // -------------------------------------------------------------------------------------------------------- |
+    // integratePrefetchedRadianceAtNominal ------------------------------------------------------------------ |
+    // Accumulate one nominal radiance row from already-prefetched high-resolution radiance results.           |
+    //                                                                                                         |
+    // data flow                                                                                               |
+    //   row_ref.start -> sample_indices[start..start + count] -> results[result_index]                        |
+    //                                                                                                         |
+    // math                                                                                                    |
+    //   L_i     = sum_j weight_ij * L(lambda_i + offset_ij)                                                   |
+    //   dL_i/dx = sum_j weight_ij * dL(lambda_i + offset_ij)/dx for active derivative states                  |
+    //                                                                                                         |
+    // disabled-kernel row                                                                                     |
+    //   count = 1, weight = 1, offset = 0. The function returns the single prefetched result directly.        |
+    //                                                                                                         |
+    // integrated row                                                                                          |
+    //   The instrument integration builder already normalized the weights. This loop applies them exactly     |
+    //   once and does not renormalize.                                                                        |
+    // --------------------------------------------------------------------------------------------------------|
     const start: usize = @intCast(row_ref.start);
     const count = integration.activeSampleCount();
     if (count == 0 or start > sample_indices.len or count > sample_indices.len - start) {

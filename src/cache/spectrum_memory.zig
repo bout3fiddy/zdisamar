@@ -13,11 +13,6 @@ pub const Error = error{
 // spectrum_memory.zig --------------------------------------------------------------------------------------- |
 // Allocation home for retained spectrum sampling rows and side-array kernels.                                 |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Splits the old `ProductStorage.wavelength_sampling` owner from main:                                      |
-//   `src/forward_model/instrument_grid/grid_calculation/storage.zig`. The row shapes themselves live in       |
-//   `spectrum/sampling_table.zig`, ported from `wavelength_plan.zig`.                                         |
-//                                                                                                             |
 // ownership boundary                                                                                          |
 //   This memory object owns only computed sampling rows and side arrays. It stores no scene, instrument       |
 //   controls, line tables, solar data, or transport settings. Callers still pass those physics inputs into    |
@@ -101,8 +96,6 @@ pub const SpectrumMemory = struct {
         // SpectrumMemory.hasTable ----------------------------------------------------------------------------|
         // Check whether retained rows still match the caller's wavelength-plan inputs.                        |
         //                                                                                                     |
-        // provenance                                                                                          |
-        //   Mirrors main:`src/forward_model/instrument_grid/grid_calculation/storage.zig`                     |
         //   `wavelength_plan_valid` plus `wavelength_plan_key`; root.zig owns the explicit stamp contents.    |
         // ----------------------------------------------------------------------------------------------------|
         return self.table_stamp.value != 0 and self.table_stamp.eql(stamp);

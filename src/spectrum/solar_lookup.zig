@@ -13,17 +13,13 @@ pub const Error = error{
 // solar_lookup.zig -------------------------------------------------------------------------------------------|
 // Solar irradiance lookup and instrument-integration gather for the spectrum layer.                           |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Source order and final floor port main:`src/input/reference_data/solar_irradiance.zig`. Operational       |
-//   table interpolation ports main:`src/input/instrument/solar_spectrum.zig`; cached integration ports        |
-//   main:`src/forward_model/instrument_grid/grid_calculation/spectral_eval.zig`.                              |
 //                                                                                                             |
 // route                                                                                                       |
 //   SolarTable spline rows -> exact f64-bit SolarIrradianceMemory -> nominal irradiance integration           |
 //                                                                                                             |
 // key contract                                                                                                |
 //   Cache keys use exact wavelength bits through `SolarIrradianceMemory`. Instrument offsets are never        |
-//   rounded or binned, matching the old `SpectralEvaluationCache.keyFor` behavior.                            |
+//   rounded or binned before lookup.                                                                          |
 //                                                                                                             |
 // allocation                                                                                                  |
 //   `reserveIrradianceMemory` sizes the hash map for the active sampling table before hot gathers. The        |
@@ -33,8 +29,7 @@ pub const Error = error{
 // minimum_source_irradiance ----------------------------------------------------------------------------------|
 // Positive floor applied after source selection.                                                              |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Old `solar_irradiance.zig` returned `@max(source_irradiance, 1e-6)` before radiance scaling.              |
+//   The floor prevents zero or negative source values from singular radiance scaling.                         |
 pub const minimum_source_irradiance: f64 = 1.0e-6;
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -46,12 +41,12 @@ pub fn irradianceAtWavelength(
     // Resolve one positive operational solar irradiance sample.                                               |
     //                                                                                                         |
     // source order                                                                                            |
-    //   within table : prepared DISAMAR-compatible spline, or linear when no spline state exists              |
+    //   within table : prepared DISAMAR spline, or linear when no spline state exists                         |
     //   below table  : clamp to first operational row                                                         |
     //   above table  : clamp to last operational row                                                          |
     //                                                                                                         |
     // numerical guard                                                                                         |
-    //   The `1.0e-6` floor preserves the old downstream radiance/reflectance protection for invalid source    |
+    //   The `1.0e-6` floor preserves the downstream radiance/reflectance protection for invalid source        |
     //   data while still surfacing malformed setup tables during table construction.                          |
     // --------------------------------------------------------------------------------------------------------|
     const source_irradiance = interpolateWithinBounds(table, wavelength_nm) orelse clampIrradiance(
@@ -68,7 +63,7 @@ fn cachedIrradianceAtWavelengthAssumeCapacity(
     wavelength_nm: f64,
 ) Error!f64 {
     // cachedIrradianceAtWavelengthAssumeCapacity -------------------------------------------------------------|
-    // Resolve one exact wavelength from retained solar memory, inserting the old-route value on misses.       |
+    // Resolve one exact wavelength from retained solar memory, inserting the canonical value on misses.       |
     //                                                                                                         |
     // caller contract                                                                                         |
     //   Call `reserveIrradianceMemory` before the gather so `putAssumeCapacity` cannot allocate in the        |
@@ -93,7 +88,7 @@ pub fn reserveIrradianceMemory(
 
 fn irradianceSampleCount(table: sampling_table.SpectrumSamplingTable) usize {
     // irradianceSampleCount ----------------------------------------------------------------------------------|
-    // Count irradiance samples using the same direct/inline/side sample contract as the old sampling plan.    |
+    // Count irradiance samples using the same direct/inline/side sample contract as the sampling plan.        |
     // --------------------------------------------------------------------------------------------------------|
     var count: usize = 0;
     for (table.rows) |row| {
@@ -116,8 +111,7 @@ pub fn integrateIrradianceAtNominalAssumeCapacity(
     //   direct     : E0(lambda_nominal)                                                                       |
     //   integrated : sum_j weight_j * E0(lambda_nominal + offset_j)                                           |
     //                                                                                                         |
-    // route parity                                                                                            |
-    //   This ports old `spectral_eval.zig` `integrateIrradianceAtNominal`: the disabled kernel samples the    |
+    // route behavior                                                                                          |
     //   nominal wavelength directly, while enabled kernels add offsets before exact-key cache lookup.         |
     // --------------------------------------------------------------------------------------------------------|
     try validateKernelStorage(integration, storage);
@@ -166,7 +160,7 @@ fn interpolatePreparedSplineWithinBounds(
     wavelength_nm: f64,
 ) f64 {
     // interpolatePreparedSplineWithinBounds ------------------------------------------------------------------|
-    // Bracket one wavelength and evaluate old DISAMAR-compatible prepared spline state in Horner form.        |
+    // Bracket one wavelength and evaluate DISAMAR prepared spline state in Horner form.                       |
     //                                                                                                         |
     // math                                                                                                    |
     //   E0(lambda) = E0_left + dx * (b + dx * (second_left / 2 + dx * d))                                     |
@@ -232,7 +226,7 @@ fn clampIrradiance(
     wavelength_nm: f64,
 ) ?f64 {
     // clampIrradiance ----------------------------------------------------------------------------------------|
-    // Preserve old operational-table behavior outside the prepared wavelength support.                        |
+    // Preserve operational-table behavior outside the prepared wavelength support.                            |
     // --------------------------------------------------------------------------------------------------------|
     if (rows.len == 0) return null;
     if (wavelength_nm <= rows[0].wavelength_nm) return rows[0].irradiance;

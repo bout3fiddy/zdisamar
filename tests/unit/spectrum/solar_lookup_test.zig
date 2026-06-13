@@ -7,7 +7,7 @@ const sampling_table = internal.spectrum.sampling_table;
 const solar_lookup = internal.spectrum.solar_lookup;
 const solar_table = internal.setup.solar_table;
 
-test "SolarTable prepares old-route spline state for reference solar rows" {
+test "SolarTable prepares canonical spline state for reference solar rows" {
     var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         std.testing.allocator,
         internal.input.defaults.referenceCase(),
@@ -17,7 +17,7 @@ test "SolarTable prepares old-route spline state for reference solar rows" {
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(solar_table.SolarTable));
     try std.testing.expectEqual(tables.solar.rows.len, tables.solar.spline_second_derivatives.len);
 
-    // Source: old `src/input/instrument/solar_spectrum.zig` prepareInterpolation route run against
+    // Source: `src/input/instrument/solar_spectrum.zig` prepareInterpolation route run against
     // data/reference_data/solar/o2a_solar_reference_753_778.csv.
     try std.testing.expectApproxEqAbs(
         -7.16441414660904750e14,
@@ -36,14 +36,14 @@ test "SolarTable prepares old-route spline state for reference solar rows" {
     );
 }
 
-test "irradianceAtWavelength matches old operational spline and clamp behavior" {
+test "irradianceAtWavelength matches operational spline and clamp behavior" {
     var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         std.testing.allocator,
         internal.input.defaults.referenceCase(),
     );
     defer tables.deinit(std.testing.allocator);
 
-    // Source: old `OperationalSolarSpectrum.interpolateIrradiance` route for the WP1 reference solar asset.
+    // Source: `OperationalSolarSpectrum.interpolateIrradiance` route for the O2 A reference solar asset.
     try expectSolar(4.87640000000000000e14, try solar_lookup.irradianceAtWavelength(tables.solar, 753.0));
     try expectSolar(4.86690022241158375e14, try solar_lookup.irradianceAtWavelength(tables.solar, 753.005));
     try expectSolar(4.87870339978322125e14, try solar_lookup.irradianceAtWavelength(tables.solar, 760.005));
@@ -51,7 +51,7 @@ test "irradianceAtWavelength matches old operational spline and clamp behavior" 
     try expectSolar(4.87640000000000000e14, try solar_lookup.irradianceAtWavelength(tables.solar, 752.5));
 }
 
-test "integrateIrradianceAtNominalAssumeCapacity weights old cached irradiance samples" {
+test "integrateIrradianceAtNominalAssumeCapacity weights cached irradiance samples" {
     var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         std.testing.allocator,
         internal.input.defaults.referenceCase(),
@@ -81,7 +81,7 @@ test "integrateIrradianceAtNominalAssumeCapacity weights old cached irradiance s
         },
     );
 
-    // Source: old `spectral_eval.zig` integrateIrradianceAtNominal route with the WP1 reference solar asset.
+    // Source: `spectral_eval.zig` integrateIrradianceAtNominal route with the O2 A reference solar asset.
     try expectSolar(4.87366765517170125e14, actual);
     try std.testing.expectEqual(@as(u32, 3), memory.values.count());
 }

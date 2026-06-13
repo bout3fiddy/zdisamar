@@ -7,7 +7,7 @@ const fixed_rules = buildFixedRules();
 // gauss_legendre.zig -----------------------------------------------------------------------------------------|
 // Gauss-Legendre quadrature rule builders shared by optical preparation, instrument integration, and          |
 // reference-data setup. The file has two rule families: ordinary symmetric rules on [-1, 1], and              |
-// DISAMAR-compatible division points whose node ordering and first-row weights must match validation paths.   |
+// DISAMAR division points whose node ordering and first-row weights must match validation paths.              |
 //                                                                                                             |
 // called by                                                                                                   |
 //   vertical_grid.zig builds support and RTM altitude nodes during optical-state preparation                  |
@@ -15,7 +15,7 @@ const fixed_rules = buildFixedRules();
 //   adaptive_plan.zig emits high-resolution instrument samples, with DISAMAR mode using division points       |
 //   cross_section_lut.zig and climatology.zig build reference-data integration/sample grids                   |
 //                                                                                                             |
-// main paths                                                                                                  |
+// primary paths                                                                                               |
 //   rule                          returns comptime-generated fixed rules for ordinary orders 1 through 10     |
 //   fillCanonicalNodesAndWeights  computes ordinary symmetric nodes and weights from Legendre roots           |
 //   fillCanonicalDisamarDivPointNodes computes DISAMAR node-only roots on [-1, 1]                             |
@@ -23,8 +23,8 @@ const fixed_rules = buildFixedRules();
 //                                                                                                             |
 // route choice                                                                                                |
 //   Small ordinary orders use rule() when the caller wants a fixed table. Larger ordinary orders use Newton   |
-//   root solves. DISAMAR canonical paths build a tridiagonal system and diagonalize it with                  |
-//   gausq2DisamarImpl because last-bit node differences are visible in steep O2 A high-resolution support    |
+//   root solves. DISAMAR canonical paths build a tridiagonal system and diagonalize it with                   |
+//   gausq2DisamarImpl because last-bit node differences are visible in steep O2 A high-resolution support     |
 //   samples. Callers that reuse layer shapes should retain canonical rows by order and rescale them only.     |
 //                                                                                                             |
 // hot path                                                                                                    |
@@ -63,7 +63,7 @@ pub fn fillCanonicalNodesAndWeights(
     weights_out: []f64,
 ) error{InvalidOrder}!void {
     // fillCanonicalNodesAndWeights ---------------------------------------------------------------------------|
-    // Builds one order-only symmetric Gauss-Legendre rule on [-1, 1].                                        |
+    // Builds one order-only symmetric Gauss-Legendre rule on [-1, 1].                                         |
     //                                                                                                         |
     // hot path                                                                                                |
     //   repeated : every dynamic quadrature build for integration or RTM subgrids unless retained by setup    |
@@ -122,7 +122,7 @@ pub fn fillNodesAndWeights(
     weights_out: []f64,
 ) error{InvalidOrder}!void {
     // fillNodesAndWeights ------------------------------------------------------------------------------------|
-    // Backward-compatible ordinary rule fill; callers that reuse an order should retain the canonical row.   |
+    // Ordinary ordinary rule fill; callers that reuse an order should retain the canonical row.               |
     // --------------------------------------------------------------------------------------------------------|
     try fillCanonicalNodesAndWeights(order, nodes_out, weights_out);
 }
@@ -161,7 +161,7 @@ pub fn fillDisamarDivPointsIntervalNodes(
     // Builds DISAMAR interval nodes for callers that do not consume quadrature weights.                       |
     //                                                                                                         |
     // hot path                                                                                                |
-    //   repeated : parity vertical-grid preparation                                                           |
+    //   repeated : canonical vertical-grid preparation                                                        |
     //   costly   : tridiagonal eigen solve without first-row tracking                                         |
     //   memory   : two bounded stack arrays, each max 2.000 KiB                                               |
     //                                                                                                         |
@@ -181,15 +181,14 @@ pub fn fillCanonicalDisamarDivPointNodes(
     nodes_out: []f64,
 ) error{InvalidOrder}!void {
     // fillCanonicalDisamarDivPointNodes ----------------------------------------------------------------------|
-    // Builds DISAMAR node-only division roots on [-1, 1] for one structural order.                           |
+    // Builds DISAMAR node-only division roots on [-1, 1] for one structural order.                            |
     //                                                                                                         |
     // hot path                                                                                                |
     //   repeated : vertical-grid preparation when callers do not retain order-keyed rows                      |
     //   costly   : tridiagonal eigen solve without first-row tracking                                         |
     //   memory   : two bounded stack arrays, each max 2.000 KiB                                               |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   This is the invariant portion of fillDisamarDivPointsIntervalNodes. OE pressure iterations reuse     |
+    //   This is the invariant portion of fillDisamarDivPointsIntervalNodes. OE pressure iterations reuse      |
     //   these roots and only reapply scaleIntervalNodes to the moved altitude bounds.                         |
     // --------------------------------------------------------------------------------------------------------|
     const empty_order = order == 0;
@@ -217,7 +216,7 @@ pub fn scaleIntervalNodes(
     nodes_out: []f64,
 ) error{InvalidOrder}!void {
     // scaleIntervalNodes -------------------------------------------------------------------------------------|
-    // Apply the old DISAMAR affine interval map to canonical node-only roots.                                |
+    // Apply the DISAMAR affine interval map to canonical node-only roots.                                     |
     //                                                                                                         |
     // math                                                                                                    |
     //   node = canonical_node * ((b0 - a0) / 2) + (a0 + ((b0 - a0) / 2))                                      |
@@ -445,7 +444,7 @@ fn initDisamarFirstRow(
     first_row: *[max_disamar_division_points]f64,
 ) void {
     // initDisamarFirstRow ------------------------------------------------------------------------------------|
-    // Initialize the first eigenvector row used to recover quadrature weights.                                |
+    // Initialize the first eigenvector row uses recover quadrature weights.                                   |
     // --------------------------------------------------------------------------------------------------------|
     first_row[0] = 1.0;
     if (order_usize > 1) @memset(first_row[1..order_usize], 0.0);
@@ -482,7 +481,7 @@ fn buildFixedRule(order: u32) Rule {
         .weights = [_]f64{0.0} ** max_fixed_rule_order,
     };
     fillFixedNodesAndWeights(order, &result.nodes, &result.weights);
-    applyFixedRuleLegacyCorrections(order, &result.nodes, &result.weights);
+    applyFixedRuleCanonicalCorrections(order, &result.nodes, &result.weights);
     return result;
 }
 
@@ -541,12 +540,12 @@ fn roundFixedRuleDecimal16(value: f128) f64 {
     return @floatCast(@round(value * fixed_rule_decimal_scale) / fixed_rule_decimal_scale);
 }
 
-fn applyFixedRuleLegacyCorrections(
+fn applyFixedRuleCanonicalCorrections(
     order: u32,
     nodes_out: *[max_fixed_rule_order]f64,
     weights_out: *[max_fixed_rule_order]f64,
 ) void {
-    // applyFixedRuleLegacyCorrections ----------------------------------------------------------------------- |
+    // applyFixedRuleCanonicalCorrections ---------------------------------------------------------------------|
     // Snap the generated decimal-rounded table to the historical small-rule f64 bits verified by tests.       |
     // --------------------------------------------------------------------------------------------------------|
     switch (order) {

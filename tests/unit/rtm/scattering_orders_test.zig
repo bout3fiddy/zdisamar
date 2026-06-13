@@ -386,7 +386,7 @@ fn scalarFirstOrderTangent(
     stream_count: usize,
 ) ScalarOrders {
     // scalarFirstOrderTangent ------------------------------------------------------------------------------- |
-    // Independent scalar reference for old `ordersScatTangent` first-order product rules.                     |
+    // Independent scalar reference for `ordersScatTangent` first-order product rules.                         |
     // --------------------------------------------------------------------------------------------------------|
     var tangent = zeroScalarOrders(stream_count);
     var base = scalarFirstOrder(start_level, end_level, geometry, attenuation, rt, stream_count);
@@ -447,7 +447,7 @@ fn scalarFirstOrder(
     stream_count: usize,
 ) ScalarOrders {
     // scalarFirstOrder -------------------------------------------------------------------------------------- |
-    // Independent scalar implementation of old LABOS first-order source fill and transport.                   |
+    // Independent scalar implementation of LABOS first-order source fill and transport.                       |
     // --------------------------------------------------------------------------------------------------------|
     var result = zeroScalarOrders(stream_count);
     const active = scalarActiveMask(rt, end_level + 1, stream_count);

@@ -13,7 +13,7 @@ const source_levels = internal.optics.source_levels;
 
 const tangent_step: f64 = 1.0e-5;
 
-test "direct surface solve ports old scalar formula without retrieval Jacobian lanes" {
+test "direct surface solve applies scalar formula without retrieval Jacobian lanes" {
     var storage = TestSolveWorkStorage{};
     var work = storage.work();
     const layers = [_]layer_depths.LayerOptics{
@@ -131,7 +131,7 @@ test "non-integrated scattering route runs Fourier surface term without allocati
     try std.testing.expectEqual(jacobian_states.zero(), result.jacobian);
 }
 
-test "nadir scattering route keeps old scalar Fourier ceiling" {
+test "nadir scattering route keeps scalar Fourier ceiling" {
     var storage = TestSolveWorkStorage{};
     var work = storage.work();
     const layers = [_]layer_depths.LayerOptics{
@@ -515,7 +515,7 @@ fn anisotropicPhase() phase_table.PhaseTable {
 
 fn perturbAodLayer(layer: *layer_depths.LayerOptics, signed_step: f64) void {
     // perturbAodLayer --------------------------------------------------------------------------------------- |
-    // Apply the old non-integrated AOD finite-difference variables to one layer row.                          |
+    // Apply the non-integrated AOD finite-difference variables to one layer row.                              |
     // --------------------------------------------------------------------------------------------------------|
     layer.total_optical_depth = @max(
         layer.total_optical_depth +

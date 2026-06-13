@@ -11,7 +11,6 @@ const cia_table = @import("../setup/cia_table.zig");
 const max_collision_pair_profile_rows: usize = 64;
 const centimeters_per_kilometer = 1.0e5;
 
-// main:`state_build/spectroscopy.zig` default_o2_volume_mixing_ratio.
 const oxygen_volume_mixing_ratio = 0.20946;
 
 // AerosolSupportDepth --------------------------------------------------------------------------------------- |
@@ -32,14 +31,9 @@ const AerosolSupportDepth = struct {
 // layer_depths.zig ------------------------------------------------------------------------------------------ |
 // Converts support-row thermodynamics and caller-supplied O2 line sigma rows into optical-depth rows.         |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Formula shape follows main:`src/forward_model/optical_properties/state_build/carrier_eval.zig`:           |
 //   k_abs_gas = sigma_line * n_o2 * 1e5, k_sca_gas = sigma_R * n_air * 1e5,                                   |
 //   k_cia = sigma_cia * n_pair * 1e5, then support rows multiply those per-km carriers by path length.        |
-//   n_pair follows main:`layer_accumulation.zig` CollisionComplexProfileCache on the old spectroscopy         |
 //   profile and falls back to n_o2^2 only when the profile cache is unusable.                                 |
-//   Aerosol placement follows main:`shared/particle_profiles.zig` buildIntervalMatchedDistribution for the    |
-//   reference explicit interval route, then main:`carrier_eval.zig` particleWavelengthScale at wavelength     |
 //   time.                                                                                                     |
 //                                                                                                             |
 // boundary                                                                                                    |
@@ -132,9 +126,7 @@ pub const LayerOptics = struct {
 // [ 520..1031] log_complex_vmr_fraction : [64]f64                                                             |
 // [1032..1543] second                   : [64]f64                                                             |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   main:`layer_accumulation.zig` builds log(n_o2^2 / n_air) over the spectroscopy profile, not the dense     |
-//   vertical setup profile. The WP1 diagnostic cross-section rows prove this cache is active for the O2 A     |
+//   vertical setup profile. The O2 A diagnostic cross-section rows prove this cache is active for the O2 A    |
 //   reference case.                                                                                           |
 const CollisionPairProfile = struct {
     node_count: usize = 0,
@@ -144,7 +136,7 @@ const CollisionPairProfile = struct {
 
     fn init(layer_grid: atmosphere_layers.LayerGrid) CollisionPairProfile {
         // CollisionPairProfile.init ------------------------------------------------------------------------- |
-        // Prepare endpoint-secant second derivatives for the old spectroscopy-profile collision complex.      |
+        // Prepare endpoint-secant second derivatives for the spectroscopy-profile collision complex.          |
         // ----------------------------------------------------------------------------------------------------|
         const rows = layer_grid.spectroscopy_profile.rows;
         if (rows.len < 3 or rows.len > max_collision_pair_profile_rows) return .{};
@@ -328,8 +320,6 @@ fn aerosolSupportWeightSumKm(
     // aerosolSupportWeightSumKm ----------------------------------------------------------------------------- |
     // Sum explicit-interval support weights for scalar aerosol placement.                                     |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   main:`shared/particle_profiles.zig` buildIntervalMatchedDistribution selects support rows whose       |
     //   parent interval matches placement.interval_index_1based, then normalizes by max(support_weight, 0).   |
     // --------------------------------------------------------------------------------------------------------|
     if (aerosol.optical_depth <= 0.0 or aerosol.interval_index_1based == 0) return 0.0;
@@ -355,7 +345,7 @@ fn scalarAerosolDepthAtSupport(
     wavelength_scale: f64,
 ) AerosolSupportDepth {
     // scalarAerosolDepthAtSupport ----------------------------------------------------------------------------|
-    // Return the old-route wavelength-scaled scalar particle carriers for one support row.                    |
+    // Return the canonical wavelength-scaled scalar particle carriers for one support row.                    |
     //                                                                                                         |
     // math                                                                                                    |
     //   k_i(lambda) = tau_ref * (support_weight_i / sum_support_weights) / support_weight_i * scale(lambda)   |
@@ -379,10 +369,8 @@ fn scalarAerosolDepthAtSupport(
 
 fn aerosolWavelengthScale(aerosol: aerosol_tables.AerosolLayerTable, wavelength_nm: f64) f64 {
     // aerosolWavelengthScale -------------------------------------------------------------------------------- |
-    // Apply the old Angstrom reference-wavelength scaling for aerosol optical depth.                          |
+    // Apply the Angstrom reference-wavelength scaling for aerosol optical depth.                              |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   main:`shared/particle_profiles.zig` scaleOpticalDepth and main:`carrier_eval.zig`                     |
     //   particleWavelengthScale use the same safe wavelength/reference guard.                                 |
     // --------------------------------------------------------------------------------------------------------|
     if (aerosol.angstrom_exponent == 0.0 or aerosol.reference_wavelength_nm == wavelength_nm) return 1.0;
@@ -401,8 +389,6 @@ fn profileAerosolDepthAtSupport(
     // profileAerosolDepthAtSupport ---------------------------------------------------------------------------|
     // Distribute explicit profile optical depth onto the active support rows of the owning setup layer.       |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   main:`state_build/layer_accumulation.zig` buildAerosolProfileSublayerProperties overlaps public       |
     //   profile pressure bounds with vertical-grid pressure bounds, scales each contribution by Angstrom law  |
     //   at wavelength time, and weights scattering by each row's single-scatter albedo.                       |
     //                                                                                                         |
@@ -509,7 +495,7 @@ fn scaleOpticalDepth(
     wavelength_nm: f64,
 ) f64 {
     // scaleOpticalDepth --------------------------------------------------------------------------------------|
-    // Apply old aerosol Angstrom scaling with the same safe wavelength/reference guard.                       |
+    // Apply aerosol Angstrom scaling with the same safe wavelength/reference guard.                           |
     // --------------------------------------------------------------------------------------------------------|
     if (optical_depth == 0.0 or angstrom_exponent == 0.0 or reference_wavelength_nm == wavelength_nm) {
         return optical_depth;
@@ -527,7 +513,6 @@ pub fn reduceLayerOpticsFromSupportRows(
 ) !void {
     // reduceLayerOpticsFromSupportRows ---------------------------------------------------------------------- |
     // Sum active support rows into one LABOS transport row per layer. Boundary rows mark edges and have zero  |
-    // path length, matching main:`shared_carrier.fillReducedLayerInputFromSupportRowsWithSpectroscopyCache`.  |
     // --------------------------------------------------------------------------------------------------------|
     if (out_layers.len != layer_grid.layer_pressures_hpa.len or
         support_rows.len != layer_grid.support_mid_altitudes_km.len)
@@ -576,8 +561,6 @@ pub fn fillLayerAerosolJacobians(
     // fillLayerAerosolJacobians ----------------------------------------------------------------------------- |
     // Fill aerosol optical-depth derivative lanes on already-reduced layer rows.                              |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Formula follows main:`state_build/forward_layers.zig` attachAerosolOpticalDepthJacobian. The old      |
     //   route writes total optical depth, scattering optical depth, and single-scatter albedo derivatives     |
     //   beside each LayerInput row. It has no layer aerosol phase-weight derivative field, so that vector     |
     //   remains zero here.                                                                                    |

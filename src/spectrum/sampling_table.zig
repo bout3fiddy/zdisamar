@@ -28,19 +28,12 @@ const SamplingTableErrorState = worker_partition.FirstWorkerErrorState(anyerror)
 // sampling_table.zig ---------------------------------------------------------------------------------------- |
 // Compact instrument-response rows for the spectrum layer.                                                    |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Field order and row contracts follow main:                                                                |
-//   `src/forward_model/instrument_grid/grid_calculation/wavelength_plan.zig`.                                 |
-//   The build-time integration kernels are produced by the old route in                                       |
-//   `src/forward_model/instrument_grid/grid_calculation/wavelength_sampling.zig`; this file owns only the     |
-//   retained row shape consumed after those kernels are known.                                                |
-//                                                                                                             |
 // route                                                                                                       |
 //   sampling rows -> radiance_wavelengths.zig exact f64-bit dedup -> transport prefetch -> instrument gather  |
 //                                                                                                             |
 // key contract                                                                                                |
 //   Wavelength rows keep the exact f64 sample values. Deduplication lives in `radiance_wavelengths.zig` and   |
-//   uses `@bitCast(wavelength_nm)` exactly like the old `SpectralEvaluationCache.keyFor` route.               |
+//   uses `@bitCast(wavelength_nm)` as the cache key.                                                          |
 // ------------------------------------------------------------------------------------------------------------|
 
 // IntegrationKernelStorage ---------------------------------------------------------------------------------- |
@@ -100,7 +93,7 @@ pub const IntegrationKernelEncoding = enum(u16) {
 //                                                                                                             |
 // hot path                                                                                                    |
 //   Disabled kernels consume one direct sample with weight 1.0. Inline kernels avoid side-array chasing for   |
-//   the old five-sample case. Large adaptive kernels point into table-wide side arrays.                       |
+//   the five-sample case. Large adaptive kernels point into table-wide side arrays.                           |
 pub const IntegrationKernelRef = struct {
     inline_offsets_nm: [inline_integration_sample_count]f64 =
         [_]f64{0.0} ** inline_integration_sample_count,
@@ -416,7 +409,7 @@ const AdaptiveSupportRange = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // SamplingTableSummary -------------------------------------------------------------------------------------- |
-// Aggregate sampling fan-out metrics mirrored from the old telemetry row.                                     |
+// Aggregate sampling fan-out metrics using the telemetry row.                                                 |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 56 B (0.055 KiB), align: 8 B                                                                          |
@@ -503,7 +496,7 @@ const KernelStorageBuilder = struct {
         count: usize,
     ) Allocator.Error!void {
         // KernelStorageBuilder.ensureCapacityForSideKernel ---------------------------------------------------|
-        // Reserve side-array capacity. The first large kernel uses the old bounded bulk hint to avoid many    |
+        // Reserve side-array capacity. The first large kernel uses the bounded bulk hint to avoid many        |
         // reallocations without reserving unbounded memory for very large adaptive plans.                     |
         // ----------------------------------------------------------------------------------------------------|
         const required_capacity = self.offsets_nm.items.len + count;
@@ -571,15 +564,13 @@ pub fn buildO2SpectrumSamplingTable(
     // buildO2SpectrumSamplingTable -------------------------------------------------------------------------- |
     // Build the O2 A spectrum sampling plan from explicit setup tables.                                       |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports the exercised old route from main:                                                              |
     //   `instrument_grid/grid_calculation/wavelength_sampling.zig`                                            |
     //   `forward_model/implementations/instrument/integration.zig`                                            |
     //   `forward_model/implementations/instrument/adaptive_plan.zig`                                          |
     //                                                                                                         |
     // route                                                                                                   |
     //   spectral grid -> strong-line adaptive interval plan -> radiance/irradiance kernels -> compact rows    |
-    //   measured_wavelengths_nm, when present, replaces only the nominal product axis; the grid endpoints     |
+    //   measured_wavelengths_nm, when present, uses only the nominal product axis; the grid endpoints         |
     //   still define the global support span used by the adaptive plan.                                       |
     //                                                                                                         |
     // math                                                                                                    |
@@ -669,10 +660,8 @@ fn fillSamplingRows(
     rows: []SpectrumSamplingRow,
 ) !void {
     // fillSamplingRows ---------------------------------------------------------------------------------------|
-    // Fill sampling rows either inline or through the old raw-worker wavelength-sampling loop.                |
+    // Fill sampling rows either inline or through the raw-worker wavelength-sampling loop.                    |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/forward_model/instrument_grid/grid_calculation/wavelength_sampling.zig`               |
     //   `fillWavelengthSamplingPlans`: threshold 64 rows, ChunkQueue chunks of 16, raw worker spawn with      |
     //   calling-thread-last fallback, and first-error capture.                                                |
     // --------------------------------------------------------------------------------------------------------|
@@ -858,7 +847,7 @@ fn buildSamplingRow(
 
 pub fn summarize(table: SpectrumSamplingTable) SamplingTableSummary {
     // summarize --------------------------------------------------------------------------------------------- |
-    // Count sampling fan-out exactly as the old wavelengthSamplingPlan telemetry row did.                     |
+    // Count sampling fan-out exactly as the wavelengthSamplingPlan telemetry row did.                         |
     // --------------------------------------------------------------------------------------------------------|
     var summary = SamplingTableSummary{
         .row_count = table.rows.len,
@@ -881,7 +870,7 @@ pub fn summarize(table: SpectrumSamplingTable) SamplingTableSummary {
 
 fn nominalWavelengthNm(grid: o2_case.SpectralGrid, index: usize) f64 {
     // nominalWavelengthNm ----------------------------------------------------------------------------------- |
-    // Compute the public output grid coordinate using the old linear endpoint-inclusive grid rule.            |
+    // Compute the public output grid coordinate using the linear endpoint-inclusive grid rule.                |
     // --------------------------------------------------------------------------------------------------------|
     if (grid.sample_count == 1) return grid.start_nm;
     const fraction = @as(f64, @floatFromInt(index)) / @as(f64, @floatFromInt(grid.sample_count - 1));
@@ -890,7 +879,7 @@ fn nominalWavelengthNm(grid: o2_case.SpectralGrid, index: usize) f64 {
 
 fn preferredSamplingWorkerCount(row_count: usize) usize {
     // preferredSamplingWorkerCount -------------------------------------------------------------------------- |
-    // Resolve output-row count into the old wavelength-sampling worker threshold.                             |
+    // Resolve output-row count into the wavelength-sampling worker threshold.                                 |
     // --------------------------------------------------------------------------------------------------------|
     return worker_partition.preferredWorkerCount(row_count, min_parallel_wavelength_sample_count);
 }
@@ -981,8 +970,7 @@ fn buildAdaptiveIntervalPlan(
     // buildAdaptiveIntervalPlan ----------------------------------------------------------------------------- |
     // Partition the expanded spectral support around strong O2 line centers and assign Gauss orders.          |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Mirrors old `adaptive_plan.zig` buildAdaptiveIntervalPlan for the DISAMAR reference case.             |
+    //   Builds the adaptive interval plan for the DISAMAR reference case.                                     |
     // --------------------------------------------------------------------------------------------------------|
     const support_window = adaptiveKernelSupportWindow(grid, instrument, grid.start_nm);
     const fwhm_nm = @max(instrument.line_fwhm_nm, safe_fwhm_floor_nm);
@@ -1227,7 +1215,7 @@ fn collectAdaptiveStrongLineCenters(
 
 fn thresholdStrength(rows: []const @import("../assets/readers.zig").O2LineAssetRow, scale: f64) ?f64 {
     // thresholdStrength ------------------------------------------------------------------------------------- |
-    // Return the absolute strong-center cutoff used by the old SpectroscopyRuntimeControls route.             |
+    // Return the absolute strong-center cutoff used by the SpectroscopyRuntimeControls route.                 |
     // --------------------------------------------------------------------------------------------------------|
     if (rows.len == 0) return null;
     var max_strength: f64 = 0.0;
@@ -1237,7 +1225,7 @@ fn thresholdStrength(rows: []const @import("../assets/readers.zig").O2LineAssetR
 
 fn maxAdaptiveIntervalWidth(plan: *const AdaptiveIntervalPlan) f64 {
     // maxAdaptiveIntervalWidth ------------------------------------------------------------------------------ |
-    // Return the widest interior interval used to scale strong-line division counts.                          |
+    // Return the widest interior interval uses scale strong-line division counts.                             |
     // --------------------------------------------------------------------------------------------------------|
     if (plan.count == 0) return 1.0;
 
@@ -1263,7 +1251,7 @@ fn adaptiveIntervalDivisionCount(
     has_strong_lines: bool,
 ) usize {
     // adaptiveIntervalDivisionCount ------------------------------------------------------------------------- |
-    // Choose the Gauss order for one interval using the old strong-line scaling rule.                         |
+    // Choose the Gauss order for one interval using the strong-line scaling rule.                             |
     // --------------------------------------------------------------------------------------------------------|
     if (!has_strong_lines) return @max(instrument.adaptive_points_per_fwhm, 1);
     const min_divisions = @max(instrument.strong_line_min_divisions, 1);
@@ -1278,7 +1266,7 @@ fn adaptiveIntervalDivisionCount(
 
 fn adaptiveKernelHalfSpanNm(instrument: instrument_tables.InstrumentTable) f64 {
     // adaptiveKernelHalfSpanNm ------------------------------------------------------------------------------ |
-    // Prefer explicit support span; otherwise use the old finite FWHM-only default.                           |
+    // Prefer explicit support span; otherwise use the finite FWHM-only default.                               |
     // --------------------------------------------------------------------------------------------------------|
     return if (instrument.high_resolution_half_span_nm > 0.0)
         instrument.high_resolution_half_span_nm
@@ -1295,7 +1283,7 @@ fn realizedIntervalWavelengthNm(
     apply_disamar_midpoint_bias: bool,
 ) f64 {
     // realizedIntervalWavelengthNm -------------------------------------------------------------------------- |
-    // Realize one interval-local node as an absolute wavelength, preserving the old irradiance midpoint bias. |
+    // Realize one interval-local node as an absolute wavelength, preserving the irradiance midpoint bias.     |
     // --------------------------------------------------------------------------------------------------------|
     const wavelength_nm = interval_start_nm + interval_width_nm * node_01;
 

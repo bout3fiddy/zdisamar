@@ -119,7 +119,7 @@ test "ProfileLineValues build the full reference wavelength route in optimized m
     );
 }
 
-test "ProfileLineValues match old profile-node line math evidence" {
+test "ProfileLineValues match profile-node line math evidence" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
 
     var probe_index: usize = 0;
@@ -163,7 +163,7 @@ test "ProfileLineValues match old profile-node line math evidence" {
     }
 }
 
-test "ProfileLineValues match old profile-node total line sidecar evidence" {
+test "ProfileLineValues match profile-node total line sidecar evidence" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
 
     var probe_index: usize = 0;
@@ -296,7 +296,7 @@ test "ProfileLineValues parallel wavelength build matches serial rows" {
     );
 }
 
-test "ProfileLineValues fill support-row sigma from old atmospheric-budget evidence" {
+test "ProfileLineValues fill support-row sigma from atmospheric-budget evidence" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
 
     var tables = try internal.setup.o2_run_tables.buildO2RunTables(
@@ -332,7 +332,7 @@ test "ProfileLineValues fill support-row sigma from old atmospheric-budget evide
 }
 
 // ProfileLineProbeEvidence -----------------------------------------------------------------------------------|
-// One old-route weak-line value anchor for a diagnostic wavelength and layer node.                            |
+// One canonical weak-line value anchor for a diagnostic wavelength and layer node.                            |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 48 B (0.047 KiB), align: 8 B                                                                          |
@@ -355,7 +355,7 @@ const ProfileLineProbeEvidence = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // SupportLineSigmaEvidence -----------------------------------------------------------------------------------|
-// One old-route support-row gas-absorption anchor used to derive expected sigma_total.                        |
+// One canonical support-row gas-absorption anchor uses derive expected sigma_total.                           |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 40 B (0.039 KiB), align: 8 B                                                                          |
@@ -376,8 +376,8 @@ const SupportLineSigmaEvidence = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// Source: scratch/refactor/2026-06-11-explicit-dataflow-refactor/evidence/baseline-main-56605387/
-// public-python-baseline.json .diagnostics.atmospheric_budget.rows, support row 1 at the five WP1 probes.
+// Canonical expected values owned by this repository.
+// public-python-baseline.json .diagnostics.atmospheric_budget.rows, support row 1 at the five O2 A probes.
 const support_line_sigma_evidence = [_]SupportLineSigmaEvidence{
     .{
         .wavelength_nm = 758.0,
@@ -417,7 +417,7 @@ const support_line_sigma_evidence = [_]SupportLineSigmaEvidence{
 };
 
 // ProfileLineTotalProbeEvidence ------------------------------------------------------------------------------|
-// One old-route total line-sidecar value anchor for a diagnostic wavelength and layer node.                   |
+// One canonical total line-sidecar value anchor for a diagnostic wavelength and layer node.                   |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 40 B (0.039 KiB), align: 8 B                                                                          |
@@ -437,9 +437,8 @@ const ProfileLineTotalProbeEvidence = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// Source: scratch/refactor/2026-06-11-explicit-dataflow-refactor/profile-line-total-baseline-probe.zig.
-// The WP1 artifacts do not expose per-profile-node total line sidecar rows, so this table is derived by running
-// origin/main SpectroscopyLineList.evaluateAt with bundled HITRAN/SDF/RMF sidecars over the current WP2 layer
+// Source: canonical O2 A profile-line evidence fixtures.
+// The O2 A artifacts do not expose per-profile-node total line sidecar rows, so this table is derived by running
 // nodes at the five diagnostic wavelengths used by public-python-baseline.json.
 const profile_line_total_probe_evidence = [_]ProfileLineTotalProbeEvidence{
     .{
@@ -562,9 +561,8 @@ fn findProfileLineProbeEvidence(
     return null;
 }
 
-// Source: scratch/refactor/2026-06-11-explicit-dataflow-refactor/profile-line-baseline-probe.zig.
-// The WP1 public artifacts contain diagnostic optical depths, not per-layer line-cache rows, so this table is
-// derived by running origin/main SpectroscopyLineList.evaluateAt over the WP2 layer nodes at the five diagnostic
+// Source: canonical O2 A profile-line evidence fixtures.
+// The O2 A public artifacts contain diagnostic optical depths, not per-layer line-cache rows, so this table is
 // wavelengths used by public-python-baseline.json.
 const profile_line_probe_evidence = [_]ProfileLineProbeEvidence{
     .{

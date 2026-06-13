@@ -56,7 +56,7 @@ pub const SpectralGrid = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // VerticalInterval -------------------------------------------------------------------------------------------|
-// Pressure-bounded reference interval used to shape setup support layers.                                     |
+// Pressure-bounded reference interval uses shape setup support layers.                                        |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 32 B (0.031 KiB), align: 8 B                                                                          |

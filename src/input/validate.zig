@@ -8,7 +8,7 @@ const profile_spectral_tolerance: f64 = 1.0e-12;
 
 pub fn o2Case(case: o2_case.O2Case) !void {
     // o2Case -------------------------------------------------------------------------------------------------|
-    // Validate every control WP2 consumes so unsupported or malformed setup input cannot pass inertly.        |
+    // Validate every control O2 A consumes so unsupported or malformed setup input cannot pass inertly.       |
     // --------------------------------------------------------------------------------------------------------|
     if (case.spectral_grid.sample_count < 2) return errors.Error.InvalidControl;
     if (case.spectral_grid.end_nm <= case.spectral_grid.start_nm) return errors.Error.InvalidControl;
@@ -51,8 +51,8 @@ fn measuredWavelengths(
     grid: o2_case.SpectralGrid,
     wavelengths_nm: []const f64,
 ) !void {
-    // measuredWavelengths -----------------------------------------------------------------------------------|
-    // Validate the optional sparse product axis consumed by fastmode and correction routes.                  |
+    // measuredWavelengths ----------------------------------------------------------------------------------- |
+    // Validate the optional sparse product axis consumed by fastmode and correction routes.                   |
     //                                                                                                         |
     // contract                                                                                                |
     //   An empty slice means the endpoint-inclusive uniform SpectralGrid is the product axis. A non-empty     |
@@ -88,9 +88,6 @@ fn aerosolProfile(
     // aerosolProfile -----------------------------------------------------------------------------------------|
     // Validate explicit aerosol profile rows against the pressure route consumed by setup tables.             |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Mirrors main:`src/input/Aerosol.zig` ProfileLayer.validate and the pressure-overlap rejection in      |
-    //   main:`state_build/layer_accumulation.zig` buildAerosolProfileSublayerProperties.                      |
     // --------------------------------------------------------------------------------------------------------|
     for (profile) |layer| {
         try aerosolProfileLayer(layer);
@@ -181,7 +178,7 @@ fn profileSpectralScalingMatches(
     right: o2_case.AerosolProfileLayer,
 ) bool {
     // profileSpectralScalingMatches --------------------------------------------------------------------------|
-    // Keep overlapping profile rows on one wavelength-scaling law, matching the old profile merge gate.       |
+    // Keep overlapping profile rows on one wavelength-scaling law, matching the profile merge gate.           |
     // --------------------------------------------------------------------------------------------------------|
     return std.math.approxEqAbs(
         f64,

@@ -9,7 +9,6 @@ const spline = @import("../common/math/spline.zig");
 const Allocator = std.mem.Allocator;
 const boltzmann_hpa_cm3_per_k = 1.380658e-19;
 
-// main:`state_build/spectroscopy.zig` default_o2_volume_mixing_ratio.
 const oxygen_volume_mixing_ratio = 0.20946;
 const centimeters_per_kilometer = 1.0e5;
 const max_spline_profile_rows: usize = 256;
@@ -53,13 +52,11 @@ pub const AtmosphereProfileTable = struct {
 // [72..87] interval_nodes       : []f64                                                                       |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   support_nodes/support_weights own the ordinary Gauss-Legendre rule on [-1, 1]. interval_orders owns the  |
+//   support_nodes/support_weights own the ordinary Gauss-Legendre rule on [-1, 1]. interval_orders owns the   |
 //   distinct DISAMAR node-only orders used by atmosphere intervals. interval_node_starts has one sentinel     |
-//   row so interval_nodes[start..end] returns canonical DISAMAR roots on [-1, 1].                            |
+//   row so interval_nodes[start..end] returns canonical DISAMAR roots on [-1, 1].                             |
 //                                                                                                             |
 // hot path                                                                                                    |
-//   Retrieval pressure iterations move altitude bounds, not quadrature order. Retaining these roots ports    |
-//   main:`src/optimal_estimation/retrieval.zig` profile_preparation reuse and keeps the Newton/QL solve out  |
 //   of evaluateRetrievalState.                                                                                |
 pub const LayerQuadrature = struct {
     support_order: usize,
@@ -71,7 +68,7 @@ pub const LayerQuadrature = struct {
 
     pub fn deinit(self: *LayerQuadrature, allocator: Allocator) void {
         // LayerQuadrature.deinit -----------------------------------------------------------------------------|
-        // Release retained canonical support and interval quadrature rows.                                   |
+        // Release retained canonical support and interval quadrature rows.                                    |
         // ----------------------------------------------------------------------------------------------------|
         allocator.free(self.support_nodes);
         allocator.free(self.support_weights);
@@ -119,8 +116,8 @@ pub const LayerQuadrature = struct {
 // [384..399] support u32 arrays             : 1 slice header                                                  |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   Every array is owned. source_profile holds the old-route densified climatology used for vertical setup.   |
-//   spectroscopy_profile holds the old-route raw vendor pressure nodes with densified altitudes for line/CIA  |
+//   Every array is owned. source_profile holds the canonical densified climatology used for vertical setup.   |
+//   spectroscopy_profile holds the canonical raw vendor pressure nodes with densified altitudes for line/CIA  |
 //   profile caches. Layer rows hold boundaries and lower-boundary representative thermodynamics. Support rows |
 //   hold the boundary/active samples.                                                                         |
 pub const LayerGrid = struct {
@@ -228,7 +225,7 @@ pub fn buildLayerQuadrature(allocator: Allocator, case: o2_case.O2Case) !LayerQu
     //                                                                                                         |
     // boundary                                                                                                |
     //   Orders come only from case.atmosphere.sublayer_divisions and interval.altitude_divisions. Retrieval   |
-    //   state updates change pressure bounds, so the canonical roots and weights remain valid across every   |
+    //   state updates change pressure bounds, so the canonical roots and weights remain valid across every    |
     //   OE iteration for the prepared case.                                                                   |
     // --------------------------------------------------------------------------------------------------------|
     const support_order = @max(case.atmosphere.sublayer_divisions, @as(usize, 1));
@@ -290,7 +287,7 @@ pub fn buildLayerQuadrature(allocator: Allocator, case: o2_case.O2Case) !LayerQu
 
 pub fn build(allocator: Allocator, case: o2_case.O2Case) !LayerGrid {
     // build --------------------------------------------------------------------------------------------------|
-    // Load and densify atmosphere profile rows, then compute DISAMAR-parity layer/support placement.          |
+    // Load and densify atmosphere profile rows, then compute DISAMAR layer/support placement.                 |
     // --------------------------------------------------------------------------------------------------------|
     var quadrature = try buildLayerQuadrature(allocator, case);
     defer quadrature.deinit(allocator);
@@ -303,7 +300,7 @@ pub fn buildWithQuadrature(
     quadrature: LayerQuadrature,
 ) !LayerGrid {
     // buildWithQuadrature ------------------------------------------------------------------------------------|
-    // Cold-build profile rows, then compute layer/support placement from retained canonical quadrature.       |
+    // Build profile rows, then compute layer/support placement from retained canonical quadrature.            |
     // --------------------------------------------------------------------------------------------------------|
     const raw_profile_rows = try readers.readAtmosphereProfile(allocator, case.atmosphere.profile.path);
     defer allocator.free(raw_profile_rows);
@@ -339,7 +336,6 @@ pub fn buildFromPreparedProfiles(
     //                                                                                                         |
     // boundary                                                                                                |
     //   Retrieval pressure states move interval boundaries only. The densified climatology and spectroscopy   |
-    //   support profile stay invariant for the prepared case, matching main:`src/optimal_estimation/          |
     //   retrieval.zig` RetrievalPreparedCase profile_preparation reuse.                                       |
     //                                                                                                         |
     // ownership                                                                                               |
@@ -410,7 +406,7 @@ fn buildWithOwnedProfiles(
     while (source_interval_index > 0) {
         source_interval_index -= 1;
         const interval = intervals[source_interval_index];
-        const parity_interval_index_1based: u32 = @intCast(intervals.len - source_interval_index);
+        const rtm_interval_index_1based: u32 = @intCast(intervals.len - source_interval_index);
         const interval_top_altitude_km = profile.interpolateAltitudeForPressureSpline(interval.top_pressure_hpa);
         const interval_bottom_altitude_km =
             profile.interpolateAltitudeForPressureSpline(interval.bottom_pressure_hpa);
@@ -435,10 +431,10 @@ fn buildWithOwnedProfiles(
                 support_cursor,
                 interval_bottom_altitude_km,
                 0.0,
-                parity_interval_index_1based,
+                rtm_interval_index_1based,
             );
         }
-        grid.support_interval_indices_1based[support_cursor] = parity_interval_index_1based;
+        grid.support_interval_indices_1based[support_cursor] = rtm_interval_index_1based;
 
         var previous_boundary_altitude_km = interval_bottom_altitude_km;
         var previous_boundary_pressure_hpa = interval.bottom_pressure_hpa;
@@ -459,7 +455,7 @@ fn buildWithOwnedProfiles(
             grid.layer_bottom_altitudes_km[global_layer_index] = previous_boundary_altitude_km;
             grid.layer_top_pressures_hpa[global_layer_index] = next_boundary_pressure_hpa;
             grid.layer_bottom_pressures_hpa[global_layer_index] = previous_boundary_pressure_hpa;
-            grid.layer_interval_indices_1based[global_layer_index] = parity_interval_index_1based;
+            grid.layer_interval_indices_1based[global_layer_index] = rtm_interval_index_1based;
             grid.layer_support_starts[global_layer_index] = @intCast(support_cursor);
             grid.layer_support_counts[global_layer_index] = @intCast(support_order + 2);
 
@@ -477,7 +473,7 @@ fn buildWithOwnedProfiles(
                     global_support_index,
                     support_altitude_km,
                     support_weight_km,
-                    parity_interval_index_1based,
+                    rtm_interval_index_1based,
                 );
                 weighted_altitude_km += support_altitude_km * support_weight_km;
                 weight_sum_km += support_weight_km;
@@ -490,13 +486,13 @@ fn buildWithOwnedProfiles(
                 upper_boundary_index,
                 next_boundary_altitude_km,
                 0.0,
-                parity_interval_index_1based,
+                rtm_interval_index_1based,
             );
 
             const divisor = @max(weight_sum_km, 1.0e-12);
             grid.layer_mid_altitudes_km[global_layer_index] = weighted_altitude_km / divisor;
 
-            // Old parity reduction copies representative thermodynamics from support_rows[0].
+            // Representative thermodynamics use the lower-boundary support row.
             grid.layer_pressures_hpa[global_layer_index] = grid.support_pressures_hpa[support_cursor];
             grid.layer_temperatures_k[global_layer_index] = grid.support_temperatures_k[support_cursor];
             grid.layer_air_number_densities_cm3[global_layer_index] =
@@ -520,15 +516,19 @@ fn buildWithOwnedProfiles(
 
 fn countDistinctIntervalOrders(intervals: []const o2_case.VerticalInterval) usize {
     // countDistinctIntervalOrders ----------------------------------------------------------------------------|
-    // Count nonzero altitude-division orders that need one retained DISAMAR canonical node row.              |
+    // Count nonzero altitude-division orders that need one retained DISAMAR canonical node row.               |
     // --------------------------------------------------------------------------------------------------------|
     var count: usize = 0;
+
     for (intervals, 0..) |interval, index| {
         const order = interval.altitude_divisions;
+
         if (order == 0) continue;
         if (intervalOrderAlreadyPresent(intervals[0..index], order)) continue;
+
         count += 1;
     }
+
     return count;
 }
 
@@ -537,18 +537,22 @@ fn countDistinctIntervalNodes(intervals: []const o2_case.VerticalInterval) usize
     // Count the packed canonical node slots needed by the distinct interval orders.                           |
     // --------------------------------------------------------------------------------------------------------|
     var count: usize = 0;
+
     for (intervals, 0..) |interval, index| {
         const order = interval.altitude_divisions;
+
         if (order == 0) continue;
         if (intervalOrderAlreadyPresent(intervals[0..index], order)) continue;
+
         count += order;
     }
+
     return count;
 }
 
 fn intervalOrderAlreadyPresent(intervals: []const o2_case.VerticalInterval, order: usize) bool {
     // intervalOrderAlreadyPresent ----------------------------------------------------------------------------|
-    // Scan previously seen interval rows for a matching altitude-division order.                              |
+    // Scan currently seen interval rows for a matching altitude-division order.                               |
     // --------------------------------------------------------------------------------------------------------|
     for (intervals) |interval| {
         if (interval.altitude_divisions == order) return true;
@@ -572,10 +576,8 @@ fn densifyVendorPressureGrid(
     surface_pressure_hpa: f64,
 ) ![]readers.AtmosphereProfileRow {
     // densifyVendorPressureGrid ------------------------------------------------------------------------------|
-    // Build the old O2 A setup profile used before layer/support placement.                                   |
+    // Build the O2 A setup profile used before layer/support placement.                                       |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   main:`input/o2a_reference/run.zig` replaces the raw vendor climatology with                           |
     //   ClimatologyProfile.densifyVendorPressureGrid before state_build vertical setup.                       |
     //                                                                                                         |
     // math                                                                                                    |
@@ -721,7 +723,7 @@ fn buildSpectroscopyProfileRows(
     dense_profile: ProfileView,
 ) ![]readers.AtmosphereProfileRow {
     // buildSpectroscopyProfileRows -------------------------------------------------------------------------- |
-    // Mirror old o2a_reference/run.zig buildVendorTraceGasSpectroscopyProfile for line/CIA profile caches.    |
+    // Build spectroscopy-profile rows for line/CIA profile caches.                                            |
     // The row count stays on the vendor pressure nodes; altitude is mapped through the densified profile.     |
     // --------------------------------------------------------------------------------------------------------|
     const rows = try allocator.alloc(readers.AtmosphereProfileRow, source_profile.rows.len);
@@ -834,12 +836,10 @@ fn fillSupportRow(
     interval_index_1based: u32,
 ) void {
     // fillSupportRow -----------------------------------------------------------------------------------------|
-    // Fill one boundary or active support row from the DISAMAR-parity profile thermodynamics route.           |
+    // Fill one boundary or active support row from the DISAMAR profile thermodynamics route.                  |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   main:`state_build/layer_accumulation.zig` calls paritySupportThermodynamicsFromProfile for the        |
     //   reference O2 A route, so support pressure and temperature come from profile spline sampling at the    |
-    //   support altitude. The geometric-mean pressure fallback is for non-parity interval grids.              |
+    //   support altitude. The geometric-mean pressure fallback is for non-canonical interval grids.           |
     // --------------------------------------------------------------------------------------------------------|
     const pressure_hpa = profile.interpolatePressureLogSpline(altitude_km);
     const temperature_k = profile.interpolateTemperatureSpline(altitude_km);
@@ -1179,7 +1179,7 @@ fn linearSampleDescending(x_desc: []const f64, y: []const f64, target_x: f64) f6
 
 fn gravitationalAccelerationMetersPerSecondSquared(latitude_deg: f64, altitude_km: f64) f64 {
     // gravitationalAccelerationMetersPerSecondSquared --------------------------------------------------------|
-    // DISAMAR-compatible gravity approximation used by old climatology densification.                         |
+    // DISAMAR gravity approximation used by climatology densification.                                        |
     // --------------------------------------------------------------------------------------------------------|
     const geodetic_flattening_term: f64 = @floatCast(@as(f32, 0.993306));
     const tangent_latitude = std.math.tan(latitude_deg * std.math.pi / 180.0);

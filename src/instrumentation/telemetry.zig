@@ -1,40 +1,40 @@
 const build_options = @import("build_options");
 const sink = @import("calculation_telemetry_sink");
 
-// telemetry.zig ------------------------------------------------------------------------------------------------|
-// Structured calculation-telemetry facade for research sinks selected by build.zig.                             |
-//                                                                                                               |
-// called from                                                                                                   |
-//   spectrum sampling and run code records dense-wavelength fan-out, forward-cache miss plans, reflectance      |
-//   assembly, and Jacobian column summaries.                                                                    |
-//   rtm/layer_reflect_transmit.zig records layer-doubling classification, q-series skip/retain gates,           |
-//   and downstream R-D, T-U, and T-D product decisions.                                                         |
-//   rtm/scattering_orders.zig records first-order and multiple-order convergence margins.                       |
-//   rtm/reflectance.zig records Fourier contribution size and tail-stop decisions.                              |
-//   telemetry tests verify disabled builds keep the facade callable and side-effect free.                       |
-//                                                                                                               |
-// main paths                                                                                                    |
-//   requested reads build_options.enable_calculation_telemetry. enabled also requires the selected sink to      |
-//   report available=true, so normal product/test builds import the stub sink and drop every row.               |
-//   Stage and Context are sink-owned public types; this facade only forwards context set/get/clear and row      |
-//   emission calls. Each public hook is inline and returns immediately when enabled is false, preserving the    |
-//   measured product path unless an explicit research sink is compiled in.                                      |
-//                                                                                                               |
-// runtime shape                                                                                                 |
-//   This file does not open telemetry outputs, allocate row buffers, or choose report formats. Those details    |
-//   belong to scaffolding/instrumentation sinks selected outside the forward-model source tree.                 |
-//                                                                                                               |
-// hot path                                                                                                      |
-//   Telemetry hooks sit inside spectrum assembly, LABOS layer/order/Fourier loops, and Jacobian column          |
-//   assembly. Normal builds compile with enabled=false, so each inline hook returns before row arguments reach  |
-//   the sink. The calculation-telemetry harness keeps the same call sites but swaps in the retained sink module |
-//   and thread-local context.                                                                                   |
-//                                                                                                               |
-// memory                                                                                                        |
-//   In normal builds, Context is the zero-size type from the disabled sink and no telemetry row storage exists. |
-//   Enabled harness builds keep the larger sink-owned Context and Parquet writers under scaffolding; this       |
-//   facade only forwards borrowed values and scalar row fields.                                                 |
-// --------------------------------------------------------------------------------------------------------------|
+// telemetry.zig ----------------------------------------------------------------------------------------------|
+// Structured calculation-telemetry facade for research sinks selected by build.zig.                           |
+//                                                                                                             |
+// called from                                                                                                 |
+//   spectrum sampling and run code records dense-wavelength fan-out, forward-cache miss plans, reflectance    |
+//   assembly, and Jacobian column summaries.                                                                  |
+//   rtm/layer_reflect_transmit.zig records layer-doubling classification, q-series skip/retain gates,         |
+//   and downstream R-D, T-U, and T-D product decisions.                                                       |
+//   rtm/scattering_orders.zig records first-order and multiple-order convergence margins.                     |
+//   rtm/reflectance.zig records Fourier contribution size and tail-stop decisions.                            |
+//   telemetry tests verify disabled builds keep the facade callable and side-effect free.                     |
+//                                                                                                             |
+// primary paths                                                                                               |
+//   requested reads build_options.enable_calculation_telemetry. enabled also requires the selected sink to    |
+//   report available=true, so normal product/test builds import the stub sink and drop every row.             |
+//   Stage and Context are sink-owned public types; this facade only forwards context set/get/clear and row    |
+//   emission calls. Each public hook is inline and returns immediately when enabled is false, preserving the  |
+//   measured product path unless an explicit research sink is compiled in.                                    |
+//                                                                                                             |
+// runtime shape                                                                                               |
+//   This file does not open telemetry outputs, allocate row buffers, or choose report formats. Those details  |
+//   belong to scaffolding/instrumentation sinks selected outside the forward-model source tree.               |
+//                                                                                                             |
+// hot path                                                                                                    |
+//   Telemetry hooks sit inside spectrum assembly, LABOS layer/order/Fourier loops, and Jacobian column        |
+//   assembly. Normal builds compile with enabled=false, so each inline hook returns before row arguments reach|
+//   the sink. The retained telemetry harness keeps the call sites and swaps in sink-owned context.            |
+//   and thread-local context.                                                                                 |
+//                                                                                                             |
+// memory                                                                                                      |
+//   In normal builds, Context is zero-size from the disabled sink, so no telemetry row storage exists.        |
+//   Enabled harness builds keep the larger sink-owned Context and Parquet writers under scaffolding; this     |
+//   facade only forwards borrowed values and scalar row fields.                                               |
+// ------------------------------------------------------------------------------------------------------------|
 pub const requested: bool = requested_by_build: {
     if (!@hasDecl(build_options, "enable_calculation_telemetry")) break :requested_by_build false;
     break :requested_by_build build_options.enable_calculation_telemetry;

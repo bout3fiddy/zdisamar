@@ -9,8 +9,8 @@ const setup = internal.setup.o2_run_tables;
 const allocator = std.testing.allocator;
 
 // CurvedSampleEvidence ---------------------------------------------------------------------------------------|
-// Test-local pseudo-spherical evidence from WP1 baseline artifacts:                                           |
-// scratch/refactor/2026-06-11-explicit-dataflow-refactor/evidence/baseline-main-56605387/                     |
+// Test-local pseudo-spherical evidence from O2 A baseline artifacts:                                          |
+// Canonical expected values owned by this repository.                                                         |
 // internal-dump-baseline.json .probe_forward_inputs[].pseudo_spherical.samples plus                           |
 // public-python-baseline.json .diagnostics.atmospheric_budget.rows for the line-absorption support values.    |
 //                                                                                                             |

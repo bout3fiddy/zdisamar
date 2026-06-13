@@ -19,9 +19,6 @@ const earth_radius_km: f64 = 6371.0;
 // reflectance.zig ------------------------------------------------------------------------------------------- |
 // Converts LABOS order fields into Fourier reflectance terms and small solve-level reflectance helpers.       |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/forward_model/radiative_transfer/labos/reflectance.zig` `calcReflectance` and             |
-//   main:`src/forward_model/radiative_transfer/labos/execute.zig` Fourier weighting, Fourier tail stop,       |
 //   weighted-term perturbation, and aerosol derivative weighting.                                             |
 //                                                                                                             |
 // reference names                                                                                             |
@@ -188,7 +185,7 @@ pub fn topReflectanceCoefficient(
     // topReflectanceCoefficient ----------------------------------------------------------------------------- |
     // Non-integrated LABOS reflectance for one Fourier term.                                                  |
     //                                                                                                         |
-    // zdisamar matches old `CalcReflectance`: read upward U at the top level, solar column, viewing stream.   |
+    // zdisamar matches `CalcReflectance`: read upward U at the top level, solar column, viewing stream.       |
     // --------------------------------------------------------------------------------------------------------|
     const solar_column: usize = 1;
     return ud[top_level].U.col[solar_column].get(geometry.viewIndex());
@@ -208,9 +205,7 @@ pub fn integratedSourceCoefficient(
     // integratedSourceCoefficient --------------------------------------------------------------------------- |
     // Integrated-source LABOS reflectance for one Fourier term.                                               |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`radiative_transfer/labos/reflectance.zig` `calcIntegratedReflectanceWithBasis` over       |
-    //   WP3 `SourceLevel` rows. This route uses the RTM-quadrature branch: level weight, scattering carrier,  |
+    //   O2 A `SourceLevel` rows. This route uses the RTM-quadrature branch: level weight, scattering carrier, |
     //   and source phase mixture are already explicit on each source level.                                   |
     //                                                                                                         |
     // math                                                                                                    |
@@ -300,9 +295,7 @@ pub fn integratedAerosolDerivativeWeighting(
     // integratedAerosolDerivativeWeighting ------------------------------------------------------------------ |
     // Paired integrated-source aerosol Jacobian weighting for AOD and aerosol layer pressure.                 |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`radiative_transfer/labos/reflectance.zig` `calcAerosolDerivativeWeightingWithBasis`.      |
-    //   `SourceLevel` carries the old RTM quadrature aerosol k_sca carriers and dksca/dtau row.               |
+    //   `SourceLevel` carries the RTM quadrature aerosol k_sca carriers and dksca/dtau row.                   |
     // --------------------------------------------------------------------------------------------------------|
     if (!validSourceGrid(levels, ud, top_level)) return .{};
 
@@ -396,8 +389,6 @@ pub fn integratedAerosolOpticalDepthWeighting(
     // integratedAerosolOpticalDepthWeighting ---------------------------------------------------------------- |
     // Integrated-source aerosol optical-depth Jacobian weighting for one Fourier term.                        |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`radiative_transfer/labos/reflectance.zig` `calcAerosolOpticalDepthWeightingWithBasis`.    |
     //                                                                                                         |
     // math                                                                                                    |
     //   AOD weighting = integral(interface weighting dz) / aerosol layer thickness                            |
@@ -572,8 +563,6 @@ pub fn integratedAerosolLayerPressureShiftWeighting(
     // integratedAerosolLayerPressureShiftWeighting ---------------------------------------------------------- |
     // Integrated-source aerosol layer-pressure weighting for one Fourier term.                                |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`radiative_transfer/labos/reflectance.zig`                                                 |
     //   `calcAerosolLayerPressureShiftWeightingWithBasis`.                                                    |
     //                                                                                                         |
     // math                                                                                                    |
@@ -1164,10 +1153,8 @@ fn absorptionInterfaceWeighting(
     geometry: *const gauss_angles.GaussGeometry,
 ) f64 {
     // absorptionInterfaceWeighting -------------------------------------------------------------------------  |
-    // Absorption interface weighting used by old integrated-source aerosol Jacobian columns.                  |
+    // Absorption interface weighting used by integrated-source aerosol Jacobian columns.                      |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`radiative_transfer/labos/reflectance.zig` `absorptionInterfaceWeighting`.                 |
     //   `earth_radius_km = 6371.0` is the same spherical direct-beam radius used by that routine.             |
     //                                                                                                         |
     // math                                                                                                    |
@@ -1226,7 +1213,7 @@ fn absorptionInterfaceWeighting(
 
 pub fn fourierWeight(fourier_index: usize, relative_azimuth_rad: f64) f64 {
     // fourierWeight ----------------------------------------------------------------------------------------- |
-    // Return c_m for the old LABOS Fourier reflectance sum.                                                   |
+    // Return c_m for the LABOS Fourier reflectance sum.                                                       |
     // --------------------------------------------------------------------------------------------------------|
     if (fourier_index == 0) return 1.0;
     return 2.0 * math.cos(@as(f64, @floatFromInt(fourier_index)) * relative_azimuth_rad);
@@ -1242,7 +1229,7 @@ pub fn weightedFourierContribution(
     // Apply Fourier azimuthal weight, perturbation hook, telemetry, and tail-stop decision.                   |
     //                                                                                                         |
     // instrumentation                                                                                         |
-    //   Perturbation can replace the weighted term and the tail decision at the same old LABOS gates.         |
+    //   Perturbation can replace the weighted term and the tail decision at the same LABOS gates.             |
     // --------------------------------------------------------------------------------------------------------|
     const weight = fourierWeight(fourier_index, relative_azimuth_rad);
     const coord = Perturbation.Coord{ .fourier_index = @intCast(fourier_index) };
@@ -1287,7 +1274,7 @@ pub fn fourierTailBreak(
     coord: Perturbation.Coord,
 ) bool {
     // fourierTailBreak -------------------------------------------------------------------------------------- |
-    // Evaluate the old Fourier tail-stop gate.                                                                |
+    // Evaluate the Fourier tail-stop gate.                                                                    |
     //                                                                                                         |
     // tradeoff: Fourier tail stop                                                                             |
     // Stop the Fourier loop when the current unweighted term is below the configured epsilon.                 |

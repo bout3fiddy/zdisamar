@@ -1,8 +1,8 @@
 // internal.zig -----------------------------------------------------------------------------------------------|
-// Test access router for WP2 setup, asset, cache, common, input, and instrumentation modules.                 |
+// Test access router for O2 A setup, asset, cache, common, input, and instrumentation modules.                |
 //                                                                                                             |
 // Product callers use src/root.zig. Tests use this file to reach small table builders without widening API.   |
-// public package surface before later work packages add public forward-model entry points.                    |
+// public package surface before later modules add public forward-model entry points.                          |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const public = @import("root.zig");
@@ -120,7 +120,7 @@ pub const cache = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // optics -----------------------------------------------------------------------------------------------------|
-// Namespace-only test import wrapper for WP3 optical-depth fill modules.                                      |
+// Namespace-only test import wrapper for O2 A optical-depth fill modules.                                     |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 0 B (0.000 KiB), align: 1 B                                                                           |
@@ -158,7 +158,7 @@ pub const output = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // retrieval --------------------------------------------------------------------------------------------------|
-// Namespace-only test import wrapper for WP5 retrieval state-space and result owners.                         |
+// Namespace-only test import wrapper for O2 A retrieval state-space and result owners.                        |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 0 B (0.000 KiB), align: 1 B                                                                           |
@@ -174,7 +174,7 @@ pub const retrieval = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // rtm --------------------------------------------------------------------------------------------------------|
-// Namespace-only test import wrapper for WP3 RTM state modules.                                               |
+// Namespace-only test import wrapper for O2 A RTM state modules.                                              |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 0 B (0.000 KiB), align: 1 B                                                                           |
@@ -200,7 +200,7 @@ pub const rtm = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // spectrum ---------------------------------------------------------------------------------------------------|
-// Namespace-only test import wrapper for WP3 spectrum sampling and exact wavelength modules.                  |
+// Namespace-only test import wrapper for O2 A spectrum sampling and exact wavelength modules.                 |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 0 B (0.000 KiB), align: 1 B                                                                           |
@@ -220,7 +220,7 @@ pub const spectrum = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // validation -------------------------------------------------------------------------------------------------|
-// Namespace-only test import wrapper for validation-only WP3 metric helpers.                                  |
+// Namespace-only test import wrapper for validation-only O2 A metric helpers.                                 |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 0 B (0.000 KiB), align: 1 B                                                                           |

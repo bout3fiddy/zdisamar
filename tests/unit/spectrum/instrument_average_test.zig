@@ -186,7 +186,7 @@ test "assembleReflectanceResults converts calibrated radiance and irradiance to 
     try std.testing.expectApproxEqAbs(reflectance[1], summary.max_reflectance, 0.0);
 }
 
-test "assembleReflectanceResults keeps old denominator floor and clamp summary" {
+test "assembleReflectanceResults keeps denominator floor and clamp summary" {
     const radiance = [_]radiance_results.RadianceResult{
         .{ .radiance = 1.0 },
         .{ .radiance = 2.0 },

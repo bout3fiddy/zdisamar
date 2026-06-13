@@ -9,11 +9,6 @@ const lu_diagonal_floor: f64 = 1.0e-30;
 // matrix_12x10.zig -----------------------------------------------------------------------------------------  |
 // Small LABOS matrix multiply kernels used by layer-doubling and q-series transport.                          |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Trace gates, generic multiply/q-series shape, and the fixed 12x10 loops are ported from main:             |
-//   `src/forward_model/radiative_transfer/labos/matrix.zig` `smul`, `smulInto`, `qseries`,                    |
-//   `qseriesFromProduct`, `smul12x10Into`, and `qseriesFromProduct12x10Into`.                                 |
-//                                                                                                             |
 // math                                                                                                        |
 //   C[i,j] = sum over Gaussian k of A[i,k] * B[k,j].                                                          |
 //   Q(AB) uses the LABOS repeated-scattering transform:                                                       |
@@ -37,7 +32,7 @@ const lu_diagonal_floor: f64 = 1.0e-30;
 // storage                                                                                                     |
 //   Mat is row-major with a fixed backing array. The active matrix dimension n controls the live prefix; the  |
 //   Gaussian block is the n_gauss x n_gauss upper-left block. Fixed kernels spell out constant loop bounds    |
-//   and diagonal indexes so the compiler sees the same small kernel shape as old LABOS.                       |
+//   and diagonal indexes so the compiler sees the same small kernel shape as LABOS.                           |
 //                                                                                                             |
 // instrumentation                                                                                             |
 //   This file contains no Trace/Telemetry/Perturbation calls. Instrumentation lives at the branch owner in    |
@@ -1301,7 +1296,7 @@ fn qseriesFromProduct12x10Into(noalias result: *Mat, noalias ab: *const Mat) voi
     // Works on the same gg/gx/xg/xx split but keeps loop bounds constant for the compiler.                    |
     //                                                                                                         |
     // The first 10 rows/columns are Gaussian streams. The final 2 are extra directions.                       |
-    // The 10x10 Gaussian block is LU-factorized, inverted, then used to fill all four blocks:                 |
+    // The 10x10 Gaussian block is LU-factorized, inverted, then uses fill all four blocks:                    |
     //                                                                                                         |
     //   Q_gg = inverse(I - AB_gg) - I                                                                         |
     //   Q_gx = inverse(I - AB_gg) * AB_gx                                                                     |

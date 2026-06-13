@@ -5,10 +5,9 @@ const internal = @import("internal");
 const gauss_angles = internal.rtm.gauss_angles;
 
 // GeometryValueEvidence --------------------------------------------------------------------------------------|
-// Old LABOS Geometry.init values for n_gauss=4, solar_mu=0.58, view_mu=0.64.                                  |
+// Canonical LABOS geometry values for n_gauss=4, solar_mu=0.58, view_mu=0.64.                                 |
 //                                                                                                             |
 // source                                                                                                      |
-//   Derived from main:`radiative_transfer/labos/types.zig` Geometry.init formula and the WP2 ported           |
 //   DISAMAR Gauss division-point helper.                                                                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -60,7 +59,7 @@ const geometry_4_stream_evidence = GeometryValueEvidence{
     .dmu_min_4_5 = 4.16666666666666300,
 };
 
-test "gauss geometry preserves old LABOS layout constants" {
+test "gauss geometry preserves LABOS layout constants" {
     try std.testing.expectEqual(@as(usize, 10), gauss_angles.max_gauss);
     try std.testing.expectEqual(@as(usize, 2), gauss_angles.max_extra_streams);
     try std.testing.expectEqual(@as(usize, 12), gauss_angles.max_stream_count);
@@ -68,7 +67,7 @@ test "gauss geometry preserves old LABOS layout constants" {
     try std.testing.expectEqual(@as(usize, 2832), @sizeOf(gauss_angles.GaussGeometry));
 }
 
-test "gauss geometry builds old stream order and pair factors" {
+test "gauss geometry builds stream order and pair factors" {
     const geometry = try gauss_angles.GaussGeometry.init(4, 0.58, 0.64);
 
     try std.testing.expectEqual(@as(usize, 4), geometry.n_gauss);

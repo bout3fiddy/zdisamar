@@ -6,7 +6,7 @@ const units = @import("../common/units.zig");
 const Allocator = std.mem.Allocator;
 
 // VendorO2ABranchMetadata ------------------------------------------------------------------------------------|
-// Optional O2 A branch metadata used to partition weak lines from LISA strong-line sidecars.                  |
+// Optional O2 A branch metadata uses partition weak lines from LISA strong-line sidecars.                     |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 7 B (0.007 KiB), align: 1 B                                                                           |
@@ -24,7 +24,7 @@ const VendorO2ABranchMetadata = struct {
 
     fn present(self: VendorO2ABranchMetadata) bool {
         // VendorO2ABranchMetadata.present --------------------------------------------------------------------|
-        // True when all old O2 A branch fields were recovered from the HITRAN row.                            |
+        // True when all O2 A branch fields were recovered from the HITRAN row.                                |
         // ----------------------------------------------------------------------------------------------------|
         return self.branch_ic1 != null and self.branch_ic2 != null and self.rotational_nf != null;
     }
@@ -32,7 +32,7 @@ const VendorO2ABranchMetadata = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // readers.zig ------------------------------------------------------------------------------------------------|
-// Asset readers for WP2 setup tables.                                                                         |
+// Asset readers for O2 A setup tables.                                                                        |
 //                                                                                                             |
 // file boundary                                                                                               |
 //   Runtime file I/O and text parsing live here. Setup builders call these functions before table assembly.   |
@@ -105,7 +105,7 @@ pub const O2LineAssetRow = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // O2StrongLineAssetRow ---------------------------------------------------------------------------------------|
-// Parsed LISA SDF strong-line sidecar row used by the old O2 line-mixing route.                               |
+// Parsed LISA SDF strong-line sidecar row used by the O2 line-mixing route.                                   |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 96 B (0.094 KiB), align: 8 B                                                                          |
@@ -141,7 +141,7 @@ pub const O2StrongLineAssetRow = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // O2RelaxationMatrixAsset ------------------------------------------------------------------------------------|
-// Parsed LISA RMF relaxation matrix used by the old O2 line-mixing route.                                     |
+// Parsed LISA RMF relaxation matrix used by the O2 line-mixing route.                                         |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 40 B (0.039 KiB), align: 8 B                                                                          |
@@ -323,12 +323,10 @@ pub fn readO2LineList(allocator: Allocator, path: []const u8) ![]O2LineAssetRow 
 
 pub fn readO2StrongLines(allocator: Allocator, path: []const u8) ![]O2StrongLineAssetRow {
     // readO2StrongLines --------------------------------------------------------------------------------------|
-    // Parse LISA SDF rows into old O2 strong-line sidecar fields.                                             |
+    // Parse LISA SDF rows into O2 strong-line sidecar fields.                                                 |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Mirrors main:`src/input/reference_data/ingest/reference_assets_formats.zig` parseLisaSdf.             |
     //   The vendor HWT0 column is syntax-checked. The reference half-width is reconstructed from the LISA     |
-    //   branch token and Nf value, matching old HITRANModule::readSDF behavior.                               |
+    //   branch token and Nf value, matching HITRANModule::readSDF behavior.                                   |
     // --------------------------------------------------------------------------------------------------------|
     const bytes = try readSmallFile(allocator, path, 1 << 20);
     defer allocator.free(bytes);
@@ -375,8 +373,6 @@ pub fn readO2RelaxationMatrix(allocator: Allocator, path: []const u8) !O2Relaxat
     // readO2RelaxationMatrix ---------------------------------------------------------------------------------|
     // Parse the LISA RMF sidecar into row-major W(T0) and BW matrices.                                        |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Mirrors main:`src/input/reference_data/ingest/reference_assets_formats.zig` parseLisaRmf and          |
     //   LoadedAsset.toSpectroscopyRelaxationMatrix. The row count must form a square dense matrix.            |
     // --------------------------------------------------------------------------------------------------------|
     const bytes = try readSmallFile(allocator, path, 1 << 20);
@@ -419,10 +415,8 @@ pub fn readCiaTable(allocator: Allocator, path: []const u8) !CiaAsset {
     // readCiaTable -------------------------------------------------------------------------------------------|
     // Parse the BIRA header scale and every numeric polynomial coefficient row into an owned table.           |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Mirrors main:`src/input/reference_data/ingest/reference_assets_formats.zig`                           |
     //   parseBiraCiaPolynomial: the vendor count is a lower-bound check, while appended O2 A rows after the   |
-    //   nominal count are retained because the old optical route samples them at 758-776 nm.                  |
+    //   nominal count are retained because the optical route samples them at 758-776 nm.                      |
     // --------------------------------------------------------------------------------------------------------|
     const bytes = try readSmallFile(allocator, path, 4 << 20);
     defer allocator.free(bytes);
@@ -564,7 +558,7 @@ fn parseOptionalFixedInt(comptime T: type, value: []const u8) !?T {
 
 fn inlineVendorO2ABranchMetadata(line: []const u8) !VendorO2ABranchMetadata {
     // inlineVendorO2ABranchMetadata --------------------------------------------------------------------------|
-    // Recover optional old O2 A branch metadata from fixed HITRAN vendor columns when present.                |
+    // Recover optional O2 A branch metadata from fixed HITRAN vendor columns when present.                    |
     // --------------------------------------------------------------------------------------------------------|
     if (line.len < 85) return .{};
 
@@ -581,7 +575,7 @@ fn inlineVendorO2ABranchMetadata(line: []const u8) !VendorO2ABranchMetadata {
 
 fn fallbackVendorO2ABranchMetadata(line: []const u8, center_wavenumber_cm1: f64) !?VendorO2ABranchMetadata {
     // fallbackVendorO2ABranchMetadata ------------------------------------------------------------------------|
-    // Reconstruct old O2 A P-branch metadata from trailing branch tokens when fixed fields are absent.        |
+    // Reconstruct O2 A P-branch metadata from trailing branch tokens when fixed fields are absent.            |
     // --------------------------------------------------------------------------------------------------------|
     if (center_wavenumber_cm1 < 12800.0 or center_wavenumber_cm1 > 13250.0) return null;
 
@@ -630,7 +624,6 @@ fn rotationalIndexFromLisaBranch(branch_token: []const u8, nf_token: []const u8)
 
 fn vendorLisaReferenceHalfWidthCm1(branch_token: []const u8, nf_token: []const u8) !f64 {
     // vendorLisaReferenceHalfWidthCm1 ------------------------------------------------------------------------|
-    // Port the old LISA SDF half-width reconstruction before strong-line temperature scaling.                 |
     // --------------------------------------------------------------------------------------------------------|
     if (branch_token.len != 1) return errors.Error.InvalidAssetFormat;
 

@@ -33,7 +33,7 @@ const spectrum_run = @import("spectrum/spectrum_run.zig");
 const Allocator = std.mem.Allocator;
 
 // root.zig ---------------------------------------------------------------------------------------------------|
-// Public explicit-dataflow surface for the O2 A forward model.                                                |
+// Public explicit row surface for the O2 A forward model.                                                     |
 //                                                                                                             |
 // public flow                                                                                                 |
 //   defaultO2Case -> prepareO2A -> warmO2ASessionMemory -> runO2AWithSessionMemory                            |
@@ -143,10 +143,8 @@ pub fn runO2AWithSessionMemory(
     // runO2AWithSessionMemory --------------------------------------------------------------------------------|
     // Run the O2 A product-grid spectrum through caller-retained session memory and return owned arrays.      |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Root-level orchestration follows the Stage 3 parity route in                                          |
+    //   Root-level orchestration follows the integrated transport route in                                    |
     //   `tests/unit/spectrum/spectrum_run_test.zig`                                                           |
-    //   and ports main:`src/root.zig` `runO2AWithSessionStorage` as a narrow facade over explicit owners.     |
     // --------------------------------------------------------------------------------------------------------|
     const prepared_solve_config = try controls.prepareSolveConfig(solve_config);
     const prepared_rows = try prepareSessionRows(allocator, session, prepared, prepared_solve_config);
@@ -180,8 +178,8 @@ pub fn runO2AWithSessionMemory(
     defer allocator.free(product_radiance);
 
     // runO2A sampling policy ---------------------------------------------------------------------------------|
-    // WP1 `baseline-main-56605387/internal-dump-baseline.json` records the public O2 A route with every       |
-    // product row using integrated radiance and integrated irradiance sampling. WP1                           |
+    // Canonical expected values owned by this repository.                                                     |
+    // product row using integrated radiance and integrated irradiance sampling. O2 A                          |
     // `evidence/python-reference-case-native.json` exposes no Python-native key for calibration arrays, slit  |
     // kernels, or per-channel integration overrides. Keep this policy fixed here;                             |
     // user-configurable controls enter through O2Case JSON and `o2aSolveConfig`.                              |
@@ -266,9 +264,7 @@ pub fn runO2AOptimalEstimation(
     //   support rows and sample them onto the refreshed support grid inside spectrum_run; they do not cache   |
     //   pressure-dependent diagnostic layer rows.                                                             |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/optimal_estimation/retrieval.zig` `runO2A` and `runPreparedO2ACore` onto the          |
-    //   explicit-dataflow forward facade.                                                                     |
+    //   explicit row forward facade.                                                                          |
     // --------------------------------------------------------------------------------------------------------|
     try validateRetrievalControls(retrieval_controls);
 
@@ -403,8 +399,6 @@ pub fn runO2AOptimalEstimationCorrection(
     //   repeated : one product-grid forward/Jacobian evaluation on the sparse correction wavelength axis      |
     //   memory   : result history capacity is 1; the caller's session caches retain RTM/profile rows          |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/optimal_estimation/retrieval.zig` `correctPreparedO2A`; the explicit-dataflow route   |
     //   reuses evaluateRetrievalState for the same state-space normal-system math.                            |
     // --------------------------------------------------------------------------------------------------------|
     try validateRetrievalControls(retrieval_controls);
@@ -521,12 +515,11 @@ pub fn runO2AOptimalEstimationBatch(
     // Run a correctness-first full-physics OE batch over caller-provided start/prior rows.                    |
     //                                                                                                         |
     // boundary                                                                                                |
-    //   This is the single-worker WP5 batch slice. Each start reuses the same public measurement rows and     |
+    //   This is the single-worker O2 A batch slice. Each start reuses the same public measurement rows and    |
     //   prepared case, then copies compact result rows into the run-major BatchResult owner.                  |
     //                                                                                                         |
     // failure model                                                                                           |
     //   OutOfMemory aborts the whole batch. Numerical or control failures mark only that start as failed,     |
-    //   matching main:`src/optimal_estimation/retrieval.zig` `runO2ABatchRange`.                              |
     // --------------------------------------------------------------------------------------------------------|
     try validateRetrievalControls(retrieval_controls);
 
@@ -620,8 +613,6 @@ pub fn runO2AFastmodeOptimalEstimationBatch(
     //   Python owns the fast and correction case construction. Zig receives two prepared O2 A cases, two      |
     //   measurement grids, and config-driven controls; no wavelength counts are hardcoded here.               |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/optimal_estimation/retrieval.zig` `runO2AFastmodeBatch` result combination. Final     |
     //   converged flags keep fast-stage convergence when the correction stage returns ok.                     |
     // --------------------------------------------------------------------------------------------------------|
     if (fast_state_template.len != correction_state_template.len) return error.InvalidStateSpec;
@@ -802,7 +793,7 @@ pub fn buildInstrumentResponse(
 
 pub fn o2aSolveConfig(case: O2Case) SolveConfig {
     // o2aSolveConfig -----------------------------------------------------------------------------------------|
-    // Build the exercised O2 A transport controls used by Stage 2/3 parity evidence.                          |
+    // Build the exercised O2 A transport controls used by integrated transport evidence.                      |
     // --------------------------------------------------------------------------------------------------------|
     return .{
         .derivative_mode = .semi_analytical,
@@ -859,8 +850,6 @@ fn evaluateRetrievalState(
     //   profile-line cache    : reused when exact wavelengths and mode bits match; support-profile values     |
     //                           are sampled onto the refreshed support grid at solve time                     |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Matches main:`src/optimal_estimation/retrieval.zig` evaluateO2AState: state evaluations rebuild       |
     //   state-dependent scene/optical rows while invariant spectroscopy and instrument setup stay retained.   |
     // --------------------------------------------------------------------------------------------------------|
     var case = prepared.case;
@@ -904,7 +893,6 @@ fn writeRetrievalStateToCase(
     // Write active OE scalar values into the case copy used for this iteration.                               |
     //                                                                                                         |
     // pressure placement                                                                                      |
-    //   The pressure state preserves main:`src/optimal_estimation/retrieval.zig` `writeStateToInput`: the     |
     //   target interval takes the new aerosol top/bottom pressures, the adjacent interval boundaries move     |
     //   with it, and no other interval is changed.                                                            |
     // --------------------------------------------------------------------------------------------------------|
@@ -979,7 +967,7 @@ fn prepareSessionRows(
     //                                                                                                         |
     // hot path                                                                                                |
     //   Root prepares SolveConfig once before this boundary. Wavelength workers receive the same sanitized    |
-    //   mask and validated stream/threshold controls, matching the old prepared LABOS execution route.        |
+    //   mask and validated stream/threshold controls, matching the prepared LABOS execution route.            |
     // --------------------------------------------------------------------------------------------------------|
     const sampling_stamp = samplingTableReuseStamp(prepared);
     const table = resolve_sampling_table: {
@@ -1015,7 +1003,7 @@ fn prepareSessionRows(
     const worker_count = spectrum_run.preferredRadianceWorkerCount(dense_count);
     const worker_pool = session.worker_pool.poolForWorkerCount(allocator, worker_count);
 
-    // Public WP4 spectrum runs read support-profile sigma rows through optics interpolation. They do not read
+    // Public O2 A spectrum runs read support-profile sigma rows through optics interpolation. They do not read
     // diagnostic layer-node rows or profile-line d_sigma/dT rows for the current surface/aerosol Jacobian set.
     // Both mode bits remain in the reuse stamp so future diagnostic or temperature-profile paths split caches.
     const build_layer_values = false;
@@ -1100,8 +1088,6 @@ fn samplingTableReuseStamp(prepared: *const PreparedO2A) hashing.ReuseStamp {
     // Identify the retained wavelength-sampling table before root decides whether to rebuild instrument       |
     // kernels.                                                                                                |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports the cache boundary from main:`src/forward_model/instrument_grid/grid_calculation/simulate.zig`  |
     //   `wavelengthPlanKey`. The explicit route hashes only inputs consumed by                                |
     //   `spectrum/sampling_table.zig`: product grid, explicit measured wavelengths, instrument sampling       |
     //   knobs, and the O2 line centers/strengths that split adaptive intervals.                               |
@@ -1221,7 +1207,7 @@ fn updateHashThresholds(hasher: *std.hash.Wyhash, thresholds: controls.Performan
 
 fn viewAngles(case: O2Case) solve.ViewAngles {
     // viewAngles ---------------------------------------------------------------------------------------------|
-    // Convert public geometry degrees into the old forward-layer transport angle convention.                  |
+    // Convert public geometry degrees into the forward-layer transport angle convention.                      |
     // --------------------------------------------------------------------------------------------------------|
     const solar_sin = @sin(std.math.degreesToRadians(case.geometry.solar_zenith_deg));
     const view_sin = @sin(std.math.degreesToRadians(case.geometry.viewing_zenith_deg));
@@ -1229,7 +1215,6 @@ fn viewAngles(case: O2Case) solve.ViewAngles {
         .solar_mu = @sqrt(@max(1.0 - solar_sin * solar_sin, 0.0)),
         .view_mu = @sqrt(@max(1.0 - view_sin * view_sin, 0.0)),
 
-        // main:`forward_model/optical_properties/state_build/forward_layers.zig` transport_dphi_rad.
         .relative_azimuth_rad = std.math.degreesToRadians(@mod(180.0 - case.geometry.relative_azimuth_deg, 360.0)),
     };
 }

@@ -15,8 +15,7 @@ const solar_table = internal.setup.solar_table;
 const spectrum_run = internal.spectrum.spectrum_run;
 
 const public_python_baseline_path =
-    "scratch/refactor/2026-06-11-explicit-dataflow-refactor/evidence/" ++
-    "baseline-main-56605387/public-python-baseline.json";
+    "scratch/o2a-canonical-evidence/public-python-baseline.json";
 const max_public_python_baseline_bytes: usize = 160 << 20;
 
 test "preferred radiance worker count keeps small batches single-threaded" {
@@ -223,7 +222,7 @@ test "radianceAtWavelength checks caller-owned row shapes" {
     );
 }
 
-test "radianceAtWavelength matches old-route Stage 2 transport probes" {
+test "radianceAtWavelength matches canonical transport probes" {
     const allocator = std.testing.allocator;
     var tables = try internal.setup.o2_run_tables.buildO2RunTables(
         allocator,
@@ -236,7 +235,7 @@ test "radianceAtWavelength matches old-route Stage 2 transport probes" {
     var profile_lines = try internal.cache.profile_line_memory.buildO2ProfileLineValuesForWavelengths(
         allocator,
         internal.input.defaults.referenceCase(),
-        stage2_transport_wavelengths_nm[0..],
+        transport_probe_wavelengths_nm[0..],
     );
     defer profile_lines.deinit(allocator);
 
@@ -265,7 +264,6 @@ test "radianceAtWavelength matches old-route Stage 2 transport probes" {
         .solar_mu = @sqrt(@max(1.0 - solar_sin * solar_sin, 0.0)),
         .view_mu = @sqrt(@max(1.0 - view_sin * view_sin, 0.0)),
 
-        // main:`forward_model/optical_properties/state_build/forward_layers.zig` transport_dphi_rad.
         .relative_azimuth_rad = std.math.degreesToRadians(@mod(180.0 - case.geometry.relative_azimuth_deg, 360.0)),
     };
     const solve_config = controls.SolveConfig{
@@ -290,7 +288,7 @@ test "radianceAtWavelength matches old-route Stage 2 transport probes" {
         true,
     );
 
-    for (stage2_transport_evidence, 0..) |expected, wavelength_index| {
+    for (transport_probe_evidence, 0..) |expected, wavelength_index| {
         const solar_irradiance = try solar_lookup.irradianceAtWavelength(
             tables.solar,
             expected.wavelength_nm,
@@ -330,12 +328,12 @@ test "radianceAtWavelength matches old-route Stage 2 transport probes" {
         try std.testing.expectApproxEqRel(
             expected.aerosol_optical_depth_radiance_jacobian,
             actual.jacobian[0],
-            stage2_radiance_jacobian_relative_tolerance,
+            radiance_jacobian_relative_tolerance,
         );
         try std.testing.expectApproxEqRel(
             expected.aerosol_layer_mid_pressure_radiance_jacobian,
             actual.jacobian[1],
-            stage2_radiance_jacobian_relative_tolerance,
+            radiance_jacobian_relative_tolerance,
         );
         try std.testing.expectApproxEqAbs(
             expected.aerosol_optical_depth_reflectance_jacobian,
@@ -350,9 +348,9 @@ test "radianceAtWavelength matches old-route Stage 2 transport probes" {
     }
 }
 
-test "runO2ASpectrum matches old-route Stage 3 full spectrum" {
+test "runO2ASpectrum matches canonical full spectrum" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
-    if (!std.process.hasEnvVarConstant("ZDISAMAR_RUN_STAGE3_PARITY")) return error.SkipZigTest;
+    if (!std.process.hasEnvVarConstant("ZDISAMAR_RUN_FULL_SPECTRUM_CANONICAL")) return error.SkipZigTest;
 
     const allocator = std.testing.allocator;
     const evidence_bytes = try std.fs.cwd().readFileAlloc(
@@ -452,7 +450,6 @@ test "runO2ASpectrum matches old-route Stage 3 full spectrum" {
         .solar_mu = @sqrt(@max(1.0 - solar_sin * solar_sin, 0.0)),
         .view_mu = @sqrt(@max(1.0 - view_sin * view_sin, 0.0)),
 
-        // main:`forward_model/optical_properties/state_build/forward_layers.zig` transport_dphi_rad.
         .relative_azimuth_rad = std.math.degreesToRadians(@mod(180.0 - case.geometry.relative_azimuth_deg, 360.0)),
     };
     const solve_config = controls.SolveConfig{
@@ -514,7 +511,7 @@ test "runO2ASpectrum matches old-route Stage 3 full spectrum" {
 
     try std.testing.expectEqual(expected.sample_count, summary.sample_count);
     for (0..expected.sample_count) |index| {
-        try expectStage3ApproxAbs(
+        try expectFullSpectrumApproxAbs(
             "wavelength_nm",
             index,
             expected.wavelength_nm[index],
@@ -522,7 +519,7 @@ test "runO2ASpectrum matches old-route Stage 3 full spectrum" {
             product_wavelengths[index],
             0.0,
         );
-        try expectStage3ApproxAbs(
+        try expectFullSpectrumApproxAbs(
             "reflectance",
             index,
             expected.wavelength_nm[index],
@@ -530,7 +527,7 @@ test "runO2ASpectrum matches old-route Stage 3 full spectrum" {
             reflectance[index],
             1.0e-13,
         );
-        try expectStage3ApproxAbs(
+        try expectFullSpectrumApproxAbs(
             "radiance",
             index,
             expected.wavelength_nm[index],
@@ -538,7 +535,7 @@ test "runO2ASpectrum matches old-route Stage 3 full spectrum" {
             product_radiance[index].radiance,
             1.0e-13,
         );
-        try expectStage3ApproxAbs(
+        try expectFullSpectrumApproxAbs(
             "irradiance",
             index,
             expected.wavelength_nm[index],
@@ -546,7 +543,7 @@ test "runO2ASpectrum matches old-route Stage 3 full spectrum" {
             product_irradiance[index],
             1.0e-13,
         );
-        try expectStage3ApproxAbs(
+        try expectFullSpectrumApproxAbs(
             "aerosol_optical_depth_reflectance_jacobian",
             index,
             expected.wavelength_nm[index],
@@ -554,7 +551,7 @@ test "runO2ASpectrum matches old-route Stage 3 full spectrum" {
             jacobian[index][jacobian_states.stateIndex(.aerosol_optical_depth)],
             1.0e-13,
         );
-        try expectStage3ApproxAbs(
+        try expectFullSpectrumApproxAbs(
             "aerosol_layer_mid_pressure_hpa_reflectance_jacobian",
             index,
             expected.wavelength_nm[index],
@@ -1032,8 +1029,8 @@ test "postprocessAndAssembleProductRows rejects inconsistent product shapes" {
     );
 }
 
-// Stage2TransportEvidence ------------------------------------------------------------------------------------|
-// Old-route one-wavelength transport result at one WP3 probe wavelength.                                      |
+// TransportProbeEvidence -------------------------------------------------------------------------------------|
+// One-wavelength transport result at one O2 A probe wavelength.                                               |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 64 B (0.062 KiB), align: 8 B                                                                          |
@@ -1047,7 +1044,7 @@ test "postprocessAndAssembleProductRows rejects inconsistent product shapes" {
 // [40..47] aerosol_layer_mid_pressure_reflectance_jacobian    : f64                                           |
 // [48..55] aerosol_optical_depth_radiance_jacobian            : f64                                           |
 // [56..63] aerosol_layer_mid_pressure_radiance_jacobian       : f64                                           |
-const Stage2TransportEvidence = struct {
+const TransportProbeEvidence = struct {
     wavelength_nm: f64,
     surface_albedo: f64,
     reflectance: f64,
@@ -1059,11 +1056,8 @@ const Stage2TransportEvidence = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// Source: scratch/refactor/2026-06-11-explicit-dataflow-refactor/transport-baseline-probe.zig,
-// importing main worktree `src/internal.zig` at 56605387621046dbeb11cca9ed268a3505a19104 and writing
-// evidence/baseline-main-56605387/transport-probe-baseline.json. The scratch probe uses old
-// configuredForwardInput + executePreparedWithLabosWorkspace + spectral_forward radiance scaling source order.
-const stage2_transport_evidence = [_]Stage2TransportEvidence{
+// Canonical expected values for configured forward inputs, transport, and radiance scaling.
+const transport_probe_evidence = [_]TransportProbeEvidence{
     .{
         .wavelength_nm = 758.0,
         .surface_albedo = 0.2,
@@ -1116,14 +1110,13 @@ const stage2_transport_evidence = [_]Stage2TransportEvidence{
     },
 };
 
-const stage2_transport_wavelengths_nm = [_]f64{ 758.0, 760.0, 765.0, 767.0, 776.0 };
+const transport_probe_wavelengths_nm = [_]f64{ 758.0, 760.0, 765.0, 767.0, 776.0 };
 
-// Radiance Jacobian rows are scaled diagnostics; the Stage 2 gate above keeps
-// reflectance/radiance outputs at 1e-13 and checks Jacobians in reflectance
-// space at 1e-13 absolute.
-const stage2_radiance_jacobian_relative_tolerance: f64 = 1.0e-10;
+// Radiance Jacobian rows are scaled diagnostics; reflectance/radiance outputs use
+// 1e-13 tolerances and Jacobians also pin reflectance space at 1e-13 absolute.
+const radiance_jacobian_relative_tolerance: f64 = 1.0e-10;
 
-fn expectStage3ApproxAbs(
+fn expectFullSpectrumApproxAbs(
     column_name: []const u8,
     index: usize,
     wavelength_nm: f64,
@@ -1131,12 +1124,12 @@ fn expectStage3ApproxAbs(
     actual: f64,
     tolerance: f64,
 ) !void {
-    // expectStage3ApproxAbs ----------------------------------------------------------------------------------|
-    // Report the exact full-spectrum row and column when the opt-in Stage 3 parity gate fails.                |
+    // expectFullSpectrumApproxAbs ----------------------------------------------------------------------------|
+    // Report the exact full-spectrum row and column when the opt-in integrated transport gate fails.          |
     // --------------------------------------------------------------------------------------------------------|
     if (!std.math.approxEqAbs(f64, expected, actual, tolerance)) {
         std.debug.print(
-            "Stage 3 mismatch column={s} index={} wavelength_nm={d:.17} expected={d:.17} actual={d:.17} " ++
+            "full-spectrum mismatch column={s} index={} wavelength_nm={d:.17} expected={d:.17} actual={d:.17} " ++
                 "delta={e:.17} tolerance={e:.17}\n",
             .{ column_name, index, wavelength_nm, expected, actual, actual - expected, tolerance },
         );
@@ -1145,7 +1138,7 @@ fn expectStage3ApproxAbs(
 }
 
 // PublicPythonBaselineEvidence -------------------------------------------------------------------------------|
-// Minimal typed view of the WP1 public Python baseline JSON used by the Stage 3 spectrum parity test.         |
+// Minimal typed view of the O2 A public Python baseline JSON used by the full-spectrum canonical test.        |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 312 B (0.305 KiB), align: 8 B                                                                         |
@@ -1158,23 +1151,23 @@ const PublicPythonBaselineEvidence = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // PublicPythonSpectrumEvidence -------------------------------------------------------------------------------|
-// Spectrum run variants recorded by the WP1 public Python baseline.                                           |
+// Spectrum run variants recorded by the O2 A public Python baseline.                                          |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 312 B (0.305 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
-// [  0..103] one_shot      : Stage3SpectrumEvidence                                                           |
-// [104..207] session_first : Stage3SpectrumEvidence                                                           |
-// [208..311] session_second: Stage3SpectrumEvidence                                                           |
+// [  0..103] one_shot      : FullSpectrumEvidence                                                             |
+// [104..207] session_first : FullSpectrumEvidence                                                             |
+// [208..311] session_second: FullSpectrumEvidence                                                             |
 const PublicPythonSpectrumEvidence = struct {
-    one_shot: Stage3SpectrumEvidence,
-    session_first: Stage3SpectrumEvidence = .{},
-    session_second: Stage3SpectrumEvidence = .{},
+    one_shot: FullSpectrumEvidence,
+    session_first: FullSpectrumEvidence = .{},
+    session_second: FullSpectrumEvidence = .{},
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// Stage3SpectrumEvidence -------------------------------------------------------------------------------------|
+// FullSpectrumEvidence ---------------------------------------------------------------------------------------|
 // One 701-row public spectrum and its two requested reflectance-Jacobian columns.                             |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -1185,20 +1178,20 @@ const PublicPythonSpectrumEvidence = struct {
 // [16..31] radiance             : []f64                                                                       |
 // [32..47] irradiance           : []f64                                                                       |
 // [48..63] reflectance          : []f64                                                                       |
-// [64..95] reflectance_jacobian : Stage3ReflectanceJacobianEvidence                                           |
+// [64..95] reflectance_jacobian : FullSpectrumReflectanceJacobianEvidence                                     |
 // [96..103] sample_count        : usize                                                                       |
-const Stage3SpectrumEvidence = struct {
+const FullSpectrumEvidence = struct {
     wavelength_nm: []f64 = &.{},
     radiance: []f64 = &.{},
     irradiance: []f64 = &.{},
     reflectance: []f64 = &.{},
-    reflectance_jacobian: Stage3ReflectanceJacobianEvidence = .{},
+    reflectance_jacobian: FullSpectrumReflectanceJacobianEvidence = .{},
     sample_count: usize = 0,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// Stage3ReflectanceJacobianEvidence --------------------------------------------------------------------------|
-// Two reflectance-space Jacobian columns requested by the WP1 public baseline capture.                        |
+// FullSpectrumReflectanceJacobianEvidence --------------------------------------------------------------------|
+// Two reflectance-space Jacobian columns requested by the O2 A public baseline capture.                       |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 32 B (0.031 KiB), align: 8 B                                                                          |
@@ -1206,7 +1199,7 @@ const Stage3SpectrumEvidence = struct {
 // memory                                                                                                      |
 // [ 0..15] aerosol_optical_depth            : []f64                                                           |
 // [16..31] aerosol_layer_mid_pressure_hpa   : []f64                                                           |
-const Stage3ReflectanceJacobianEvidence = struct {
+const FullSpectrumReflectanceJacobianEvidence = struct {
     aerosol_optical_depth: []f64 = &.{},
     aerosol_layer_mid_pressure_hpa: []f64 = &.{},
 };
@@ -1249,7 +1242,7 @@ fn prepareTransportWorkers(
 
 fn testTotalOpticalDepth(layers: []const layer_depths.LayerOptics) f64 {
     // testTotalOpticalDepth ----------------------------------------------------------------------------------|
-    // Test-local mirror of the scalar direct-route reduction used by old LABOS.                               |
+    // Test-local uses of the scalar direct-route reduction used by LABOS.                                     |
     // --------------------------------------------------------------------------------------------------------|
     var total: f64 = 0.0;
     for (layers) |layer| total += layer.total_optical_depth;

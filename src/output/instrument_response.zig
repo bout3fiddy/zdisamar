@@ -19,8 +19,6 @@ const integration_mode_disamar_hr_grid: u32 = 2;
 //   The builder projects spectrum sampling kernels into the fixed Python C ABI row order. It owns no C        |
 //   handles and performs no transport; it expands only instrument-kernel support samples.                     |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/output/instrument_response.zig`. The old diagnostic route builds kernels at the caller's  |
 //   requested nominal wavelengths, then rounds only `nominal_index` back to the product grid.                 |
 //                                                                                                             |
 // row order                                                                                                   |
@@ -215,7 +213,7 @@ fn supportWidthNm(
     support_count: usize,
 ) f64 {
     // supportWidthNm -----------------------------------------------------------------------------------------|
-    // Match the old diagnostic width: last selected offset minus first selected offset.                       |
+    // Match the diagnostic width: last selected offset minus first selected offset.                           |
     // --------------------------------------------------------------------------------------------------------|
     if (support_count <= 1) return 0.0;
     return kernel.offsetNm(storage, support_count - 1) - kernel.offsetNm(storage, 0);

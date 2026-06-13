@@ -5,11 +5,8 @@ const Allocator = std.mem.Allocator;
 // forward_worker_pool.zig ------------------------------------------------------------------------------------|
 // Session-retained helper-thread owner for O2 A forward prefetch phases.                                      |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/forward_model/instrument_grid/grid_calculation/storage.zig`                               |
-//   `ProductStorage.forwardPrefetchPool`. The old route keeps helper threads on the product/session storage   |
-//   object, reuses them when the requested helper count is unchanged, and returns null on pool init failure   |
-//   so callers use the raw-spawn path.                                                                        |
+//   Helper threads stay on product/session storage, reuse unchanged helper counts, and return null on pool    |
+//   init failure so callers use the raw-spawn path.                                                           |
 //                                                                                                             |
 // ownership boundary                                                                                          |
 //   This owner stores threads and an optional borrowed shared pool only. It stores no case, wavelength,       |
@@ -58,13 +55,13 @@ pub const ForwardWorkerPool = struct {
         worker_count: usize,
     ) ?*std.Thread.Pool {
         // ForwardWorkerPool.poolForWorkerCount ---------------------------------------------------------------|
-        // Return the old-route helper pool for a requested total worker count.                                |
+        // Return the canonical helper pool for a requested total worker count.                                |
         //                                                                                                     |
         // route                                                                                               |
         //   worker_count <= 1        -> serial caller, no pool                                                |
         //   shared_pool set          -> borrowed pool wins                                                    |
         //   owned helper count match -> reuse retained pool                                                   |
-        //   mismatch                 -> destroy old pool, create worker_count - 1 helper threads              |
+        //   mismatch                 -> destroy pool, create worker_count - 1 helper threads                  |
         //                                                                                                     |
         // fallback                                                                                            |
         //   Pool init failure returns null. The later caller still computes the same chunks through raw       |

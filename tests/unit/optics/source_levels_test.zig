@@ -10,8 +10,8 @@ const source_levels = internal.optics.source_levels;
 const allocator = std.testing.allocator;
 
 // SourceLevelEvidence ----------------------------------------------------------------------------------------|
-// Test-local RTM source-level evidence from WP1 baseline artifact:                                            |
-// scratch/refactor/2026-06-11-explicit-dataflow-refactor/evidence/baseline-main-56605387/                     |
+// Test-local RTM source-level evidence from O2 A baseline artifact:                                           |
+// Canonical expected values owned by this repository.                                                         |
 // internal-dump-baseline.json .probe_forward_inputs[].rtm_quadrature_levels.                                  |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |

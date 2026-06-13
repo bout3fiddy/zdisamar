@@ -21,14 +21,11 @@ pub const Error = error{
 // transport_worker_memory.zig ------------------------------------------------------------------------------  |
 // Reusable optics and LABOS transport buffers for one forward worker.                                         |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Splits the old main:`src/forward_model/radiative_transfer/labos/workspace.zig` allocation owner into a    |
-//   named WP3 memory block. The borrowed row types come from the new `rtm/*` modules.                         |
+//   named O2 A memory block. The borrowed row types come from the new `rtm/*` modules.                        |
 //                                                                                                             |
 // ownership boundary                                                                                          |
 //   This owner stores arrays, geometry reuse state, and validity flags only. Optical-property values, phase   |
 //   coefficients, RTM controls, source-level rows, and angles stay visible in worker function signatures.     |
-//   Geometry reuse follows main:`src/forward_model/radiative_transfer/labos/workspace.zig`: the retained      |
 //   geometry is valid until n_gauss, solar_mu, or view_mu changes, and the solve layer invalidates dependent  |
 //   PLM rows only on that miss.                                                                               |
 //                                                                                                             |
@@ -356,7 +353,7 @@ pub const TransportWorkerMemoryCollection = struct {
         //                                                                                                     |
         // memory                                                                                              |
         //   TransportWorkerMemory is moved by value. Its slices still point at owned child allocations, so    |
-        //   the old outer slice is freed without deinitializing the moved workers.                            |
+        //   the outer slice is freed without deinitializing the moved workers.                                |
         // ----------------------------------------------------------------------------------------------------|
         if (self.workers.len >= worker_count) return;
 

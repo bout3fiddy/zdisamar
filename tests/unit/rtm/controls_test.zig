@@ -6,7 +6,7 @@ const controls = internal.rtm.controls;
 const jacobian_states = internal.rtm.jacobian_states;
 
 // ControlLayoutEvidence --------------------------------------------------------------------------------------|
-// Compile-time layout pins for transport control rows copied from the old RTM control contract.               |
+// Compile-time layout pins for transport control rows copied from the RTM control contract.                   |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 24 B (0.023 KiB), align: 8 B                                                                          |
@@ -28,7 +28,7 @@ const old_route_layout = ControlLayoutEvidence{
     .solve_config_size = 80,
 };
 
-test "transport controls keep old route defaults and layout" {
+test "transport controls keep current route defaults and layout" {
     const thresholds = controls.PerformanceThresholds{};
     const default_controls = controls.TransportControls.default_vendor;
 
@@ -55,7 +55,7 @@ test "transport controls keep old route defaults and layout" {
     try std.testing.expect(default_controls.renorm_phase_function);
 }
 
-test "transport controls validate old LABOS stream counts" {
+test "transport controls validate LABOS stream counts" {
     for ([_]u16{ 4, 6, 8, 16, 20 }) |n_streams| {
         try (controls.TransportControls{ .n_streams = n_streams }).validate();
     }
@@ -95,7 +95,7 @@ test "performance thresholds reject nonpositive and nonfinite gates" {
     );
 }
 
-test "performance thresholds keep old order and Fourier cap helpers" {
+test "performance thresholds keep order and Fourier cap helpers" {
     const uncapped = controls.PerformanceThresholds{};
     const capped = controls.PerformanceThresholds{
         .num_orders_max = 7,

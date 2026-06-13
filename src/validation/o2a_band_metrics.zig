@@ -4,76 +4,74 @@ pub const Error = error{
     ShapeMismatch,
 };
 
-// o2a_band_metrics.zig ------------------------------------------------------------------------------------- |
-// Validation-only O2 A spectrum comparison metrics.                                                          |
-//                                                                                                            |
-// provenance                                                                                                 |
-//   Ports the pure metric rows and O2 A morphology windows from main:                                        |
-//   `src/input/o2a_reference/metrics.zig`. The old runtime-case wrappers stay out of WP3 because they depend |
-//   on broad pre-refactor scene, prepared-optics, and product owners.                                        |
-//                                                                                                            |
-// boundary                                                                                                   |
-//   Callers pass explicit wavelength/reflectance vectors and reference rows. This module performs no file    |
-//   I/O, imports no RTM/product modules, and stores no retained state.                                       |
-//                                                                                                            |
-// O2 A windows                                                                                               |
-//   blue wing 755.0..758.5 nm; trough 760.2..761.1 nm; rebound 761.8..762.4 nm; mid band 763.8..765.5 nm;    |
-//   red wing 769.5..771.0 nm.                                                                                |
-// -----------------------------------------------------------------------------------------------------------|
+// o2a_band_metrics.zig -------------------------------------------------------------------------------------  |
+// Validation-only O2 A spectrum comparison metrics.                                                           |
+//                                                                                                             |
+//   `src/input/o2a_reference/metrics.zig`. The runtime-case wrappers stay out of O2 A because they depend     |
+//   on broad pre-refactor scene, prepared-optics, and product owners.                                         |
+//                                                                                                             |
+// boundary                                                                                                    |
+//   Callers pass explicit wavelength/reflectance vectors and reference rows. This module performs no file     |
+//   I/O, imports no RTM/product modules, and stores no retained state.                                        |
+//                                                                                                             |
+// O2 A windows                                                                                                |
+//   blue wing 755.0..758.5 nm; trough 760.2..761.1 nm; rebound 761.8..762.4 nm; mid band 763.8..765.5 nm;     |
+//   red wing 769.5..771.0 nm.                                                                                 |
+// ----------------------------------------------------------------------------------------------------------- |
 
-// ReferenceSample ------------------------------------------------------------------------------------------ |
-// One retained O2 A reference reflectance sample.                                                            |
-//                                                                                                            |
-// layout(64-bit)                                                                                             |
-// size: 16 B (0.016 KiB), align: 8 B                                                                         |
-//                                                                                                            |
-// memory                                                                                                     |
-// [0.. 7] wavelength_nm : f64                                                                                |
-// [8..15] reflectance   : f64                                                                                |
+// ReferenceSample ------------------------------------------------------------------------------------------  |
+// One retained O2 A reference reflectance sample.                                                             |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0.. 7] wavelength_nm : f64                                                                                 |
+// [8..15] reflectance   : f64                                                                                 |
 pub const ReferenceSample = struct {
     wavelength_nm: f64,
     reflectance: f64,
 };
-// -----------------------------------------------------------------------------------------------------------|
+// ----------------------------------------------------------------------------------------------------------- |
 
-// RangeExtremum -------------------------------------------------------------------------------------------- |
-// Wavelength and value for a range-local minimum or maximum.                                                 |
-//                                                                                                            |
-// layout(64-bit)                                                                                             |
-// size: 16 B (0.016 KiB), align: 8 B                                                                         |
-//                                                                                                            |
-// memory                                                                                                     |
-// [0.. 7] wavelength_nm : f64                                                                                |
-// [8..15] value         : f64                                                                                |
+// RangeExtremum --------------------------------------------------------------------------------------------  |
+// Wavelength and value for a range-local minimum or maximum.                                                  |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0.. 7] wavelength_nm : f64                                                                                 |
+// [8..15] value         : f64                                                                                 |
 pub const RangeExtremum = struct {
     wavelength_nm: f64,
     value: f64,
 };
-// -----------------------------------------------------------------------------------------------------------|
+// ----------------------------------------------------------------------------------------------------------- |
 
-// ComparisonMetrics ---------------------------------------------------------------------------------------- |
-// Scalar residual, correlation, and O2 A morphology metrics for one generated/reference comparison.          |
-//                                                                                                            |
-// layout(64-bit)                                                                                             |
-// size: 120 B (0.117 KiB), align: 8 B                                                                        |
-//                                                                                                            |
-// memory                                                                                                     |
-// [  0..  7] sample_count                      : usize                                                       |
-// [  8.. 15] nonzero_sample_count              : usize                                                       |
-// [ 16.. 23] mean_signed_difference            : f64                                                         |
-// [ 24.. 31] mean_abs_difference               : f64                                                         |
-// [ 32.. 39] root_mean_square_difference       : f64                                                         |
-// [ 40.. 47] max_abs_difference                : f64                                                         |
-// [ 48.. 55] max_abs_difference_wavelength_nm  : f64                                                         |
-// [ 56.. 63] correlation                       : f64                                                         |
-// [ 64.. 71] blue_wing_mean_difference         : f64                                                         |
-// [ 72.. 79] trough_wavelength_difference_nm   : f64                                                         |
-// [ 80.. 87] trough_value_difference           : f64                                                         |
-// [ 88.. 95] rebound_peak_difference           : f64                                                         |
-// [ 96..103] mid_band_mean_difference          : f64                                                         |
-// [104..111] red_wing_mean_difference          : f64                                                         |
-// [112..112] exact_match_within_zero_tolerance : bool                                                        |
-// [113..119] trailing padding                  : 7 B                                                         |
+// ComparisonMetrics ----------------------------------------------------------------------------------------  |
+// Scalar residual, correlation, and O2 A morphology metrics for one generated/reference comparison.           |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 120 B (0.117 KiB), align: 8 B                                                                         |
+//                                                                                                             |
+// memory                                                                                                      |
+// [  0..  7] sample_count                      : usize                                                        |
+// [  8.. 15] nonzero_sample_count              : usize                                                        |
+// [ 16.. 23] mean_signed_difference            : f64                                                          |
+// [ 24.. 31] mean_abs_difference               : f64                                                          |
+// [ 32.. 39] root_mean_square_difference       : f64                                                          |
+// [ 40.. 47] max_abs_difference                : f64                                                          |
+// [ 48.. 55] max_abs_difference_wavelength_nm  : f64                                                          |
+// [ 56.. 63] correlation                       : f64                                                          |
+// [ 64.. 71] blue_wing_mean_difference         : f64                                                          |
+// [ 72.. 79] trough_wavelength_difference_nm   : f64                                                          |
+// [ 80.. 87] trough_value_difference           : f64                                                          |
+// [ 88.. 95] rebound_peak_difference           : f64                                                          |
+// [ 96..103] mid_band_mean_difference          : f64                                                          |
+// [104..111] red_wing_mean_difference          : f64                                                          |
+// [112..112] exact_match_within_zero_tolerance : bool                                                         |
+// [113..119] trailing padding                  : 7 B                                                          |
 pub const ComparisonMetrics = struct {
     sample_count: usize,
     nonzero_sample_count: usize,
@@ -91,25 +89,25 @@ pub const ComparisonMetrics = struct {
     mid_band_mean_difference: f64,
     red_wing_mean_difference: f64,
 };
-// -----------------------------------------------------------------------------------------------------------|
+// ----------------------------------------------------------------------------------------------------------- |
 
-// TrendTolerances ------------------------------------------------------------------------------------------ |
-// Absolute tolerances used when classifying metric trends against a baseline.                                |
-//                                                                                                            |
-// layout(64-bit)                                                                                             |
-// size: 80 B (0.078 KiB), align: 8 B                                                                         |
-//                                                                                                            |
-// memory                                                                                                     |
-// [ 0.. 7] mean_abs_difference_abs             : f64                                                         |
-// [ 8..15] root_mean_square_difference_abs     : f64                                                         |
-// [16..23] max_abs_difference_abs              : f64                                                         |
-// [24..31] correlation_abs                     : f64                                                         |
-// [32..39] blue_wing_mean_difference_abs       : f64                                                         |
-// [40..47] trough_wavelength_difference_nm_abs : f64                                                         |
-// [48..55] trough_value_difference_abs         : f64                                                         |
-// [56..63] rebound_peak_difference_abs         : f64                                                         |
-// [64..71] mid_band_mean_difference_abs        : f64                                                         |
-// [72..79] red_wing_mean_difference_abs        : f64                                                         |
+// TrendTolerances ------------------------------------------------------------------------------------------  |
+// Absolute tolerances used when classifying metric trends against a baseline.                                 |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 80 B (0.078 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 7] mean_abs_difference_abs             : f64                                                          |
+// [ 8..15] root_mean_square_difference_abs     : f64                                                          |
+// [16..23] max_abs_difference_abs              : f64                                                          |
+// [24..31] correlation_abs                     : f64                                                          |
+// [32..39] blue_wing_mean_difference_abs       : f64                                                          |
+// [40..47] trough_wavelength_difference_nm_abs : f64                                                          |
+// [48..55] trough_value_difference_abs         : f64                                                          |
+// [56..63] rebound_peak_difference_abs         : f64                                                          |
+// [64..71] mid_band_mean_difference_abs        : f64                                                          |
+// [72..79] red_wing_mean_difference_abs        : f64                                                          |
 pub const TrendTolerances = struct {
     mean_abs_difference_abs: f64,
     root_mean_square_difference_abs: f64,
@@ -122,7 +120,7 @@ pub const TrendTolerances = struct {
     mid_band_mean_difference_abs: f64 = 1.0e-6,
     red_wing_mean_difference_abs: f64 = 1.0e-6,
 };
-// -----------------------------------------------------------------------------------------------------------|
+// ----------------------------------------------------------------------------------------------------------- |
 
 pub const TrendState = enum {
     improved,
@@ -137,23 +135,23 @@ pub const AssessmentVerdict = enum {
     nonzero_fail,
 };
 
-// AssessmentTrend ------------------------------------------------------------------------------------------ |
-// Per-metric trend states after comparing current metrics to a baseline.                                     |
-//                                                                                                            |
-// layout(64-bit)                                                                                             |
-// size: 10 B (0.010 KiB), align: 1 B                                                                         |
-//                                                                                                            |
-// memory                                                                                                     |
-// [0..0] mean_abs_difference             : TrendState                                                        |
-// [1..1] root_mean_square_difference     : TrendState                                                        |
-// [2..2] max_abs_difference              : TrendState                                                        |
-// [3..3] correlation                     : TrendState                                                        |
-// [4..4] blue_wing_mean_difference       : TrendState                                                        |
-// [5..5] trough_wavelength_difference_nm : TrendState                                                        |
-// [6..6] trough_value_difference         : TrendState                                                        |
-// [7..7] rebound_peak_difference         : TrendState                                                        |
-// [8..8] mid_band_mean_difference        : TrendState                                                        |
-// [9..9] red_wing_mean_difference        : TrendState                                                        |
+// AssessmentTrend ------------------------------------------------------------------------------------------  |
+// Per-metric trend states after comparing current metrics to a baseline.                                      |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 10 B (0.010 KiB), align: 1 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0..0] mean_abs_difference             : TrendState                                                         |
+// [1..1] root_mean_square_difference     : TrendState                                                         |
+// [2..2] max_abs_difference              : TrendState                                                         |
+// [3..3] correlation                     : TrendState                                                         |
+// [4..4] blue_wing_mean_difference       : TrendState                                                         |
+// [5..5] trough_wavelength_difference_nm : TrendState                                                         |
+// [6..6] trough_value_difference         : TrendState                                                         |
+// [7..7] rebound_peak_difference         : TrendState                                                         |
+// [8..8] mid_band_mean_difference        : TrendState                                                         |
+// [9..9] red_wing_mean_difference        : TrendState                                                         |
 pub const AssessmentTrend = struct {
     mean_abs_difference: TrendState,
     root_mean_square_difference: TrendState,
@@ -166,22 +164,22 @@ pub const AssessmentTrend = struct {
     mid_band_mean_difference: TrendState,
     red_wing_mean_difference: TrendState,
 };
-// -----------------------------------------------------------------------------------------------------------|
+// ----------------------------------------------------------------------------------------------------------- |
 
-// AssessmentOutcome ---------------------------------------------------------------------------------------- |
-// Final validation verdict plus metric-by-metric trend states.                                               |
-//                                                                                                            |
-// layout(64-bit)                                                                                             |
-// size: 11 B (0.011 KiB), align: 1 B                                                                         |
-//                                                                                                            |
-// memory                                                                                                     |
-// [ 0.. 0] verdict : AssessmentVerdict                                                                       |
-// [ 1..10] trend   : AssessmentTrend                                                                         |
+// AssessmentOutcome ----------------------------------------------------------------------------------------  |
+// Final validation verdict plus metric-by-metric trend states.                                                |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 11 B (0.011 KiB), align: 1 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0.. 0] verdict : AssessmentVerdict                                                                        |
+// [ 1..10] trend   : AssessmentTrend                                                                          |
 pub const AssessmentOutcome = struct {
     verdict: AssessmentVerdict,
     trend: AssessmentTrend,
 };
-// -----------------------------------------------------------------------------------------------------------|
+// ----------------------------------------------------------------------------------------------------------- |
 
 pub fn meanVectorInRange(
     wavelengths_nm: []const f64,
@@ -189,9 +187,9 @@ pub fn meanVectorInRange(
     start_nm: f64,
     end_nm: f64,
 ) Error!f64 {
-    // meanVectorInRange ------------------------------------------------------------------------------------ |
-    // Average generated values inside one inclusive wavelength window.                                       |
-    // -------------------------------------------------------------------------------------------------------|
+    // meanVectorInRange ------------------------------------------------------------------------------------  |
+    // Average generated values inside one inclusive wavelength window.                                        |
+    // ------------------------------------------------------------------------------------------------------- |
     if (wavelengths_nm.len != values.len) return error.ShapeMismatch;
 
     var sum: f64 = 0.0;
@@ -210,9 +208,9 @@ pub fn minVectorInRange(
     start_nm: f64,
     end_nm: f64,
 ) Error!RangeExtremum {
-    // minVectorInRange ------------------------------------------------------------------------------------- |
-    // Return the minimum generated value inside one inclusive wavelength window.                             |
-    // -------------------------------------------------------------------------------------------------------|
+    // minVectorInRange -------------------------------------------------------------------------------------  |
+    // Return the minimum generated value inside one inclusive wavelength window.                              |
+    // ------------------------------------------------------------------------------------------------------- |
     if (wavelengths_nm.len != values.len) return error.ShapeMismatch;
 
     var best = std.math.inf(f64);
@@ -233,9 +231,9 @@ pub fn maxVectorInRange(
     start_nm: f64,
     end_nm: f64,
 ) Error!f64 {
-    // maxVectorInRange ------------------------------------------------------------------------------------- |
-    // Return the maximum generated value inside one inclusive wavelength window.                             |
-    // -------------------------------------------------------------------------------------------------------|
+    // maxVectorInRange -------------------------------------------------------------------------------------  |
+    // Return the maximum generated value inside one inclusive wavelength window.                              |
+    // ------------------------------------------------------------------------------------------------------- |
     if (wavelengths_nm.len != values.len) return error.ShapeMismatch;
 
     var best = -std.math.inf(f64);
@@ -251,9 +249,9 @@ pub fn meanReferenceInRange(
     start_nm: f64,
     end_nm: f64,
 ) f64 {
-    // meanReferenceInRange --------------------------------------------------------------------------------- |
-    // Average reference reflectance inside one inclusive wavelength window.                                  |
-    // -------------------------------------------------------------------------------------------------------|
+    // meanReferenceInRange ---------------------------------------------------------------------------------  |
+    // Average reference reflectance inside one inclusive wavelength window.                                   |
+    // ------------------------------------------------------------------------------------------------------- |
     var sum: f64 = 0.0;
     var count: usize = 0;
     for (reference) |sample| {
@@ -267,9 +265,9 @@ pub fn meanReferenceInRange(
 }
 
 pub fn minReferenceInRange(reference: []const ReferenceSample, start_nm: f64, end_nm: f64) RangeExtremum {
-    // minReferenceInRange ---------------------------------------------------------------------------------- |
-    // Return the minimum reference reflectance inside one inclusive wavelength window.                       |
-    // -------------------------------------------------------------------------------------------------------|
+    // minReferenceInRange ----------------------------------------------------------------------------------  |
+    // Return the minimum reference reflectance inside one inclusive wavelength window.                        |
+    // ------------------------------------------------------------------------------------------------------- |
     var best = std.math.inf(f64);
     var best_wavelength = start_nm;
     for (reference) |sample| {
@@ -283,9 +281,9 @@ pub fn minReferenceInRange(reference: []const ReferenceSample, start_nm: f64, en
 }
 
 pub fn maxReferenceInRange(reference: []const ReferenceSample, start_nm: f64, end_nm: f64) f64 {
-    // maxReferenceInRange ---------------------------------------------------------------------------------- |
-    // Return the maximum reference reflectance inside one inclusive wavelength window.                       |
-    // -------------------------------------------------------------------------------------------------------|
+    // maxReferenceInRange ----------------------------------------------------------------------------------  |
+    // Return the maximum reference reflectance inside one inclusive wavelength window.                        |
+    // ------------------------------------------------------------------------------------------------------- |
     var best = -std.math.inf(f64);
     for (reference) |sample| {
         if (sample.wavelength_nm < start_nm or sample.wavelength_nm > end_nm) continue;
@@ -299,9 +297,9 @@ pub fn interpolateVector(
     values: []const f64,
     target_wavelength_nm: f64,
 ) Error!f64 {
-    // interpolateVector ------------------------------------------------------------------------------------ |
-    // Linearly interpolate generated reflectance at a reference wavelength.                                  |
-    // -------------------------------------------------------------------------------------------------------|
+    // interpolateVector ------------------------------------------------------------------------------------  |
+    // Linearly interpolate generated reflectance at a reference wavelength.                                   |
+    // ------------------------------------------------------------------------------------------------------- |
     if (wavelengths_nm.len != values.len) return error.ShapeMismatch;
     if (wavelengths_nm.len == 0) return 0.0;
     if (target_wavelength_nm <= wavelengths_nm[0]) return values[0];
@@ -322,27 +320,27 @@ pub fn interpolateVector(
 }
 
 pub fn compareLowerIsBetter(current: f64, baseline: f64, tolerance: f64) TrendState {
-    // compareLowerIsBetter --------------------------------------------------------------------------------- |
-    // Classify residual metrics where lower values improve validation agreement.                             |
-    // -------------------------------------------------------------------------------------------------------|
+    // compareLowerIsBetter ---------------------------------------------------------------------------------  |
+    // Classify residual metrics where lower values improve validation agreement.                              |
+    // ------------------------------------------------------------------------------------------------------- |
     if (current < baseline - tolerance) return .improved;
     if (current > baseline + tolerance) return .regressed;
     return .flat;
 }
 
 pub fn compareHigherIsBetter(current: f64, baseline: f64, tolerance: f64) TrendState {
-    // compareHigherIsBetter -------------------------------------------------------------------------------- |
-    // Classify agreement metrics where higher values improve validation agreement.                           |
-    // -------------------------------------------------------------------------------------------------------|
+    // compareHigherIsBetter --------------------------------------------------------------------------------  |
+    // Classify agreement metrics where higher values improve validation agreement.                            |
+    // ------------------------------------------------------------------------------------------------------- |
     if (current > baseline + tolerance) return .improved;
     if (current < baseline - tolerance) return .regressed;
     return .flat;
 }
 
 pub fn compareAbsoluteCeiling(current: f64, ceiling: f64) TrendState {
-    // compareAbsoluteCeiling ------------------------------------------------------------------------------- |
-    // Classify morphology residuals against absolute allowed ceilings.                                       |
-    // -------------------------------------------------------------------------------------------------------|
+    // compareAbsoluteCeiling -------------------------------------------------------------------------------  |
+    // Classify morphology residuals against absolute allowed ceilings.                                        |
+    // ------------------------------------------------------------------------------------------------------- |
     if (current > ceiling) return .regressed;
     return .flat;
 }
@@ -353,9 +351,9 @@ pub fn assessAgainstBaseline(
     tolerances: TrendTolerances,
     allowed_to_fail: bool,
 ) AssessmentOutcome {
-    // assessAgainstBaseline -------------------------------------------------------------------------------- |
-    // Apply the old validation verdict rules to current metrics and a retained baseline row.                 |
-    // -------------------------------------------------------------------------------------------------------|
+    // assessAgainstBaseline --------------------------------------------------------------------------------  |
+    // Apply the validation verdict rules to current metrics and a retained baseline row.                      |
+    // ------------------------------------------------------------------------------------------------------- |
     const trend: AssessmentTrend = .{
         .mean_abs_difference = compareLowerIsBetter(
             current.mean_abs_difference,
@@ -461,9 +459,9 @@ pub fn computeComparisonMetrics(
     reference: []const ReferenceSample,
     zero_tolerance_abs: f64,
 ) Error!ComparisonMetrics {
-    // computeComparisonMetrics ----------------------------------------------------------------------------- |
-    // Compare generated reflectance to reference rows using the old residual and O2 A morphology metrics.    |
-    // -------------------------------------------------------------------------------------------------------|
+    // computeComparisonMetrics -----------------------------------------------------------------------------  |
+    // Compare generated reflectance to reference rows using the residual and O2 A morphology metrics.         |
+    // ------------------------------------------------------------------------------------------------------- |
     if (wavelengths_nm.len != reflectance.len) return error.ShapeMismatch;
 
     const blue_wing_mean = try meanVectorInRange(wavelengths_nm, reflectance, 755.0, 758.5);

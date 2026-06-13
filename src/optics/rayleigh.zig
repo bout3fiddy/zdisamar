@@ -1,11 +1,9 @@
 const std = @import("std");
 
-// rayleigh.zig ---------------------------------------------------------------------------------------------- |
+// rayleigh.zig -----------------------------------------------------------------------------------------------|
 // Dry-air Rayleigh scattering helpers for gas-scattering optical-depth and phase-coefficient paths.           |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ported from main:`src/input/reference/rayleigh.zig`. Constants and formulas stay byte-for-byte in value   |
-//   space because WP3 optical-depth parity reads Rayleigh scattering directly from atmospheric-budget rows.   |
+//   O2 A optical-depth checks read Rayleigh scattering directly from atmospheric-budget rows.                 |
 //                                                                                                             |
 // math                                                                                                        |
 //   sigma_um_inv = 1000 / max(wavelength_nm, 1)                                                               |
@@ -39,7 +37,7 @@ fn kingFactorO2(wavelength_nm: f64) f64 {
 
 fn kingFactorAir(wavelength_nm: f64) f64 {
     // kingFactorAir ----------------------------------------------------------------------------------------- |
-    // Return the dry-air mixture King factor using the old reference gas fractions.                           |
+    // Return the dry-air mixture King factor using the reference gas fractions.                               |
     // ------------------------------------------------------------------------------------------------------- |
     const weighted_sum =
         fraction_n2 * kingFactorN2(wavelength_nm) +
@@ -51,7 +49,7 @@ fn kingFactorAir(wavelength_nm: f64) f64 {
 
 fn refractiveIndexDryAir(wavelength_nm: f64) f64 {
     // refractiveIndexDryAir --------------------------------------------------------------------------------- |
-    // Evaluate the old dry-air refractive-index fit at one wavelength.                                        |
+    // Evaluate the dry-air refractive-index fit at one wavelength.                                            |
     // ------------------------------------------------------------------------------------------------------- |
     const sigma_um_inv = 1000.0 / @max(wavelength_nm, 1.0);
     const sigma_sq = sigma_um_inv * sigma_um_inv;
@@ -75,8 +73,6 @@ pub fn phaseCoefficient2(wavelength_nm: f64) f64 {
     // Convert wavelength-dependent dry-air depolarization into the Rayleigh l=2 phase coefficient consumed    |
     // by LABOS source and non-integrated scattering paths.                                                    |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/forward_model/radiative_transfer/labos/phase_function.zig`                            |
     //   `get_ph2_rayleigh`.                                                                                   |
     //                                                                                                         |
     // math                                                                                                    |

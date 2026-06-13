@@ -4,7 +4,7 @@ const internal = @import("internal");
 
 const phase_timing = internal.rtm.phase_timing;
 
-test "phase timing rows keep old LABOS memory layout" {
+test "phase timing rows keep LABOS memory layout" {
     try std.testing.expectEqual(false, phase_timing.enabled);
 
     try std.testing.expectEqual(@as(usize, 16), @sizeOf(phase_timing.Counter));
@@ -72,7 +72,7 @@ test "disabled phase timing workspace calls are no-ops" {
 
 fn expectTimingOffsets() !void {
     // expectTimingOffsets ----------------------------------------------------------------------------------- |
-    // Pin the old `labos/phase_timing.zig` Timing field order used by retained trace JSON.                    |
+    // Pin the `labos/phase_timing.zig` Timing field order used by retained trace JSON.                        |
     // --------------------------------------------------------------------------------------------------------|
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(phase_timing.Timing, "execute"));
     try std.testing.expectEqual(@as(usize, 16), @offsetOf(phase_timing.Timing, "attenuation_fill"));

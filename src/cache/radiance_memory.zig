@@ -14,11 +14,6 @@ pub const Error = error{
 // radiance_memory.zig --------------------------------------------------------------------------------------- |
 // Allocation home for exact radiance wavelengths and dense radiance results.                                  |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Splits old `ProductStorage.forward_miss_plan` and `ProductStorage.forward_results` from main:             |
-//   `src/forward_model/instrument_grid/grid_calculation/storage.zig`. The old names were                      |
-//   `OwnedForwardMissPlan` and `ForwardIntegratedSample`; new names describe the retained data directly.      |
-//                                                                                                             |
 // ownership boundary                                                                                          |
 //   This memory object owns reusable arrays only. It stores no physics controls, no solar table, no profile   |
 //   line values, and no transport settings.                                                                   |

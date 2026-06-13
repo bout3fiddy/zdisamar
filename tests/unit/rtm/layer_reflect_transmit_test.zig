@@ -13,7 +13,7 @@ const rows = internal.rtm.rows;
 
 const tangent_step: f64 = 1.0e-5;
 
-test "layer-doubling decision keeps old layout" {
+test "layer-doubling decision keeps layout" {
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(layer_rt.LayerDoublingDecision));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(layer_rt.LayerDoublingDecision));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(layer_rt.LayerDoublingDecision, "start_optical_depth"));
@@ -32,7 +32,7 @@ test "layer-doubling decision skips non-multiple and weak layers" {
     try expectDoublingDecision(equal_threshold, 2.5, 0, false);
 }
 
-test "layer-doubling decision matches old split selection loops" {
+test "layer-doubling decision matches split selection loops" {
     const normal = layer_rt.classifyLayerDoubling(.multiple, 0.1, 4.0, 0.4, 1.6);
     try expectDoublingDecision(normal, 0.125, 5, true);
     try std.testing.expect(normal.start_optical_depth * 0.4 < 0.1);
@@ -137,7 +137,7 @@ test "Gaussian block trace matches scalar reference for generic and fixed paths"
     );
 }
 
-test "attenuation square matches old layer-doubling support path" {
+test "attenuation square matches layer-doubling support path" {
     var generic = rows.Vec.zero(6);
     fillAttenuationWithSentinel(&generic, 6, 0.123);
     layer_rt.squareAttenuation(6, &generic);
@@ -288,7 +288,7 @@ test "layer row builder matches phase kernel and single scatter without doubling
     }
 }
 
-test "layer tangent rows match old central-difference route" {
+test "layer tangent rows match central-difference route" {
     const geometry = try gauss_angles.GaussGeometry.init(4, 0.58, 0.64);
     const phase = testPhaseTable();
     const rayleigh2: f64 = 0.48;
@@ -383,7 +383,7 @@ test "layer doubling matches scalar q-skipped reference for generic stream count
 }
 
 // TestLayerArgs --------------------------------------------------------------------------------------------- |
-// Small fixture row used to build deterministic layer optics values.                                          |
+// Small fixture row uses build deterministic layer optics values.                                             |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 24 B (0.023 KiB), align: 8 B                                                                          |
@@ -419,7 +419,7 @@ fn testLayer(args: TestLayerArgs) layer_depths.LayerOptics {
 
 fn testLayerWithAerosolTangent(args: TestLayerArgs) layer_depths.LayerOptics {
     // testLayerWithAerosolTangent --------------------------------------------------------------------------- |
-    // Build a deterministic optics row with old non-integrated AOD tangent lanes.                             |
+    // Build a deterministic optics row with non-integrated AOD tangent lanes.                                 |
     // --------------------------------------------------------------------------------------------------------|
     var layer = testLayer(args);
     jacobian_states.set(&layer.optical_depth_jacobian, .aerosol_optical_depth, 0.30);
@@ -453,7 +453,6 @@ fn centralDifferenceLayerRt(
     basis: *const phase_basis.FourierPlmBasis,
 ) rows.LayerRT {
     // centralDifferenceLayerRt ------------------------------------------------------------------------------ |
-    // Test reference for main:`labos/layers.zig` `calcRTlayersTangentIntoWithBasis`.                          |
     // --------------------------------------------------------------------------------------------------------|
     const plus_layers = [_]layer_depths.LayerOptics{
         perturbedLayer(layer, state, tangent_step),
@@ -508,7 +507,7 @@ fn perturbedLayer(
     signed_step: f64,
 ) layer_depths.LayerOptics {
     // perturbedLayer ---------------------------------------------------------------------------------------- |
-    // Apply the old finite-difference perturbation to the scalar layer optical variables.                     |
+    // Apply the finite-difference perturbation to the scalar layer optical variables.                         |
     // --------------------------------------------------------------------------------------------------------|
     var result = layer;
     result.total_optical_depth = @max(
@@ -590,7 +589,7 @@ fn expectDoublingDecision(
     expected_uses_doubling: bool,
 ) !void {
     // expectDoublingDecision -------------------------------------------------------------------------------- |
-    // Compare the old LABOS layer-doubling decision row.                                                      |
+    // Compare the LABOS layer-doubling decision row.                                                          |
     // --------------------------------------------------------------------------------------------------------|
     try std.testing.expectApproxEqAbs(expected_start_optical_depth, actual.start_optical_depth, 1.0e-14);
     try std.testing.expectEqual(expected_doubling_count, actual.doubling_count);
@@ -635,7 +634,7 @@ fn fillPhaseMatrix(matrix: *rows.Mat, n: usize, row_factor: f64, col_factor: f64
 
 fn fillTraceMatrix(matrix: *rows.Mat, n: usize, base: f64) void {
     // fillTraceMatrix --------------------------------------------------------------------------------------- |
-    // Build deterministic row-major matrix values for the old Gaussian diagonal trace helper.                 |
+    // Build deterministic row-major matrix values for the Gaussian diagonal trace helper.                     |
     // --------------------------------------------------------------------------------------------------------|
     matrix.* = rows.Mat.zero(n);
     for (0..n) |row| {
@@ -674,7 +673,7 @@ fn scalarDoubleLayerSkippedProducts(
     attenuation: *rows.Vec,
 ) void {
     // scalarDoubleLayerSkippedProducts -----------------------------------------------------------------------|
-    // Independent reference for the old doubling route when Q, R-D, T-U, and T-D products are skipped.        |
+    // Independent reference for the doubling route when Q, R-D, T-U, and T-D products are skipped.            |
     //                                                                                                         |
     // math                                                                                                    |
     //   U = R*diag(E)                                                                                         |
@@ -712,7 +711,7 @@ fn scalarReflection(
     geometry: *const gauss_angles.GaussGeometry,
 ) rows.Mat {
     // scalarReflection -------------------------------------------------------------------------------------- |
-    // Independent test reference for old LABOS `fillSingleScatterR`.                                          |
+    // Independent test reference for LABOS `fillSingleScatterR`.                                              |
     // --------------------------------------------------------------------------------------------------------|
     var result = rows.Mat.zero(n);
     for (0..n) |row| {
@@ -737,7 +736,7 @@ fn scalarTransmission(
     geometry: *const gauss_angles.GaussGeometry,
 ) rows.Mat {
     // scalarTransmission ------------------------------------------------------------------------------------ |
-    // Independent test reference for old LABOS `fillSingleScatterT`.                                          |
+    // Independent test reference for LABOS `fillSingleScatterT`.                                              |
     // --------------------------------------------------------------------------------------------------------|
     var result = rows.Mat.zero(n);
     for (0..n) |row| {
@@ -758,7 +757,7 @@ fn scalarTransmission(
 
 fn scalarGaussianTrace(n: usize, n_gauss: usize, matrix: *const rows.Mat) f64 {
     // scalarGaussianTrace ----------------------------------------------------------------------------------- |
-    // Independent test reference for old LABOS `gaussTrace`.                                                  |
+    // Independent test reference for LABOS `gaussTrace`.                                                      |
     // --------------------------------------------------------------------------------------------------------|
     var trace: f64 = 0.0;
     for (0..n_gauss) |index| {
@@ -769,7 +768,7 @@ fn scalarGaussianTrace(n: usize, n_gauss: usize, matrix: *const rows.Mat) f64 {
 
 fn expectSquaredPrefix(actual: rows.Vec, n: usize, sentinel: f64) !void {
     // expectSquaredPrefix ----------------------------------------------------------------------------------- |
-    // Compare active attenuation entries after old LABOS `squareAttenuation`; inactive generic storage stays  |
+    // Compare active attenuation entries after LABOS `squareAttenuation`; inactive generic storage stays      |
     // untouched.                                                                                              |
     // --------------------------------------------------------------------------------------------------------|
     for (0..n) |index| {

@@ -5,7 +5,6 @@ const internal = @import("internal");
 const rows = internal.rtm.rows;
 
 // RowsLayoutEvidence ---------------------------------------------------------------------------------------- |
-// Old LABOS row byte sizes from main:`radiative_transfer/labos/types.zig`.                                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 48 B (0.047 KiB), align: 8 B                                                                          |
@@ -36,7 +35,7 @@ const old_rows_layout = RowsLayoutEvidence{
     .ud_local_size = 384,
 };
 
-test "transport rows preserve old LABOS fixed storage sizes" {
+test "transport rows preserve LABOS fixed storage sizes" {
     try std.testing.expectEqual(@as(usize, 10), rows.max_gauss);
     try std.testing.expectEqual(@as(usize, 2), rows.max_extra_streams);
     try std.testing.expectEqual(@as(usize, 12), rows.max_stream_count);
@@ -71,7 +70,7 @@ test "transport matrix rows use active-size row-major indexing" {
     try std.testing.expectEqual(@as(f64, 0.0), identity.data[6 * 6]);
 }
 
-test "transport vector rows expose old zero and get-set behavior" {
+test "transport vector rows expose zero and get-set behavior" {
     var vector = rows.Vec.zero(6);
     for (vector.data) |value| {
         try std.testing.expectEqual(@as(f64, 0.0), value);

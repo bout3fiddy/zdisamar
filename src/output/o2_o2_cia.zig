@@ -11,8 +11,6 @@ const Allocator = std.mem.Allocator;
 //   The builder projects the already-public atmospheric-budget rows into the fixed Python C ABI row order.    |
 //   It does not parse inputs, own C handles, or call transport.                                               |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/output/o2_o2_cia.zig`. The old route derives this table from atmospheric-budget rows so   |
 //   the CIA-focused table and budget table keep identical wavelength/support-row ordering.                    |
 //                                                                                                             |
 // math                                                                                                        |
@@ -110,7 +108,7 @@ pub fn build(
 
 fn rowFromBudget(row: atmospheric_budget.AtmosphericBudgetRow) O2O2CIARow {
     // rowFromBudget ------------------------------------------------------------------------------------------|
-    // Derive the old public CIA-focused columns from one atmospheric-budget row.                              |
+    // Derive the public CIA-focused columns from one atmospheric-budget row.                                  |
     // --------------------------------------------------------------------------------------------------------|
     const pair_path = row.oxygen_number_density_cm3 * row.oxygen_number_density_cm3 * row.path_length_cm;
 
@@ -136,7 +134,7 @@ fn rowFromBudget(row: atmospheric_budget.AtmosphericBudgetRow) O2O2CIARow {
 
 fn safeDivide(numerator: f64, denominator: f64) f64 {
     // safeDivide ---------------------------------------------------------------------------------------------|
-    // Keep old diagnostics finite on zero-path boundary rows and malformed denominator guards.                |
+    // Keep diagnostics finite on zero-path boundary rows and malformed denominator guards.                    |
     // --------------------------------------------------------------------------------------------------------|
     if (denominator <= 0.0 or !std.math.isFinite(denominator)) return 0.0;
     return numerator / denominator;

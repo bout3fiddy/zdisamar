@@ -12,10 +12,6 @@ const Allocator = std.mem.Allocator;
 // o2_session_memory.zig ------------------------------------------------------------------------------------- |
 // Named memory owners retained by one O2 forward session.                                                     |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports the allowed WP3 session-cache shape from the explicit-dataflow plan. Each field names retained      |
-//   data directly instead of recreating the old broad `ProductStorage` or `SpectralEvaluationCache` owner.    |
-//                                                                                                             |
 // ownership boundary                                                                                          |
 //   The session memory owns computed rows and reusable work arrays only. It stores no scene, request, RTM     |
 //   controls, optical settings, or output formatting state.                                                   |

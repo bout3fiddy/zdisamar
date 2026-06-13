@@ -3,7 +3,7 @@ const std = @import("std");
 const Src = std.builtin.SourceLocation;
 
 // ztracy.zig -------------------------------------------------------------------------------------------------|
-// Disabled Tracy-compatible shim selected when builds do not link the real ztracy dependency.                 |
+// Disabled Tracy API shim selected when builds do not link the real ztracy dependency.                        |
 //                                                                                                             |
 // called by                                                                                                   |
 //   trace.zig imports this module through the build.zig module alias when enable_ztracy is false. Product,    |

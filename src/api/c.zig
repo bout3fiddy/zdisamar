@@ -13,8 +13,7 @@ const allocator = std.heap.smp_allocator;
 // boundary                                                                                                    |
 //   Context owns prepared setup tables, reusable O2 session memory, returned spectrum handles, and error      |
 //   text. Compute receives only the public root inputs: PreparedO2A, O2SessionMemory, and SolveConfig.        |
-//   JSON parsing, diagnostic tables, retrieval, and fastmode return typed failures until their WP4/WP5        |
-//   ports land; no parsed control is silently ignored.                                                        |
+//   JSON parsing, diagnostic tables, retrieval, and fastmode return typed failures until their O2 A/O2 A      |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const ZdsStatus = enum(c_int) {
@@ -1312,8 +1311,6 @@ fn optimalEstimationRequestView(
     // optimalEstimationRequestView ---------------------------------------------------------------------------|
     // Convert one public C OE request into native fixed-state rows, then run value-level request validation.  |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports request conversion from main:`src/api/c.zig` `zds_run_o2a_optimal_estimation`; state id 2 is    |
     //   rejected because the refactor fixed the product state space to aerosol optical depth and pressure.    |
     // --------------------------------------------------------------------------------------------------------|
     const resolved_request = request orelse {
@@ -1429,8 +1426,6 @@ fn optimalEstimationMeasurementSlices(
     // optimalEstimationMeasurementSlices ---------------------------------------------------------------------|
     // Borrow caller measurement buffers after null and empty-shape checks.                                    |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/api/c.zig` `optimalEstimationMeasurementSlices`.                                      |
     // --------------------------------------------------------------------------------------------------------|
     const wavelengths_ptr = request.wavelength_nm orelse {
         resolved.setError("null measurement wavelengths");
@@ -1465,8 +1460,6 @@ fn optimalEstimationControls(
     // optimalEstimationControls ------------------------------------------------------------------------------|
     // Copy OE iteration controls and reject impossible iteration counts at the ABI boundary.                  |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/api/c.zig` `optimalEstimationControls`.                                               |
     // --------------------------------------------------------------------------------------------------------|
     if (request.controls.max_iterations == 0 or
         request.controls.max_iterations > zdisamar.optimal_estimation.max_iteration_count)
@@ -2018,7 +2011,7 @@ fn destroyResult(ctx: *Context, result: *CResult) void {
 
 fn unsupported(ctx: ?*Context, message: []const u8) c_int {
     // unsupported --------------------------------------------------------------------------------------------|
-    // Return a typed API-boundary failure for routes that are not ported in this package slice.               |
+    // Return a typed API-boundary failure for routes that are not enabled in this API surface.                |
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
     resolved.setError(message);

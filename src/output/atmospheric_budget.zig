@@ -15,13 +15,11 @@ const Allocator = std.mem.Allocator;
 //   The builder projects existing setup/profile-line/optics rows into the fixed Python C ABI row order. It    |
 //   does not parse inputs, own API handles, or enter transport.                                               |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Ports main:`src/output/atmospheric_budget.zig` for the exercised sublayer/support-row route. The old      |
 //   public table exposes support-row optical-depth components at requested diagnostic wavelengths.            |
 // ------------------------------------------------------------------------------------------------------------|
 
-const support_row_kind_parity_boundary: u32 = 1;
-const support_row_kind_parity_active: u32 = 2;
+const support_row_kind_boundary: u32 = 1;
+const support_row_kind_active: u32 = 2;
 
 const SupportBounds = struct {
     top_altitude_km: f64,
@@ -188,9 +186,9 @@ fn rowFromSupport(
     const boundary = layers.support_path_lengths_cm[support_index] == 0.0;
     const bounds = supportBounds(layers, layer_index, support_index, boundary);
     const support_row_kind = if (boundary)
-        support_row_kind_parity_boundary
+        support_row_kind_boundary
     else
-        support_row_kind_parity_active;
+        support_row_kind_active;
     const aerosol_absorption = @max(
         support.aerosol_optical_depth - support.aerosol_scattering_optical_depth,
         0.0,
@@ -260,7 +258,7 @@ fn supportBounds(
 fn boundaryPressureHpa(layers: atmosphere_layers.LayerGrid, layer_index: usize, support_index: usize) f64 {
     // boundaryPressureHpa ------------------------------------------------------------------------------------|
     // Public diagnostics keep representative pressure in pressure_hpa, but top/bottom pressure on zero-path   |
-    // support rows comes from the old layer-boundary pressure field. Surface/top endpoints therefore keep     |
+    // support rows comes from the layer-boundary pressure field. Surface/top endpoints therefore keep         |
     // configured interval bounds even when the interpolated support pressure differs by a few bits.           |
     // --------------------------------------------------------------------------------------------------------|
     const layer_start: usize = @intCast(layers.layer_support_starts[layer_index]);

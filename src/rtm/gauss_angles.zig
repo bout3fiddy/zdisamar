@@ -15,15 +15,11 @@ pub const Error = error{
 // gauss_angles.zig ------------------------------------------------------------------------------------------ |
 // LABOS stream direction geometry for one solar/viewing angle pair.                                           |
 //                                                                                                             |
-// provenance                                                                                                  |
-//   Field order, constants, and pair-factor formula follow main:                                              |
-//   `src/forward_model/radiative_transfer/labos/types.zig` Geometry.                                          |
-//   The Gauss nodes come from the WP2 ported DISAMAR division-point helper, which is the same old dependency  |
-//   used by Geometry.init through main:`common/math/quadrature/gauss_legendre.zig`.                           |
+//   The Gauss nodes come from the O2 A DISAMAR division-point helper.                                         |
 //                                                                                                             |
 // numerical guards                                                                                            |
 //   direction_pair_floor = 1.0e-12 keeps plus/same-stream denominators finite.                                |
-//   equal_stream_delta = 1.0e-6 selects the old limiting expression for nearly equal stream cosines.          |
+//   equal_stream_delta = 1.0e-6 selects the limiting expression for nearly equal stream cosines.              |
 // ------------------------------------------------------------------------------------------------------------|
 
 // GaussGeometry ----------------------------------------------------------------------------------------------|
@@ -63,7 +59,7 @@ pub const GaussGeometry = struct {
 
     pub fn init(n_gauss: usize, solar_mu: f64, view_mu: f64) Error!GaussGeometry {
         // init ---------------------------------------------------------------------------------------------- |
-        // Build the old LABOS direction grid for one solar/viewing geometry.                                  |
+        // Build the LABOS direction grid for one solar/viewing geometry.                                      |
         //                                                                                                     |
         // direction indexes                                                                                   |
         //   0 .. n_gauss - 1 : Gaussian quadrature streams                                                    |

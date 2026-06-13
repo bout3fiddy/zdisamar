@@ -118,8 +118,6 @@ pub fn scale(vector: Vector, factor: f64) Vector {
     // scale ------------------------------------------------------------------------------------------------- |
     // Multiply every fixed derivative lane by one scalar.                                                     |
     //                                                                                                         |
-    // provenance                                                                                              |
-    //   Ports main:`src/forward_model/jacobian/root.zig` `scale`; spectrum summaries keep the same unmasked   |
     //   fixed-vector scale over the retained two O2 A retrieval lanes.                                        |
     //                                                                                                         |
     // math                                                                                                    |

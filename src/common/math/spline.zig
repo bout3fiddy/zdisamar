@@ -5,7 +5,7 @@ const max_spline_point_count = 256;
 
 // spline.zig -------------------------------------------------------------------------------------------------|
 // Cubic-spline helpers for profile, spectroscopy, CIA, HITRAN partition, and reference-atmosphere sampling.   |
-// The important route is DISAMAR-compatible endpoint-secant interpolation: callers either sample once with    |
+// The important route is DISAMAR endpoint-secant interpolation: callers either sample once with               |
 // temporary stack storage or prepare second derivatives once and reuse them for repeated altitude/wavelength  |
 // reads.                                                                                                      |
 //                                                                                                             |
@@ -14,8 +14,8 @@ const max_spline_point_count = 256;
 //   state_spectroscopy.zig, layer_spectroscopy.zig, and layer_accumulation.zig prepare profile caches         |
 //   cia.zig and hitran_partition_tables.zig sample bounded reference-data windows                             |
 //                                                                                                             |
-// main paths                                                                                                  |
-//   sampleEndpointSecant             builds DISAMAR-compatible endpoint-secant second derivatives             |
+// primary paths                                                                                               |
+//   sampleEndpointSecant             builds DISAMAR endpoint-secant second derivatives                        |
 //   endpointSecantSecondDerivatives  writes second derivatives for one series                                 |
 //   endpointSecantSecondDerivatives3 writes second derivatives for three colocated series                     |
 //   sampleWithSecondDerivatives      samples a precomputed second-derivative spline                           |
@@ -41,7 +41,7 @@ pub const Error = error{
 
 pub fn sampleEndpointSecant(x: []const f64, y: []const f64, target_x: f64) Error!f64 {
     // sampleEndpointSecant -----------------------------------------------------------------------------------|
-    // Builds DISAMAR-compatible endpoint-secant second derivatives and samples one target value.              |
+    // Builds DISAMAR endpoint-secant second derivatives and samples one target value.                         |
     //                                                                                                         |
     // hot path                                                                                                |
     //   repeated : small climatology, CIA, and partition-table reference windows                              |
@@ -70,7 +70,7 @@ pub fn endpointSecantSecondDerivatives(
     second: []f64,
 ) Error!void {
     // endpointSecantSecondDerivatives ------------------------------------------------------------------------|
-    // Writes DISAMAR-compatible endpoint-secant second derivatives for one sampled series.                    |
+    // Writes DISAMAR endpoint-secant second derivatives for one sampled series.                               |
     //                                                                                                         |
     // hot path                                                                                                |
     //   repeated : profile-cache preparation and one-shot endpoint-secant sampling                            |
@@ -78,7 +78,7 @@ pub fn endpointSecantSecondDerivatives(
     //   memory   : four stack work arrays plus caller-owned second output                                     |
     //                                                                                                         |
     // math                                                                                                    |
-    //   Endpoint slopes are adjacent secants. This mirrors DISAMAR mathTools::spline wrapping de Boor         |
+    //   Endpoint slopes are adjacent secants. This uses DISAMAR mathTools::spline wrapping de Boor            |
     //   cubspl before exposing second derivatives to splint-style sampling.                                   |
     // --------------------------------------------------------------------------------------------------------|
 
@@ -149,7 +149,7 @@ pub fn endpointSecantSecondDerivatives3(
     second2: []f64,
 ) Error!void {
     // endpointSecantSecondDerivatives3 -----------------------------------------------------------------------|
-    // Computes DISAMAR-compatible endpoint-secant second derivatives for three colocated profile series.      |
+    // Computes DISAMAR endpoint-secant second derivatives for three colocated profile series.                 |
     //                                                                                                         |
     // hot path                                                                                                |
     //   repeated : profile spectroscopy cache preparation on a forward miss                                   |
