@@ -418,7 +418,6 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
         .reuse_stamp = profileLineReuseStamp(
             scene.id,
             lines,
-            layers,
             wavelengths_nm,
             build_layer_values,
             include_temperature_derivatives,
@@ -783,20 +782,20 @@ fn preferredProfileLineStateWorkerCount(profile_count: usize) usize {
 pub fn profileLineReuseStamp(
     scene_id: []const u8,
     lines: line_tables.LineTable,
-    layers: atmosphere_layers.LayerGrid,
     wavelengths_nm: []const f64,
     build_layer_values: bool,
     include_temperature_derivatives: bool,
 ) hashing.ReuseStamp {
     // profileLineReuseStamp ----------------------------------------------------------------------------------|
-    // Include the line/profile inputs that determine retained spectroscopy rows.                              |
+    // Hash only session-fixed inputs: scene identity, exact wavelengths, the parsed line assets, and the      |
+    // row-mode bits. Do not hash the LayerGrid: profile-line values sit at fixed spectroscopy nodes and are   |
+    // resampled per pressure state downstream, so hashing the grid would defeat reuse across the pressure     |
+    // changes optimal estimation makes each iteration.                                                        |
     // --------------------------------------------------------------------------------------------------------|
     var hasher = std.hash.Wyhash.init(0);
     hasher.update(scene_id);
     hashF64Slice(&hasher, wavelengths_nm);
     hashLineInputs(&hasher, lines);
-    atmosphere_layers.hashAll(&hasher, layers);
-    hashAtmosphereRows(&hasher, layers.spectroscopy_profile.rows);
     hashing.updateBool(&hasher, build_layer_values);
     hashing.updateBool(&hasher, include_temperature_derivatives);
     return .{ .value = hasher.final() };
@@ -870,21 +869,6 @@ fn hashRelaxationMatrix(hasher: *std.hash.Wyhash, matrix: readers.RelaxationMatr
     hashing.updateValue(hasher, matrix.line_count);
     hashF64Slice(hasher, matrix.wt0);
     hashF64Slice(hasher, matrix.bw);
-}
-
-fn hashAtmosphereRows(hasher: *std.hash.Wyhash, rows: []const readers.AtmosphereProfileRow) void {
-    // hashAtmosphereRows -------------------------------------------------------------------------------------|
-    // Hash spectroscopy-profile thermodynamics used by support-profile sigma rows.                            |
-    // --------------------------------------------------------------------------------------------------------|
-    hashing.updateValue(hasher, rows.len);
-    for (rows) |row| {
-        for ([_]f64{
-            row.altitude_km,
-            row.pressure_hpa,
-            row.temperature_k,
-            row.air_number_density_cm3,
-        }) |value| hashing.updateValue(hasher, value);
-    }
 }
 
 fn hashF64Slice(hasher: *std.hash.Wyhash, values: []const f64) void {

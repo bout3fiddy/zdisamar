@@ -255,7 +255,7 @@ test "ProfileLineValues preserve caller-provided exact wavelength order" {
     try std.testing.expectApproxEqRel(expected_sigma, support_sigma[support_index], 1.0e-12);
 }
 
-test "ProfileLineValues reuse stamp includes isotope and profile thermodynamics" {
+test "ProfileLineValues reuse stamp distinguishes line assets" {
     const allocator = std.testing.allocator;
     var scene = internal.input.defaults.referenceScene();
     scene.spectral_grid.sample_count = profile_line_test_sample_count;
@@ -267,7 +267,6 @@ test "ProfileLineValues reuse stamp includes isotope and profile thermodynamics"
     const baseline = internal.cache.profile_line_memory.profileLineReuseStamp(
         scene.id,
         tables.lines,
-        tables.layers,
         wavelengths_nm[0..],
         true,
         true,
@@ -281,23 +280,11 @@ test "ProfileLineValues reuse stamp includes isotope and profile thermodynamics"
     const isotope_stamp = internal.cache.profile_line_memory.profileLineReuseStamp(
         scene.id,
         isotope_tables.lines,
-        isotope_tables.layers,
         wavelengths_nm[0..],
         true,
         true,
     );
     try std.testing.expect(!baseline.eql(isotope_stamp));
-
-    tables.layers.spectroscopy_profile.rows[0].temperature_k += 0.01;
-    const profile_stamp = internal.cache.profile_line_memory.profileLineReuseStamp(
-        scene.id,
-        tables.lines,
-        tables.layers,
-        wavelengths_nm[0..],
-        true,
-        true,
-    );
-    try std.testing.expect(!baseline.eql(profile_stamp));
 }
 
 test "ProfileLineValues disable strong-line sidecars when isotope one is inactive" {

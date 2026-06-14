@@ -1048,7 +1048,6 @@ fn prepareSessionRows(
     const profile_stamp = profile_lines.profileLineReuseStamp(
         prepared.scene.id,
         prepared.tables.lines,
-        prepared.tables.layers,
         exact_wavelengths,
         build_layer_values,
         needs_temperature_derivatives,
