@@ -1,7 +1,7 @@
 # `setup/` — physics tables built from a scene
 
 This is the second stage of the forward pass. To compute a top-of-atmosphere
-reflectance the transport solver needs, for every layer and every wavelength: a
+reflectance the `rtm/` solve needs, for every layer and every wavelength: a
 vertical grid to integrate over, gas absorption, scattering with a phase
 function, and the solar source. Most of those inputs depend on the scene but not
 on the wavelength, and not on the retrieval iteration. `setup/` computes them
@@ -52,7 +52,7 @@ interpolated in log-pressure against altitude, temperature splined against
 altitude, air number density from the ideal gas law (n = P / kT), O2 number
 density as air density times the 0.20946 oxygen mixing ratio, and geometric path
 lengths from the layer thickness. The result, `LayerGrid`, holds two resolutions:
-the coarse output layers, and the finer support grid the solve integrates over.
+the coarse output layers, and the finer support grid `rtm/` integrates over.
 It also keeps the densified profile, which the line and CIA absorption use later
 when they evaluate per-layer gas absorption.
 
@@ -98,6 +98,24 @@ This is the incident flux that turns computed radiance into reflectance.
 `instrument_tables.zig` copies the instrument line shape (FWHM) and the
 high-resolution support-grid controls that the spectrum stage uses to average the
 high-resolution radiance down through the slit to the product wavelengths.
+
+## Performance
+
+Setup does the slow, scene-wide work once. Everything that does not change from
+one wavelength to the next, or from one retrieval step to the next, is worked out
+here and then reused, so the rest of the model stays fast.
+
+- A retrieval keeps moving the aerosol up and down, which shifts the pressure
+  boundaries. The vertical sampling pattern does not depend on those pressures,
+  only on how many layers were asked for, so it is built once and kept. Each step
+  only refreshes the per-layer values, reusing the same storage and reading no
+  files.
+- The solar spectrum and the aerosol phase function are each prepared once, so the
+  per-wavelength code just looks them up instead of recomputing them.
+- The big reference tables (layers, lines, CIA, solar) hold real data; the small
+  control tables are only a few numbers and cost nothing to carry.
+- Each table can quickly check whether its own inputs changed, so the model can
+  skip rebuilding anything that stayed the same.
 
 ## Where to start
 

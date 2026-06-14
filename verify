@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "== zig retained tests"
+zig build test
+
+echo "== python smoke scripts"
+for python_test in tests/python/*.py; do
+  echo "== ${python_test}"
+  uv run python "${python_test}"
+done
+
+echo "== pre-commit hooks"
+uv run prek run --all-files
+
+echo "== whitespace checks"
+git diff --check
+git diff --cached --check

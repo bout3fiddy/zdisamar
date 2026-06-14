@@ -93,6 +93,19 @@ every retrieval iteration: the Rodgers loop writes the updated state vector back
 into a scene and re-validates it before running the forward model, so a retrieval
 step can never reach an invalid scene.
 
+## Performance
+
+This stage is cheap, and stays that way by avoiding extra copies and extra memory.
+
+- The scene points straight at the text the JSON parser already holds, so its
+  strings and lists are reused in place instead of copied again. That memory is
+  freed once, when the parsed result is done with.
+- The JSON cleanup only makes a fresh copy when it has to. It looks for a stray
+  `NaN` first; if there is none it uses the original text untouched, and even when
+  it does scan, it keeps the original unless it actually changed something.
+- Validation is only simple number checks (is this finite, is it in range), so it
+  is cheap to run again on every retrieval step.
+
 ## Where to start
 
 - `scene.zig` — read this first; it is the type every other stage consumes.

@@ -25,6 +25,11 @@
 
 ## Commands
 
+- Canonical verification: `./verify`.
+- When verification is needed, run `./verify` once instead of assembling
+  separate `zig build`, Python test, `prek`, Ruff, styleguide, or diff-check
+  commands. If `./verify` already passed for the current tree and no relevant
+  files changed, do not rerun verification before commit/push.
 - Fast baseline: `zig build check`.
 - Broader fast presubmit: `zig build test-fast`.
 - Full retained verification: `zig build test`.
