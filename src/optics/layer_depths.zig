@@ -128,7 +128,7 @@ pub const LayerOptics = struct {
 // [1032..1543] second                   : [64]f64                                                             |
 //                                                                                                             |
 //   vertical setup profile. The O2 A diagnostic cross-section rows prove this cache is active for the O2 A    |
-//   reference case.                                                                                           |
+//   reference scene.                                                                                          |
 pub const CollisionPairProfile = struct {
     node_count: usize = 0,
     altitudes_km: [max_collision_pair_profile_rows]f64 = undefined,

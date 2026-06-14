@@ -42,7 +42,7 @@ pub const common = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // input ------------------------------------------------------------------------------------------------------|
-// Namespace-only test import wrapper for typed input/default modules.                                         |
+// Namespace-only test import wrapper for typed input modules.                                                 |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 0 B (0.000 KiB), align: 1 B                                                                           |
@@ -52,7 +52,6 @@ pub const common = struct {
 //                                                                                                             |
 // footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
 pub const input = struct {
-    pub const defaults = @import("input/defaults.zig");
     pub const hitran_partition_tables = @import("input/hitran_partition_tables.zig");
     pub const json = @import("input/json.zig");
     pub const scene_input = @import("input/scene.zig");

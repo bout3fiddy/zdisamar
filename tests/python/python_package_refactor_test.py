@@ -357,9 +357,9 @@ def assert_optimal_estimation_diagnosis_display() -> None:
         start_bounds=((0.02, 2.0), (0.0, 1000.0)),
         batch_workers=1,
     )
-    assert two_axis_sweep.basins() == ()
-    assert two_axis_sweep.to_dict()["basin_count"] == 0
-    assert two_axis_sweep.plot().to_dict()["endpoint_clusters"] == 0
+    assert len(two_axis_sweep.basins()) == 2
+    assert two_axis_sweep.to_dict()["basin_count"] == 2
+    assert two_axis_sweep.plot().to_dict()["endpoint_clusters"] == 2
 
     pressure_basin_sweep = RetrievalDiagnosis(
         state_names=("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa"),
@@ -1235,8 +1235,8 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
 
     with (
         patch.object(o2a_oe, "run_native_retrieval", side_effect=fake_native_retrieval),
-        patch.object(o2a_oe, "full_physics_case", return_value=full_scene) as full_physics_scene,
-        patch.object(o2a_oe, "case_for_state", return_value=correction_scene) as scene_for_state,
+        patch.object(o2a_oe, "full_physics_scene", return_value=full_scene) as full_physics_scene,
+        patch.object(o2a_oe, "scene_for_state", return_value=correction_scene) as scene_for_state,
         patch.object(
             o2a_oe,
             "full_correction_measurement",
@@ -1244,7 +1244,7 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
         ) as correction_measurement_builder,
         patch.object(
             o2a_oe,
-            "full_correction_case",
+            "full_correction_scene",
             return_value=correction_scene,
         ) as correction_scene_builder,
         patch.object(o2a_oe, "_result_from_native", return_value=full_result),
@@ -1259,9 +1259,9 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
             cache=cast(SessionCache, Cache()),
         )
 
-    assert calls[0]["case"] is reference_scene
+    assert calls[0]["scene"] is reference_scene
     assert calls[0]["controls"] is controls
-    assert calls[0]["load_case"] is False
+    assert calls[0]["load_scene"] is False
     assert len(calls) == 1
     full_physics_scene.assert_called_once_with(reference_scene)
     scene_for_state.assert_called_once_with(full_scene, fast_result.state, state_vector)
@@ -1380,7 +1380,7 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
 
     assert result is not None
     assert len(calls) == 1
-    fast_scene = cast(Scene, calls[0]["case"])
+    fast_scene = cast(Scene, calls[0]["scene"])
     fast_measurement = cast(Measurement, calls[0]["measurement"])
     expected_wavelengths = optimisation.fastmode.oe.fast_stage_sampling.resolved_wavelengths(
         measurement.wavelength_nm
@@ -1391,7 +1391,7 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
     assert fast_scene is not reference_scene
     assert fast_scene.spectral_grid.sample_count == len(fast_measurement.wavelength_nm)
     assert tuple(fast_scene.instrument_response.measured_wavelengths_nm) == expected_wavelengths
-    assert calls[0]["load_case"] is False
+    assert calls[0]["load_scene"] is False
     active_controls = cast(RetrievalControls, calls[0]["controls"])
     assert active_controls.max_iterations == 3
     assert loads == [(fast_scene, False)]
@@ -1532,7 +1532,7 @@ def assert_fastmode_batch_uses_native_fused_correction() -> None:
             return None
 
     with (
-        patch.object(o2a_oe, "full_physics_case", return_value=full_scene) as full_physics_scene,
+        patch.object(o2a_oe, "full_physics_scene", return_value=full_scene) as full_physics_scene,
         patch.object(
             o2a_oe,
             "full_correction_measurement",
@@ -1540,13 +1540,13 @@ def assert_fastmode_batch_uses_native_fused_correction() -> None:
         ) as correction_measurement_builder,
         patch.object(
             o2a_oe,
-            "full_correction_case",
+            "full_correction_scene",
             return_value=correction_scene,
         ) as correction_scene_builder,
         patch.object(o2a_oe.rtm, "SessionCache", side_effect=CorrectionCache) as session_cache,
         patch.object(
             o2a_oe,
-            "resolved_state_vector_for_loaded_case",
+            "resolved_state_vector_for_loaded_scene",
             return_value=state_vectors[0],
         ) as resolved_template,
     ):
@@ -1889,15 +1889,16 @@ def assert_native_oe_marshaling_bounds() -> None:
         raise AssertionError("custom jacobian scale reached native OE marshaling")
 
 
-def assert_native_oe_runs_after_default_prepare() -> None:
+def assert_native_oe_runs_after_reference_scene_prepare() -> None:
 
     from zdisamar.bindings.handles import RtmHandle
     from zdisamar.inverse_method import optimal_estimation
+    from zdisamar.wavelength_bands import o2a
 
     handle = RtmHandle()
 
     try:
-        scene = handle.default_scene()
+        scene = o2a.reference_scene()
         measurement = optimal_estimation.simulate_measurement(
             scene,
             signal_to_noise=100.0,
@@ -1911,7 +1912,7 @@ def assert_native_oe_runs_after_default_prepare() -> None:
                 ),
             )
         )
-        handle._check(handle._lib.zds_prepare_default_o2a(handle._ctx))  # noqa: SLF001
+        handle.load_scene(scene)
         result = handle.optimal_estimation(
             measurement=measurement,
             state_vector=state_vector,
@@ -2176,7 +2177,7 @@ def main() -> int:
     assert_fastmode_batch_uses_native_fused_correction()
     assert_fastmode_pressure_profile_uses_loaded_sparse_cache()
     assert_native_oe_marshaling_bounds()
-    assert_native_oe_runs_after_default_prepare()
+    assert_native_oe_runs_after_reference_scene_prepare()
     assert_reference_data_and_rtm_tables()
     print("python_package_refactor=ok")
 

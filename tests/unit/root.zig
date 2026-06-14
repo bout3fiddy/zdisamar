@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const internal = @import("internal");
+const o2a_scene = @import("support/o2a_scene.zig");
 
 test {
     _ = @import("input/scene_test.zig");
@@ -73,7 +74,6 @@ test "public root exposes setup session and spectrum surface" {
     try std.testing.expect(@hasDecl(zdisamar, "RetrievalResult"));
     try std.testing.expect(@hasDecl(zdisamar, "RetrievalBatchResult"));
     try std.testing.expect(@hasDecl(zdisamar, "RetrievalFastmodeBatchResult"));
-    try std.testing.expect(@hasDecl(zdisamar, "defaultScene"));
     try std.testing.expect(@hasDecl(zdisamar, "prepare"));
     try std.testing.expect(@hasDecl(zdisamar, "initSessionMemory"));
     try std.testing.expect(@hasDecl(zdisamar, "warmSessionMemory"));
@@ -115,7 +115,7 @@ test "public O2 A root surface keeps route-only spectrum knobs internal" {
     try std.testing.expect(!@hasDecl(zdisamar, "runReferenceSpectrum"));
     try std.testing.expect(!@hasDecl(zdisamar, "runForwardSpectrum"));
 
-    const scene = zdisamar.defaultScene();
+    const scene = o2a_scene.reference();
     const Scene = @TypeOf(scene);
     const Observation = @TypeOf(scene.observation);
     try std.testing.expect(!@hasField(Scene, "radiance_calibration"));
@@ -133,7 +133,7 @@ test "runForwardWithSessionMemory reuses profile-line rows across repeated scene
     const allocator = std.testing.allocator;
     const zdisamar = internal.public;
 
-    var scene = zdisamar.defaultScene();
+    var scene = o2a_scene.reference();
     scene.spectral_grid = .{
         .start_nm = 758.0,
         .end_nm = 760.0,

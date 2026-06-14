@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const internal = @import("internal");
+const o2a_scene = @import("../support/o2a_scene.zig");
 
 const controls = internal.rtm.controls;
 const jacobian_states = internal.rtm.jacobian_states;
@@ -29,7 +30,7 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
     const allocator = std.testing.allocator;
     var tables = try internal.setup.run_tables.buildRunTables(
         allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(allocator);
     const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
@@ -58,7 +59,7 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
     defer allocator.free(curved_level_altitudes);
 
     const wavelength_nm = 760.0;
-    var scene = internal.input.defaults.referenceScene();
+    var scene = o2a_scene.reference();
     scene.spectral_grid = .{
         .start_nm = wavelength_nm,
         .end_nm = wavelength_nm,
@@ -164,7 +165,7 @@ test "radianceAtWavelength checks caller-owned row shapes" {
     const allocator = std.testing.allocator;
     var tables = try internal.setup.run_tables.buildRunTables(
         allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(allocator);
     const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
@@ -174,7 +175,7 @@ test "radianceAtWavelength checks caller-owned row shapes" {
     const line_sigma = try allocator.alloc(f64, support_count);
     defer allocator.free(line_sigma);
     @memset(line_sigma, 0.0);
-    var scene = internal.input.defaults.referenceScene();
+    var scene = o2a_scene.reference();
     scene.spectral_grid = .{
         .start_nm = 760.0,
         .end_nm = 760.0,
@@ -232,7 +233,7 @@ test "radianceAtWavelength matches canonical transport probes" {
     const allocator = std.testing.allocator;
     var tables = try internal.setup.run_tables.buildRunTables(
         allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(allocator);
     const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
@@ -241,7 +242,7 @@ test "radianceAtWavelength matches canonical transport probes" {
     const layer_count = tables.layers.layer_pressures_hpa.len;
     var profile_lines = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengths(
         allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
         transport_probe_wavelengths_nm[0..],
     );
     defer profile_lines.deinit(allocator);
@@ -264,7 +265,7 @@ test "radianceAtWavelength matches canonical transport probes" {
     var memory = internal.cache.transport_worker_memory.TransportWorkerMemory{};
     defer memory.deinit(allocator);
 
-    const scene = internal.input.defaults.referenceScene();
+    const scene = o2a_scene.reference();
     const solar_sin = @sin(std.math.degreesToRadians(scene.geometry.solar_zenith_deg));
     const view_sin = @sin(std.math.degreesToRadians(scene.geometry.viewing_zenith_deg));
     const angles = solve.ViewAngles{
@@ -376,11 +377,11 @@ test "runForwardSpectrum matches canonical full spectrum" {
 
     var tables = try internal.setup.run_tables.buildRunTables(
         allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(allocator);
 
-    const scene = internal.input.defaults.referenceScene();
+    const scene = o2a_scene.reference();
     var owned_sampling = try sampling_table.buildSpectrumSamplingTable(
         allocator,
         scene,
@@ -580,7 +581,7 @@ test "runForwardSpectrum assembles direct-route product reflectance across worke
     const allocator = std.testing.allocator;
     var tables = try internal.setup.run_tables.buildRunTables(
         allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(allocator);
     const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
@@ -606,7 +607,7 @@ test "runForwardSpectrum assembles direct-route product reflectance across worke
     defer wavelengths.deinit(allocator);
 
     const exact_wavelengths_nm = [_]f64{ 758.0, 760.0 };
-    const scene = internal.input.defaults.referenceScene();
+    const scene = o2a_scene.reference();
     var profile_lines = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengths(
         allocator,
         scene,

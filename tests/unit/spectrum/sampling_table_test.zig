@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const internal = @import("internal");
+const o2a_scene = @import("../support/o2a_scene.zig");
 
 const radiance_wavelengths = internal.spectrum.radiance_wavelengths;
 const sampling_table = internal.spectrum.sampling_table;
@@ -100,13 +101,13 @@ test "SpectrumSamplingTable summary matches O2 A aggregate sampling evidence sha
 test "O2 SpectrumSamplingTable builder matches O2 A aggregate and exact-key evidence" {
     var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(std.testing.allocator);
 
     var owned = try sampling_table.buildSpectrumSamplingTable(
         std.testing.allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
         tables.instrument,
         tables.lines,
     );
@@ -137,7 +138,7 @@ test "O2 SpectrumSamplingTable builder matches O2 A aggregate and exact-key evid
 
 test "O2 SpectrumSamplingTable consumes explicit sparse measured wavelengths" {
     const explicit_wavelengths = [_]f64{ 758.0, 758.06, 758.21, 758.27 };
-    var scene = internal.input.defaults.referenceScene();
+    var scene = o2a_scene.reference();
     scene.spectral_grid = .{
         .start_nm = explicit_wavelengths[0],
         .end_nm = explicit_wavelengths[explicit_wavelengths.len - 1],
@@ -170,13 +171,13 @@ test "O2 SpectrumSamplingTable consumes explicit sparse measured wavelengths" {
 test "O2 SpectrumSamplingTable parallel fill keeps resolved samples deterministic" {
     var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(std.testing.allocator);
 
     var first = try sampling_table.buildSpectrumSamplingTable(
         std.testing.allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
         tables.instrument,
         tables.lines,
     );
@@ -184,7 +185,7 @@ test "O2 SpectrumSamplingTable parallel fill keeps resolved samples deterministi
 
     var second = try sampling_table.buildSpectrumSamplingTable(
         std.testing.allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
         tables.instrument,
         tables.lines,
     );

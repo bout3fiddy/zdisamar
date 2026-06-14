@@ -1,5 +1,6 @@
 const std = @import("std");
 const internal = @import("internal");
+const o2a_scene = @import("../support/o2a_scene.zig");
 
 const instrument_response = internal.output.instrument_response;
 
@@ -177,7 +178,7 @@ const expected_rows = [_]RowEvidence{
 };
 
 test "instrument response rows match public route at probe wavelengths" {
-    var prepared = try internal.public.prepare(allocator, internal.input.defaults.referenceScene());
+    var prepared = try internal.public.prepare(allocator, o2a_scene.reference());
     defer prepared.deinit(allocator);
 
     const wavelengths_nm = [_]f64{ 758.0, 760.0, 765.0, 767.0, 776.0 };
@@ -197,7 +198,7 @@ test "instrument response rows match public route at probe wavelengths" {
 }
 
 test "instrument response channel mask selects one public channel" {
-    var prepared = try internal.public.prepare(allocator, internal.input.defaults.referenceScene());
+    var prepared = try internal.public.prepare(allocator, o2a_scene.reference());
     defer prepared.deinit(allocator);
 
     const wavelengths_nm = [_]f64{ 758.0, 760.0, 765.0, 767.0, 776.0 };
@@ -223,7 +224,7 @@ test "instrument response channel mask selects one public channel" {
 }
 
 test "instrument response rejects empty and unsupported channel masks" {
-    var prepared = try internal.public.prepare(allocator, internal.input.defaults.referenceScene());
+    var prepared = try internal.public.prepare(allocator, o2a_scene.reference());
     defer prepared.deinit(allocator);
 
     const wavelengths_nm = [_]f64{758.0};

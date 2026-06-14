@@ -14,7 +14,7 @@ from ..atmosphere import Atmosphere
 from ..geometry import Geometry, Surface
 from ..instrument import InstrumentResponse, SpectralGrid
 from ..radiative_transfer import RadiativeTransferControls
-from ..shared import json_value, object_dict, to_float
+from ..shared import json_value, native_json_value, object_dict, to_float
 from ..spectroscopy import LineByLine, OxygenCollisionInducedAbsorption
 from .optimisation import Optimisation
 
@@ -215,7 +215,7 @@ class Scene(NotebookDisplay):
         """Encode the native scene without Python-only optimisation controls."""
 
         return json.dumps(
-            json_value(self.to_native_dict()), sort_keys=True, separators=(",", ":")
+            native_json_value(self.to_native_dict()), sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
 
     def set_aerosol_profile(self, layers: object) -> None:

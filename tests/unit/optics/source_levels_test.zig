@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
+const o2a_scene = @import("../support/o2a_scene.zig");
 
-const defaults = internal.input.defaults;
 const jacobian = internal.rtm.jacobian_states;
 const layer_depths = internal.optics.layer_depths;
 const setup = internal.setup.run_tables;
@@ -287,7 +287,7 @@ const source_probe_levels = [_]SourceLevelEvidence{
 };
 
 test "source levels reproduce shared RTM quadrature evidence rows" {
-    var tables = try setup.buildRunTables(allocator, defaults.referenceScene());
+    var tables = try setup.buildRunTables(allocator, o2a_scene.reference());
     defer tables.deinit(allocator);
     const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 

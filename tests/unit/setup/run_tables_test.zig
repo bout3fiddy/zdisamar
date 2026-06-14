@@ -1,10 +1,11 @@
 const std = @import("std");
 const internal = @import("internal");
+const o2a_scene = @import("../support/o2a_scene.zig");
 
 test "RunTables match O2 A baseline table evidence" {
     var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(std.testing.allocator);
 
@@ -77,7 +78,7 @@ test "LayerQuadrature rows match per-call quadrature builders" {
     const allocator = std.testing.allocator;
     const gauss_legendre = internal.common.math.gauss_legendre;
 
-    const scene = internal.input.defaults.referenceScene();
+    const scene = o2a_scene.reference();
     var tables = try internal.setup.run_tables.buildRunTables(allocator, scene);
     defer tables.deinit(allocator);
 
@@ -120,7 +121,7 @@ test "LayerGrid refill from prepared profiles matches fresh builds for pressure 
     const allocator = std.testing.allocator;
     const atmosphere_layers = internal.setup.atmosphere_layers;
 
-    const base_scene = internal.input.defaults.referenceScene();
+    const base_scene = o2a_scene.reference();
     var base_tables = try internal.setup.run_tables.buildRunTables(allocator, base_scene);
     defer base_tables.deinit(allocator);
 

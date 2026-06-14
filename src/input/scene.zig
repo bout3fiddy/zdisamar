@@ -30,7 +30,7 @@ const transport_controls = @import("../rtm/controls.zig");
 // [32..47] format : []const u8                                                                                |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   String bytes are borrowed from static defaults or parser-owned input.                                     |
+//   String bytes are borrowed from parser-owned input or caller-owned scene storage.                          |
 pub const Asset = struct {
     id: []const u8,
     path: []const u8,
@@ -225,7 +225,7 @@ pub const ObservationControls = struct {
 // [176..183] cutoff_sim_cm1     : f64                                                                         |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   isotopes_sim borrows the static isotope list in defaults.                                                 |
+//   isotopes_sim borrows from parser-owned input or caller-owned scene storage.                               |
 pub const LineGasControls = struct {
     line_list: Asset,
     line_mixing: Asset,

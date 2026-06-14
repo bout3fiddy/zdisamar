@@ -1,8 +1,8 @@
 const std = @import("std");
 const internal = @import("internal");
+const o2a_scene = @import("../support/o2a_scene.zig");
 
 const curved_sun_path = internal.optics.curved_sun_path;
-const defaults = internal.input.defaults;
 const layer_depths = internal.optics.layer_depths;
 const setup = internal.setup.run_tables;
 
@@ -131,7 +131,7 @@ const curved_samples = [_]CurvedSampleEvidence{
 };
 
 test "curved sun-path samples reuse active support rows in evidence order" {
-    var tables = try setup.buildRunTables(allocator, defaults.referenceScene());
+    var tables = try setup.buildRunTables(allocator, o2a_scene.reference());
     defer tables.deinit(allocator);
     const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 

@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const internal = @import("internal");
+const o2a_scene = @import("../support/o2a_scene.zig");
 
 const profile_line_test_sample_count = 7;
 
@@ -28,7 +29,7 @@ fn supportProfileLineSigma(
 }
 
 test "ProfileLineValues keep wavelength-major line values for each layer node" {
-    var scene = internal.input.defaults.referenceScene();
+    var scene = o2a_scene.reference();
     scene.spectral_grid.sample_count = profile_line_test_sample_count;
 
     var values = try internal.cache.profile_line_memory.buildProfileLineValues(
@@ -71,7 +72,7 @@ test "ProfileLineValues support-profile layouts stay compiler backed" {
 }
 
 test "ProfileLineValues contain computed finite weak-line sigma rows" {
-    var scene = internal.input.defaults.referenceScene();
+    var scene = o2a_scene.reference();
     scene.spectral_grid.sample_count = profile_line_test_sample_count;
 
     var values = try internal.cache.profile_line_memory.buildProfileLineValues(
@@ -99,7 +100,7 @@ test "ProfileLineValues build the full reference wavelength route in optimized m
 
     var values = try internal.cache.profile_line_memory.buildProfileLineValues(
         std.testing.allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer values.deinit(std.testing.allocator);
 
@@ -119,7 +120,7 @@ test "ProfileLineValues match profile-node line math evidence" {
     var probe_index: usize = 0;
     while (probe_index < profile_line_probe_evidence.len) {
         const wavelength_nm = profile_line_probe_evidence[probe_index].wavelength_nm;
-        var scene = internal.input.defaults.referenceScene();
+        var scene = o2a_scene.reference();
         scene.spectral_grid = .{
             .start_nm = wavelength_nm,
             .end_nm = wavelength_nm,
@@ -163,7 +164,7 @@ test "ProfileLineValues match profile-node total line sidecar evidence" {
     var probe_index: usize = 0;
     while (probe_index < profile_line_total_probe_evidence.len) {
         const wavelength_nm = profile_line_total_probe_evidence[probe_index].wavelength_nm;
-        var scene = internal.input.defaults.referenceScene();
+        var scene = o2a_scene.reference();
         scene.spectral_grid = .{
             .start_nm = wavelength_nm,
             .end_nm = wavelength_nm,
@@ -208,7 +209,7 @@ test "ProfileLineValues preserve caller-provided exact wavelength order" {
     const wavelengths_nm = [_]f64{ 760.0, 758.0, 776.0 };
     var values = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengths(
         std.testing.allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
         wavelengths_nm[0..],
     );
     defer values.deinit(std.testing.allocator);
@@ -234,7 +235,7 @@ test "ProfileLineValues preserve caller-provided exact wavelength order" {
 
     var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(std.testing.allocator);
     const support_sigma = try std.testing.allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);
@@ -251,7 +252,7 @@ test "ProfileLineValues preserve caller-provided exact wavelength order" {
 
 test "ProfileLineValues reuse stamp distinguishes line assets" {
     const allocator = std.testing.allocator;
-    var scene = internal.input.defaults.referenceScene();
+    var scene = o2a_scene.reference();
     scene.spectral_grid.sample_count = profile_line_test_sample_count;
 
     var tables = try internal.setup.run_tables.buildRunTables(allocator, scene);
@@ -284,7 +285,7 @@ test "ProfileLineValues reuse stamp distinguishes line assets" {
 test "ProfileLineValues disable strong-line sidecars when isotope one is inactive" {
     const isotope_two = [_]u8{2};
     const wavelengths_nm = [_]f64{760.0};
-    var scene = internal.input.defaults.referenceScene();
+    var scene = o2a_scene.reference();
     scene.line_gas.isotopes_sim = isotope_two[0..];
 
     var values = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengths(
@@ -312,7 +313,7 @@ test "ProfileLineValues parallel wavelength build matches serial rows" {
 
     var serial = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengthsWithCutoffGrid(
         allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
         wavelengths_nm[0..],
         wavelengths_nm[0..],
         true,
@@ -325,7 +326,7 @@ test "ProfileLineValues parallel wavelength build matches serial rows" {
 
     var parallel = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengthsWithCutoffGrid(
         allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
         wavelengths_nm[0..],
         wavelengths_nm[0..],
         true,
@@ -352,7 +353,7 @@ test "ProfileLineValues fill support-row sigma from atmospheric-budget evidence"
 
     var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(std.testing.allocator);
 
@@ -360,7 +361,7 @@ test "ProfileLineValues fill support-row sigma from atmospheric-budget evidence"
     defer std.testing.allocator.free(support_sigma);
 
     for (support_line_sigma_evidence) |expected| {
-        var scene = internal.input.defaults.referenceScene();
+        var scene = o2a_scene.reference();
         scene.spectral_grid = .{
             .start_nm = expected.wavelength_nm,
             .end_nm = expected.wavelength_nm,

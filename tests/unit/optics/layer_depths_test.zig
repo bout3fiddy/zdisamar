@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
+const o2a_scene = @import("../support/o2a_scene.zig");
 
-const defaults = internal.input.defaults;
 const layer_depths = internal.optics.layer_depths;
 const setup = internal.setup.run_tables;
 const jacobian = internal.rtm.jacobian_states;
@@ -276,7 +276,7 @@ const aerosol_jacobian_layers_758 = [_]LayerJacobianEvidence{
 };
 
 test "support-row optics reproduce atmospheric-budget components at probe wavelengths" {
-    var tables = try setup.buildRunTables(allocator, defaults.referenceScene());
+    var tables = try setup.buildRunTables(allocator, o2a_scene.reference());
     defer tables.deinit(allocator);
     const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
@@ -316,7 +316,7 @@ test "support-row optics reproduce atmospheric-budget components at probe wavele
 }
 
 test "layer optics reduce active support rows and skip boundary rows" {
-    var tables = try setup.buildRunTables(allocator, defaults.referenceScene());
+    var tables = try setup.buildRunTables(allocator, o2a_scene.reference());
     defer tables.deinit(allocator);
     const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
@@ -360,7 +360,7 @@ test "layer optics reduce active support rows and skip boundary rows" {
 }
 
 test "layer optics place aerosol optical depth on the configured explicit interval" {
-    var tables = try setup.buildRunTables(allocator, defaults.referenceScene());
+    var tables = try setup.buildRunTables(allocator, o2a_scene.reference());
     defer tables.deinit(allocator);
     const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
@@ -397,7 +397,7 @@ test "layer optics place aerosol optical depth on the configured explicit interv
 }
 
 test "layer optics fill aerosol optical-depth jacobian lanes from current route formula" {
-    var tables = try setup.buildRunTables(allocator, defaults.referenceScene());
+    var tables = try setup.buildRunTables(allocator, o2a_scene.reference());
     defer tables.deinit(allocator);
     const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 

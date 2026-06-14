@@ -177,19 +177,15 @@ class Aerosol:
 
     def to_dict(self) -> dict[str, object]:
 
-        placement = self.placement.to_dict()
-
         if len(self.profile) > 1:
             primary = self.profile[0]
-            placement["top_pressure_hpa"] = primary.top_pressure_hpa
-            placement["bottom_pressure_hpa"] = primary.bottom_pressure_hpa
             data: dict[str, object] = {
                 "optical_depth": primary.optical_depth,
                 "single_scatter_albedo": primary.single_scatter_albedo,
                 "asymmetry_factor": primary.asymmetry_factor,
                 "angstrom_exponent": primary.angstrom_exponent,
                 "reference_wavelength_nm": primary.reference_wavelength_nm,
-                "placement": placement,
+                "placement": self.placement.to_dict(),
             }
             data["profile"] = [layer.to_dict() for layer in self.profile]
 
@@ -201,7 +197,7 @@ class Aerosol:
             "asymmetry_factor": self.asymmetry_factor,
             "angstrom_exponent": self.angstrom_exponent,
             "reference_wavelength_nm": self.reference_wavelength_nm,
-            "placement": placement,
+            "placement": self.placement.to_dict(),
         }
 
     def set_single_layer_optical_depth_550_nm(self, value: float) -> None:
@@ -221,7 +217,9 @@ class Aerosol:
             layer.validate()
 
         self.profile = profile
-        self.sync_scalar_fields_from_profile_layer(profile[0])
+
+        if len(profile) == 1:
+            self.sync_scalar_fields_from_profile_layer(profile[0])
 
     def require_retrieval_compatible(self) -> None:
         """Reject profile shapes that the single-layer OE state model cannot mutate."""

@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const c_api = @import("c_api");
+const o2a_json = @import("o2a_json.zig");
 
 test "optimal-estimation C ABI result rows keep ctypes layout" {
     try std.testing.expectEqual(@as(usize, 80), @sizeOf(c_api.ZdsOptimalEstimationStateSpec));
@@ -16,10 +17,7 @@ test "warm optimal-estimation cache accepts the two retained Jacobian states" {
     const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
     defer c_api.zds_context_destroy(ctx);
 
-    try std.testing.expectEqual(
-        @intFromEnum(c_api.ZdsStatus.ok),
-        c_api.zds_prepare_default_o2a(ctx),
-    );
+    try prepareDefault(ctx);
 
     const state_ids = [_]u8{ 0, 1 };
     try std.testing.expectEqual(
@@ -33,10 +31,7 @@ test "warm optimal-estimation cache rejects removed surface-albedo state lane" {
     const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
     defer c_api.zds_context_destroy(ctx);
 
-    try std.testing.expectEqual(
-        @intFromEnum(c_api.ZdsStatus.ok),
-        c_api.zds_prepare_default_o2a(ctx),
-    );
+    try prepareDefault(ctx);
 
     const removed_surface_albedo_id = [_]u8{2};
     try std.testing.expectEqual(
@@ -333,10 +328,15 @@ test "optimal-estimation pressure state requires profile rows" {
 }
 
 fn prepareDefault(ctx: *c_api.Context) !void {
+    const allocator = std.testing.allocator;
+    const rendered = try o2a_json.nativeJson(allocator);
+    defer allocator.free(rendered);
+
     try std.testing.expectEqual(
         @intFromEnum(c_api.ZdsStatus.ok),
-        c_api.zds_prepare_default_o2a(ctx),
+        c_api.zds_prepare_o2a_json(ctx, rendered.ptr, rendered.len),
     );
+    try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
 fn aerosolOpticalDepthSpec() c_api.ZdsOptimalEstimationStateSpec {

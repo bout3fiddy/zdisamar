@@ -1,23 +1,23 @@
-# `input/` — scene definition, defaulting, and validation
+# `input/` — scene definition and validation
 
 This is the first stage of the forward pass. Everything downstream — `setup/`,
 `optics/`, `rtm/` — reads one typed value, `Scene`, and trusts that it is already
-valid. This directory defines that type, builds it, and checks it.
+valid. This directory defines that type, parses the Python-native JSON boundary,
+and checks the scene before setup or compute sees it.
 
 ```
-+---------------+         +----------------+
-| defaultScene  |         | parseSceneJson |   the two ways a Scene is built
-| (built-in)    |         | (Python JSON)  |
-+-------+-------+         +--------+-------+
-        |                          |
-        |  referenceScene()        |  buildScene() + normalize
-        v                          v
-            +----------------------+
-            |   sceneControls()    |   validate
-            +----------+-----------+
-                       |
-                       v
-                     Scene  -------->  setup/ and the rest of the forward pass
++----------------+         +----------------------+
+| Python O2 A    |  JSON   |    parseSceneJson    |
+| factory/scene  +-------->| buildScene+normalize |
++----------------+         +----------+-----------+
+                                      |
+                                      v
+                              +---------------+
+                              | sceneControls |
+                              +-------+-------+
+                                      |
+                                      v
+                                      Scene  -------->  setup/
 ```
 
 ## The `Scene` (`scene.zig`)
@@ -40,38 +40,40 @@ grouped by physical concern, each a small sub-struct:
 
 Two things hold for every `Scene`:
 
-- A `Scene` borrows all its strings and slices from storage someone else holds —
-  static defaults, or a JSON parser arena. It is valid only as long as that
-  storage lives.
+- A `Scene` borrows all its strings and slices from storage someone else holds,
+  such as a JSON parser arena. It is valid only as long as that storage lives.
 - The asset paths are already resolved. `input/` never opens files; it receives
   `Asset` descriptors, and `src/assets/` later opens and parses them.
 
 ## Where a `Scene` comes from
 
-A `Scene` enters the model through one of two paths, and both end at the same
-validator.
-
-`defaults.zig` holds the built-in reference scene. `referenceScene()` returns the
-DISAMAR O2 A reference case: the 755–776 nm grid, the three-layer atmosphere, the
-default aerosol layer, and the packaged HITRAN, solar, and CIA assets. It is
-exposed publicly as `root.defaultScene`, and it is the scene validation runs use
-and the template the Python side renders.
+A `Scene` enters the model through caller-provided typed data or through
+`parseSceneJson`; both end at the same validator. The packaged DISAMAR-family
+O2 A reference case lives in
+`python/zdisamar/input/wavelength_band/o2a_default.py` as
+`default_o2a_scene()`. Python assembles the dataclass scene, resolves
+reference-data paths before preparation, and passes the native JSON shape over
+`zds_prepare_o2a_json`. Zig receives the packaged reference case as an ordinary
+caller-provided scene; there is no built-in Zig default scene or zero-JSON
+default preparation path.
 
 `json.zig` is the C and Python boundary. `parseSceneJson` takes the JSON that
-Python's `Scene.to_native_json_bytes()` emits and produces a typed `Scene`;
-`renderDefaultSceneJson` goes the other way for the default case. A few things to
-know here:
+Python's `Scene.to_native_json_bytes()` emits and produces a typed `Scene`. A
+few things to know here:
 
 - The JSON shape (`NativeSceneJson`) carries Python bookkeeping and some fields
   that have no effect on this forward-only O2 A route. `buildScene` maps the
   fields the model uses across to `Scene`, and rejects unsupported route changes
   (a different scattering mode, a Jacobian request, finite altitude bounds)
   instead of accepting them silently.
+- A small number of route-owned controls are constants in `json.zig`: the
+  supported stream count and route Fourier term limit. Scene-specific science
+  controls still come from Python input.
 - `ParsedSceneJson` owns the parser arena; the `Scene` it returns borrows from
   it. Call `deinit` only after the model has finished reading the scene.
-- Python's JSON encoder writes bare `NaN` for optional placeholders, which Zig's
-  scanner rejects, so the parser rewrites bare `NaN` to `null` before parsing
-  (`normalizePythonJson`).
+- Python's native JSON encoder maps optional placeholder `NaN` values to `null`.
+  The parser still rewrites bare `NaN` to `null` as a boundary guard before
+  parsing (`normalizePythonJson`).
 
 ## Validation (`validate.zig`)
 
@@ -94,6 +96,5 @@ step can never reach an invalid scene.
 ## Where to start
 
 - `scene.zig` — read this first; it is the type every other stage consumes.
-- `defaults.zig` — the reference scene, with concrete values for every control.
 - `json.zig` — the Python boundary and what the model refuses to run.
 - `validate.zig` — the invariants a scene must satisfy, in one place.

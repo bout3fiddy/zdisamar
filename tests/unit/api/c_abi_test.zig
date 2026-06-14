@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const c_api = @import("c_api");
+const o2a_json = @import("o2a_json.zig");
 
 test "optimal-estimation C ABI result rows keep ctypes layout" {
     try std.testing.expect(c_api.links_libc);
@@ -201,33 +202,22 @@ test "fastmode optimal-estimation batch rejects mismatched state ordering" {
 
 fn prepareTinyJson(ctx: *c_api.Context) !void {
     const allocator = std.testing.allocator;
-    var json_len: usize = 0;
-    try std.testing.expectEqual(
-        @intFromEnum(c_api.ZdsStatus.ok),
-        c_api.zds_default_o2a_input_json(ctx, null, 0, &json_len),
-    );
-
-    const rendered = try allocator.alloc(u8, json_len + 1);
+    const rendered = try o2a_json.nativeJson(allocator);
     defer allocator.free(rendered);
-    try std.testing.expectEqual(
-        @intFromEnum(c_api.ZdsStatus.ok),
-        c_api.zds_default_o2a_input_json(ctx, rendered.ptr, rendered.len, &json_len),
-    );
-
     const sparse_count = try std.mem.replaceOwned(
         u8,
         allocator,
-        rendered[0..json_len],
-        "\"sample_count\":701",
-        "\"sample_count\":2",
+        rendered,
+        "\"sample_count\": 701",
+        "\"sample_count\": 2",
     );
     defer allocator.free(sparse_count);
     const sparse_axis = try std.mem.replaceOwned(
         u8,
         allocator,
         sparse_count,
-        "\"measured_wavelengths_nm\":[]",
-        "\"measured_wavelengths_nm\":[755.0,776.0]",
+        "\"measured_wavelengths_nm\": []",
+        "\"measured_wavelengths_nm\": [755.0, 776.0]",
     );
     defer allocator.free(sparse_axis);
 

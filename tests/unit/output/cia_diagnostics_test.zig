@@ -1,5 +1,6 @@
 const std = @import("std");
 const internal = @import("internal");
+const o2a_scene = @import("../support/o2a_scene.zig");
 
 const cia_diagnostics = internal.output.cia_diagnostics;
 
@@ -131,7 +132,7 @@ const expected_cia_rows = [_]RowEvidence{
 };
 
 test "O2-O2 CIA diagnostics match O2 A public Python evidence at probe wavelengths" {
-    var prepared = try internal.public.prepare(allocator, internal.input.defaults.referenceScene());
+    var prepared = try internal.public.prepare(allocator, o2a_scene.reference());
     defer prepared.deinit(allocator);
 
     const wavelengths_nm = [_]f64{ 758.0, 760.0, 765.0, 767.0, 776.0 };

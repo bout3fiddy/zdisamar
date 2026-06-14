@@ -1,9 +1,10 @@
 const std = @import("std");
 const internal = @import("internal");
+const o2a_scene = @import("../support/o2a_scene.zig");
 
 test "asset readers load reference profile, line list, CIA, and solar rows" {
     const allocator = std.testing.allocator;
-    const scene = internal.input.defaults.referenceScene();
+    const scene = o2a_scene.reference();
 
     const profile = try internal.assets.readers.readAtmosphereProfile(allocator, scene.atmosphere.profile.path);
     defer allocator.free(profile);

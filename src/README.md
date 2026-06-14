@@ -13,14 +13,14 @@ stage. This file shows how the stages fit together.
 The public functions are in [`root.zig`](root.zig) and run in this order:
 
 ```
-defaultScene  ->  prepare  ->  warmSessionMemory  ->  runForwardWithSessionMemory
-   Scene          Prepared      SessionMemory          SpectrumRunResult
- (controls)     (scene + tables)  (reused memory)        (radiance, reflectance,
-                                                          irradiance, Jacobian)
+Scene  ->  prepare  ->  warmSessionMemory  ->  runForwardWithSessionMemory
+          Prepared      SessionMemory          SpectrumRunResult
+        (scene + tables)  (reused memory)        (radiance, reflectance,
+                                                  irradiance, Jacobian)
 ```
 
-- `defaultScene`, or parsed JSON, gives a `Scene` — atmosphere,
-  geometry, surface, spectroscopy, instrument, aerosol.
+- A caller-provided or parsed JSON scene gives a `Scene` — atmosphere, geometry,
+  surface, spectroscopy, instrument, aerosol.
 - `prepare` builds the physics tables that stay fixed across runs of the same
   scene.
 - `warmSessionMemory` sets up the memory a run reuses.
@@ -39,7 +39,7 @@ Inside one forward pass, data flows one way:
 +-------+      +-------+      +--------+      +-----+      +----------+      +--------+
 ```
 
-- `input/` — read, check, and default the scene into a `Scene`.
+- `input/` — read and check the scene into a `Scene`.
 - `setup/` — build the physics tables: absorption lines, CIA, aerosol, solar, phase, layers.
 - `optics/` — optical properties at each wavelength sample: Rayleigh, CIA, curved
   sun path, source levels.

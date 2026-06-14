@@ -9,6 +9,7 @@ from typing import Self
 
 from .. import reference_data
 from ..input.wavelength_band.o2a import Scene
+from ..input.wavelength_band.o2a_default import default_o2a_scene
 from ..output.spectrum import (
     JACOBIAN_STATE_NAMES,
     DiagnosticReport,
@@ -152,21 +153,9 @@ class RtmHandle:
         return None if self._scene is None else copy.deepcopy(self._scene)
 
     def default_scene(self) -> Scene:
-        """Read the packaged O2 A reference case from the Zig binding."""
+        """Return the packaged O2 A reference case."""
 
-        size = ctypes.c_size_t()
-        self._check(self._lib.zds_default_o2a_input_json(self._ctx, None, 0, ctypes.byref(size)))
-        buffer = ctypes.create_string_buffer(size.value + 1)
-        self._check(
-            self._lib.zds_default_o2a_input_json(
-                self._ctx,
-                ctypes.cast(buffer, ctypes.c_void_p),
-                ctypes.sizeof(buffer),
-                ctypes.byref(size),
-            )
-        )
-
-        return Scene.from_json(buffer.value[: size.value])
+        return default_o2a_scene()
 
     def load_scene(self, scene: Scene, *, copy_scene: bool = True) -> None:
         """Load one O2 A wavelength-band case into the RTM handle."""

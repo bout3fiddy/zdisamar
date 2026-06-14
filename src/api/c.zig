@@ -542,22 +542,6 @@ pub export fn zds_context_destroy(ctx: ?*Context) void {
     allocator.destroy(resolved);
 }
 
-pub export fn zds_prepare_default_o2a(ctx: ?*Context) c_int {
-    // zds_prepare_default_o2a --------------------------------------------------------------------------------|
-    // Prepare the built-in default O2 A product case.                                                         |
-    // --------------------------------------------------------------------------------------------------------|
-    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
-
-    resolved.clearPrepared();
-
-    resolved.prepared = zdisamar.prepare(allocator, zdisamar.defaultScene()) catch |err| {
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    resolved.setError("");
-    return @intFromEnum(ZdsStatus.ok);
-}
-
 pub export fn zds_prepare_o2a_json(ctx: ?*Context, json_ptr: ?[*]const u8, json_len: usize) c_int {
     // zds_prepare_o2a_json -----------------------------------------------------------------------------------|
     // Parse Python's native O2 A JSON shape and prepare the resulting typed case.                             |
@@ -596,7 +580,7 @@ pub export fn zds_prepare_o2a_json(ctx: ?*Context, json_ptr: ?[*]const u8, json_
 
 export fn zds_warm_o2a_session(ctx: ?*Context) c_int {
     // zds_warm_o2a_session -----------------------------------------------------------------------------------|
-    // Build retained session rows for the prepared default O2 A case.                                         |
+    // Build retained session rows for the prepared O2 A case.                                                 |
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
 
@@ -655,39 +639,6 @@ pub export fn zds_warm_o2a_optimal_estimation(
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
-    resolved.setError("");
-    return @intFromEnum(ZdsStatus.ok);
-}
-
-pub export fn zds_default_o2a_input_json(ctx: ?*Context, out: ?[*]u8, buffer_len: usize, out_len: ?*usize) c_int {
-    // zds_default_o2a_input_json -----------------------------------------------------------------------------|
-    // Render the built-in O2 A case as Python-native JSON, using the two-call ctypes buffer pattern.          |
-    // --------------------------------------------------------------------------------------------------------|
-    const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
-    const slot = out_len orelse {
-        resolved.setError("null output length");
-        return @intFromEnum(ZdsStatus.failure);
-    };
-
-    const rendered = zdisamar.renderDefaultSceneJson(allocator) catch |err| {
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
-    defer allocator.free(rendered);
-
-    slot.* = rendered.len;
-    const buffer = out orelse {
-        resolved.setError("");
-        return @intFromEnum(ZdsStatus.ok);
-    };
-
-    if (buffer_len <= rendered.len) {
-        resolved.setError("output buffer too small");
-        return @intFromEnum(ZdsStatus.failure);
-    }
-
-    @memcpy(buffer[0..rendered.len], rendered);
-    buffer[rendered.len] = 0;
     resolved.setError("");
     return @intFromEnum(ZdsStatus.ok);
 }
