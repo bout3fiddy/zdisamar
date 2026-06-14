@@ -2,7 +2,7 @@ const std = @import("std");
 
 const defaults = @import("defaults.zig");
 const errors = @import("../common/errors.zig");
-const o2_case = @import("o2_case.zig");
+const scene_input = @import("scene.zig");
 const transport_controls = @import("../rtm/controls.zig");
 const validate = @import("validate.zig");
 
@@ -13,8 +13,8 @@ const default_output_isotopes = [_]usize{ 1, 2, 3 };
 // Python-native O2 A JSON bridge.                                                                             |
 //                                                                                                             |
 // boundary                                                                                                    |
-//   Python emits O2AInput.to_native_json_bytes() with resolved asset paths and a few Python bookkeeping       |
-//   fields. This parser turns that API shape into O2Case, validates controls that are intentionally inert     |
+//   Python emits Scene.to_native_json_bytes() with resolved asset paths and a few Python bookkeeping          |
+//   fields. This parser turns that API shape into Scene, validates controls that are intentionally inert      |
 //   for this O2 A forward-only route, and rejects unsupported route changes before compute sees the case.     |
 //                                                                                                             |
 // JSON input normalization                                                                                    |
@@ -23,24 +23,24 @@ const default_output_isotopes = [_]usize{ 1, 2, 3 };
 //   controls on this route; pressure bounds are the consumed vertical coordinates.                            |
 // ------------------------------------------------------------------------------------------------------------|
 
-// ParsedO2CaseJson -------------------------------------------------------------------------------------------|
-// Owns parser arena storage backing one borrowed O2Case.                                                      |
+// ParsedSceneJson --------------------------------------------------------------------------------------------|
+// Owns parser arena storage backing one borrowed Scene.                                                       |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 1744 B (1.703 KiB), align: 8 B                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
-// [   0..1039] parsed: std.json.Parsed(NativeO2CaseJson)                                                      |
-// [1040..1743] case  : O2Case                                                                                 |
+// [   0..1039] parsed: std.json.Parsed(NativeSceneJson)                                                       |
+// [1040..1743] case  : Scene                                                                                  |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   case slices and strings point into parsed.arena and stay valid until deinit.                              |
-pub const ParsedO2CaseJson = struct {
-    parsed: std.json.Parsed(NativeO2CaseJson),
-    case: o2_case.O2Case,
+pub const ParsedSceneJson = struct {
+    parsed: std.json.Parsed(NativeSceneJson),
+    scene: scene_input.Scene,
 
-    pub fn deinit(self: *ParsedO2CaseJson) void {
-        // ParsedO2CaseJson.deinit ----------------------------------------------------------------------------|
+    pub fn deinit(self: *ParsedSceneJson) void {
+        // ParsedSceneJson.deinit -----------------------------------------------------------------------------|
         // Release the JSON parser arena that backs all borrowed case strings and slices.                      |
         // ----------------------------------------------------------------------------------------------------|
         self.parsed.deinit();
@@ -49,46 +49,46 @@ pub const ParsedO2CaseJson = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn parseO2CaseJson(allocator: Allocator, raw_json: []const u8) !ParsedO2CaseJson {
-    // parseO2CaseJson ----------------------------------------------------------------------------------------|
+pub fn parseSceneJson(allocator: Allocator, raw_json: []const u8) !ParsedSceneJson {
+    // parseSceneJson -----------------------------------------------------------------------------------------|
     // Parse Python's native O2 A JSON shape and return a typed case borrowing parser-owned rows.              |
     // --------------------------------------------------------------------------------------------------------|
     const normalized = try normalizePythonJson(allocator, raw_json);
     defer normalized.deinit(allocator);
 
     var parsed = try std.json.parseFromSlice(
-        NativeO2CaseJson,
+        NativeSceneJson,
         allocator,
         normalized.bytes,
         .{ .ignore_unknown_fields = true, .allocate = .alloc_always },
     );
     errdefer parsed.deinit();
 
-    const case = try buildCase(parsed.value);
-    try validate.o2Case(case);
+    const scene = try buildScene(parsed.value);
+    try validate.sceneControls(scene);
 
-    return .{ .parsed = parsed, .case = case };
+    return .{ .parsed = parsed, .scene = scene };
 }
 
-pub fn renderDefaultO2CaseJson(allocator: Allocator) ![]u8 {
-    // renderDefaultO2CaseJson --------------------------------------------------------------------------------|
-    // Render the built-in O2 A case in the Python native JSON shape consumed by O2AInput.from_json.           |
+pub fn renderDefaultSceneJson(allocator: Allocator) ![]u8 {
+    // renderDefaultSceneJson ---------------------------------------------------------------------------------|
+    // Render the built-in O2 A case in the Python native JSON shape consumed by Scene.from_json.              |
     // --------------------------------------------------------------------------------------------------------|
-    const case = defaults.referenceCase();
+    const scene = defaults.referenceScene();
     var out: std.Io.Writer.Allocating = .init(allocator);
     errdefer out.deinit();
 
-    try std.json.Stringify.value(outputO2Case(case), .{}, &out.writer);
+    try std.json.Stringify.value(outputScene(scene), .{}, &out.writer);
     return out.toOwnedSlice();
 }
 
-fn buildCase(native: NativeO2CaseJson) !o2_case.O2Case {
-    // buildCase ----------------------------------------------------------------------------------------------|
-    // Convert API JSON rows into O2Case while rejecting unsupported controls at the parser boundary.          |
+fn buildScene(native: NativeSceneJson) !scene_input.Scene {
+    // buildScene ---------------------------------------------------------------------------------------------|
+    // Convert API JSON rows into Scene while rejecting unsupported controls at the parser boundary.           |
     // --------------------------------------------------------------------------------------------------------|
     try validateMetadata(native.metadata);
     try validatePlan(native.plan);
-    try validateO2Assets(native.inputs);
+    try validateAssets(native.inputs);
     try validateObservation(native.observation, native.inputs.raw_solar_reference.id);
     const performance_thresholds = try performanceThresholdsFromJson(native.rtm_controls.performance_thresholds);
     try validateRtm(native.rtm_controls, native.geometry.model, performance_thresholds);
@@ -98,7 +98,7 @@ fn buildCase(native: NativeO2CaseJson) !o2_case.O2Case {
     const threshold_line_sim = native.o2.threshold_line_sim orelse return errors.Error.UnsupportedJsonInput;
     const cutoff_sim_cm1 = native.o2.cutoff_sim_cm1 orelse return errors.Error.UnsupportedJsonInput;
     const cia_asset = native.o2o2.cia_asset orelse return errors.Error.UnsupportedJsonInput;
-    const rtm_defaults = defaults.referenceCase().rtm;
+    const rtm_defaults = defaults.referenceScene().rtm;
 
     return .{
         .id = native.scene_id,
@@ -183,8 +183,8 @@ fn validatePlan(plan: PlanJson) !void {
     if (!std.mem.eql(u8, plan.derivative_mode, "none")) return errors.Error.UnsupportedJsonInput;
 }
 
-fn validateO2Assets(inputs: O2InputsJson) !void {
-    // validateO2Assets ---------------------------------------------------------------------------------------|
+fn validateAssets(inputs: InputsJson) !void {
+    // validateAssets -----------------------------------------------------------------------------------------|
     // Consume Python's reference asset map by validating ids/formats used for RTM and Python roundtrips.      |
     // --------------------------------------------------------------------------------------------------------|
     try expectAsset(inputs.atmosphere_profile, "atmosphere_profile", "profile_csv");
@@ -195,7 +195,7 @@ fn validateO2Assets(inputs: O2InputsJson) !void {
 
 fn validateObservation(observation: ObservationJson, solar_reference_asset_id: []const u8) !void {
     // validateObservation ------------------------------------------------------------------------------------|
-    // Accept the current O2 A instrument route and pass explicit sparse product axes to O2Case validation.    |
+    // Accept the current O2 A instrument route and pass explicit sparse product axes to Scene validation.     |
     // --------------------------------------------------------------------------------------------------------|
     if (!std.mem.eql(u8, observation.regime, "nadir")) return errors.Error.UnsupportedJsonInput;
     if (!std.mem.eql(u8, observation.sampling, "native")) return errors.Error.UnsupportedJsonInput;
@@ -214,7 +214,7 @@ fn validateRtm(
     // Keep O2 A on the supported integrated-source route while consuming case-owned LABOS threshold controls. |
     // --------------------------------------------------------------------------------------------------------|
     if (!std.mem.eql(u8, rtm.scattering, "multiple")) return errors.Error.UnsupportedJsonInput;
-    if (rtm.n_streams != defaults.referenceCase().rtm.stream_count) return errors.Error.UnsupportedJsonInput;
+    if (rtm.n_streams != defaults.referenceScene().rtm.stream_count) return errors.Error.UnsupportedJsonInput;
     if (!rtm.integrate_source_function) return errors.Error.UnsupportedJsonInput;
     if (!rtm.renorm_phase_function) return errors.Error.UnsupportedJsonInput;
 
@@ -299,7 +299,7 @@ fn aerosolScalarBottomPressureHpa(aerosol: AerosolJson) f64 {
         aerosol.placement.bottom_pressure_hpa;
 }
 
-fn aerosolProfileRows(aerosol: AerosolJson) []const o2_case.AerosolProfileLayer {
+fn aerosolProfileRows(aerosol: AerosolJson) []const scene_input.AerosolProfileLayer {
     // aerosolProfileRows -------------------------------------------------------------------------------------|
     // Preserve single-layer folding while passing explicit multi-layer profile rows into setup.               |
     // --------------------------------------------------------------------------------------------------------|
@@ -344,7 +344,7 @@ fn u16FromJson(value: usize) !u16 {
     return std.math.cast(u16, value) orelse errors.Error.UnsupportedJsonInput;
 }
 
-fn expectAsset(asset: o2_case.Asset, id: []const u8, format: []const u8) !void {
+fn expectAsset(asset: scene_input.Asset, id: []const u8, format: []const u8) !void {
     // expectAsset --------------------------------------------------------------------------------------------|
     // Check asset identity while allowing Python to resolve relative paths to absolute package paths.         |
     // --------------------------------------------------------------------------------------------------------|
@@ -353,102 +353,102 @@ fn expectAsset(asset: o2_case.Asset, id: []const u8, format: []const u8) !void {
     if (asset.path.len == 0) return errors.Error.InvalidControl;
 }
 
-fn outputO2Case(case: o2_case.O2Case) OutputO2CaseJson {
-    // outputO2Case -------------------------------------------------------------------------------------------|
+fn outputScene(scene: scene_input.Scene) OutputSceneJson {
+    // outputScene --------------------------------------------------------------------------------------------|
     // Build the Python-native JSON view for the built-in default product case.                                |
     // --------------------------------------------------------------------------------------------------------|
-    const geometry_model = if (case.geometry.pseudo_spherical) "pseudo_spherical" else "plane_parallel";
+    const geometry_model = if (scene.geometry.pseudo_spherical) "pseudo_spherical" else "plane_parallel";
 
     return .{
         .metadata = .{
             .id = "disamar_reference_o2a",
             .storage = "disamar-reference-o2a",
-            .description = "DISAMAR O2 A reference case for Python and validation.",
+            .description = "DISAMAR O2 A reference scene for Python and validation.",
         },
         .plan = .{ .derivative_mode = "none" },
 
         .inputs = .{
-            .atmosphere_profile = case.atmosphere.profile,
-            .vendor_reference_csv = o2_case.asset(
+            .atmosphere_profile = scene.atmosphere.profile,
+            .vendor_reference_csv = scene_input.asset(
                 "vendor_reference_csv",
                 "data/reference_data/validation/o2a_with_cia_disamar_reference.csv",
                 "disamar_o2a_reference_csv",
             ),
-            .raw_solar_reference = case.observation.solar_reference,
-            .airmass_factor_lut = o2_case.asset(
+            .raw_solar_reference = scene.observation.solar_reference,
+            .airmass_factor_lut = scene_input.asset(
                 "airmass_factor_lut",
                 "data/reference_data/luts/airmass_factor_nadir_demo.csv",
                 "csv",
             ),
         },
 
-        .scene_id = case.id,
-        .spectral_grid = case.spectral_grid,
-        .layer_count = case.atmosphere.layer_count,
-        .sublayer_divisions = case.atmosphere.sublayer_divisions,
-        .surface_pressure_hpa = case.atmosphere.surface_pressure_hpa,
-        .fit_interval_index_1based = case.atmosphere.fit_interval_index_1based,
-        .intervals = case.atmosphere.intervals,
-        .surface_albedo = case.surface_albedo,
+        .scene_id = scene.id,
+        .spectral_grid = scene.spectral_grid,
+        .layer_count = scene.atmosphere.layer_count,
+        .sublayer_divisions = scene.atmosphere.sublayer_divisions,
+        .surface_pressure_hpa = scene.atmosphere.surface_pressure_hpa,
+        .fit_interval_index_1based = scene.atmosphere.fit_interval_index_1based,
+        .intervals = scene.atmosphere.intervals,
+        .surface_albedo = scene.surface_albedo,
 
         .geometry = .{
             .model = geometry_model,
-            .solar_zenith_deg = case.geometry.solar_zenith_deg,
-            .viewing_zenith_deg = case.geometry.viewing_zenith_deg,
-            .relative_azimuth_deg = case.geometry.relative_azimuth_deg,
+            .solar_zenith_deg = scene.geometry.solar_zenith_deg,
+            .viewing_zenith_deg = scene.geometry.viewing_zenith_deg,
+            .relative_azimuth_deg = scene.geometry.relative_azimuth_deg,
         },
 
         .aerosol = .{
-            .optical_depth = case.aerosol.optical_depth,
-            .single_scatter_albedo = case.aerosol.single_scatter_albedo,
-            .asymmetry_factor = case.aerosol.asymmetry_factor,
-            .angstrom_exponent = case.aerosol.angstrom_exponent,
-            .reference_wavelength_nm = case.aerosol.reference_wavelength_nm,
+            .optical_depth = scene.aerosol.optical_depth,
+            .single_scatter_albedo = scene.aerosol.single_scatter_albedo,
+            .asymmetry_factor = scene.aerosol.asymmetry_factor,
+            .angstrom_exponent = scene.aerosol.angstrom_exponent,
+            .reference_wavelength_nm = scene.aerosol.reference_wavelength_nm,
             .placement = .{
                 .semantics = "explicit_interval_bounds",
-                .interval_index_1based = case.aerosol.interval_index_1based,
-                .top_pressure_hpa = case.aerosol.top_pressure_hpa,
-                .bottom_pressure_hpa = case.aerosol.bottom_pressure_hpa,
+                .interval_index_1based = scene.aerosol.interval_index_1based,
+                .top_pressure_hpa = scene.aerosol.top_pressure_hpa,
+                .bottom_pressure_hpa = scene.aerosol.bottom_pressure_hpa,
             },
         },
 
         .observation = .{
-            .instrument_name = case.observation.instrument_name,
+            .instrument_name = scene.observation.instrument_name,
             .regime = "nadir",
             .sampling = "native",
-            .instrument_line_fwhm_nm = case.observation.instrument_line_fwhm_nm,
+            .instrument_line_fwhm_nm = scene.observation.instrument_line_fwhm_nm,
             .builtin_line_shape = "flat_top_n4",
-            .high_resolution_step_nm = case.observation.high_resolution_step_nm,
-            .high_resolution_half_span_nm = case.observation.high_resolution_half_span_nm,
+            .high_resolution_step_nm = scene.observation.high_resolution_step_nm,
+            .high_resolution_half_span_nm = scene.observation.high_resolution_half_span_nm,
             .adaptive_reference_grid = .{
-                .points_per_fwhm = case.observation.adaptive_points_per_fwhm,
-                .strong_line_min_divisions = case.observation.strong_line_min_divisions,
-                .strong_line_max_divisions = case.observation.strong_line_max_divisions,
+                .points_per_fwhm = scene.observation.adaptive_points_per_fwhm,
+                .strong_line_min_divisions = scene.observation.strong_line_min_divisions,
+                .strong_line_max_divisions = scene.observation.strong_line_max_divisions,
             },
-            .solar_reference_asset_id = case.observation.solar_reference.id,
-            .measured_wavelengths_nm = case.observation.measured_wavelengths_nm,
+            .solar_reference_asset_id = scene.observation.solar_reference.id,
+            .measured_wavelengths_nm = scene.observation.measured_wavelengths_nm,
         },
 
         .o2 = .{
-            .line_list_asset = case.line_gas.line_list,
-            .line_mixing_asset = case.line_gas.line_mixing,
-            .strong_lines_asset = case.line_gas.strong_lines,
-            .line_mixing_factor = case.line_gas.line_mixing_factor,
+            .line_list_asset = scene.line_gas.line_list,
+            .line_mixing_asset = scene.line_gas.line_mixing,
+            .strong_lines_asset = scene.line_gas.strong_lines,
+            .line_mixing_factor = scene.line_gas.line_mixing_factor,
             .isotopes_sim = default_output_isotopes[0..],
-            .threshold_line_sim = case.line_gas.threshold_line_sim,
-            .cutoff_sim_cm1 = case.line_gas.cutoff_sim_cm1,
+            .threshold_line_sim = scene.line_gas.threshold_line_sim,
+            .cutoff_sim_cm1 = scene.line_gas.cutoff_sim_cm1,
         },
 
         .o2o2 = .{
-            .enabled = case.cia.enabled,
-            .cia_asset = case.cia.table,
+            .enabled = scene.cia.enabled,
+            .cia_asset = scene.cia.table,
         },
 
         .rtm_controls = .{
             .scattering = "multiple",
-            .n_streams = case.rtm.stream_count,
+            .n_streams = scene.rtm.stream_count,
             .performance_thresholds = .{},
-            .use_spherical_correction = case.geometry.pseudo_spherical,
+            .use_spherical_correction = scene.geometry.pseudo_spherical,
             .integrate_source_function = true,
             .renorm_phase_function = true,
         },
@@ -552,11 +552,11 @@ const PlanJson = struct {
     derivative_mode: []const u8,
 };
 
-const O2InputsJson = struct {
-    atmosphere_profile: o2_case.Asset,
-    vendor_reference_csv: o2_case.Asset,
-    raw_solar_reference: o2_case.Asset,
-    airmass_factor_lut: o2_case.Asset,
+const InputsJson = struct {
+    atmosphere_profile: scene_input.Asset,
+    vendor_reference_csv: scene_input.Asset,
+    raw_solar_reference: scene_input.Asset,
+    airmass_factor_lut: scene_input.Asset,
 };
 
 const GeometryJson = struct {
@@ -580,10 +580,10 @@ const AerosolJson = struct {
     angstrom_exponent: f64,
     reference_wavelength_nm: f64,
     placement: AerosolPlacementJson,
-    profile: []const o2_case.AerosolProfileLayer = &.{},
+    profile: []const scene_input.AerosolProfileLayer = &.{},
 };
 
-const AdaptiveO2GridJson = struct {
+const AdaptiveGridJson = struct {
     points_per_fwhm: usize,
     strong_line_min_divisions: usize,
     strong_line_max_divisions: usize,
@@ -597,30 +597,30 @@ const ObservationJson = struct {
     builtin_line_shape: []const u8,
     high_resolution_step_nm: f64,
     high_resolution_half_span_nm: f64,
-    adaptive_reference_grid: AdaptiveO2GridJson,
+    adaptive_reference_grid: AdaptiveGridJson,
     solar_reference_asset_id: []const u8,
     measured_wavelengths_nm: []const f64 = &.{},
 };
 
-const O2Json = struct {
-    line_list_asset: o2_case.Asset,
-    line_mixing_asset: o2_case.Asset,
-    strong_lines_asset: o2_case.Asset,
+const LineGasJson = struct {
+    line_list_asset: scene_input.Asset,
+    line_mixing_asset: scene_input.Asset,
+    strong_lines_asset: scene_input.Asset,
     line_mixing_factor: ?f64,
     isotopes_sim: []const u8,
     threshold_line_sim: ?f64,
     cutoff_sim_cm1: ?f64,
 };
 
-const O2O2Json = struct {
+const CiaJson = struct {
     enabled: bool,
-    cia_asset: ?o2_case.Asset,
+    cia_asset: ?scene_input.Asset,
 };
 
-const OutputO2Json = struct {
-    line_list_asset: o2_case.Asset,
-    line_mixing_asset: o2_case.Asset,
-    strong_lines_asset: o2_case.Asset,
+const OutputLineGasJson = struct {
+    line_list_asset: scene_input.Asset,
+    line_mixing_asset: scene_input.Asset,
+    strong_lines_asset: scene_input.Asset,
     line_mixing_factor: f64,
     isotopes_sim: []const usize,
     threshold_line_sim: f64,
@@ -649,42 +649,42 @@ const RtmControlsJson = struct {
     renorm_phase_function: bool,
 };
 
-const NativeO2CaseJson = struct {
+const NativeSceneJson = struct {
     metadata: MetadataJson,
     plan: PlanJson,
-    inputs: O2InputsJson,
+    inputs: InputsJson,
     scene_id: []const u8,
-    spectral_grid: o2_case.SpectralGrid,
+    spectral_grid: scene_input.SpectralGrid,
     layer_count: usize,
     sublayer_divisions: usize,
     surface_pressure_hpa: f64,
     fit_interval_index_1based: usize,
-    intervals: []const o2_case.VerticalInterval,
+    intervals: []const scene_input.VerticalInterval,
     surface_albedo: f64,
     geometry: GeometryJson,
     aerosol: AerosolJson,
     observation: ObservationJson,
-    o2: O2Json,
-    o2o2: O2O2Json,
+    o2: LineGasJson,
+    o2o2: CiaJson,
     rtm_controls: RtmControlsJson,
 };
 
-const OutputO2CaseJson = struct {
+const OutputSceneJson = struct {
     metadata: MetadataJson,
     plan: PlanJson,
-    inputs: O2InputsJson,
+    inputs: InputsJson,
     scene_id: []const u8,
-    spectral_grid: o2_case.SpectralGrid,
+    spectral_grid: scene_input.SpectralGrid,
     layer_count: usize,
     sublayer_divisions: usize,
     surface_pressure_hpa: f64,
     fit_interval_index_1based: usize,
-    intervals: []const o2_case.VerticalInterval,
+    intervals: []const scene_input.VerticalInterval,
     surface_albedo: f64,
     geometry: GeometryJson,
     aerosol: AerosolJson,
     observation: ObservationJson,
-    o2: OutputO2Json,
-    o2o2: O2O2Json,
+    o2: OutputLineGasJson,
+    o2o2: CiaJson,
     rtm_controls: RtmControlsJson,
 };

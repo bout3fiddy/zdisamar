@@ -4,7 +4,7 @@ const internal = @import("internal");
 const defaults = internal.input.defaults;
 const jacobian = internal.rtm.jacobian_states;
 const layer_depths = internal.optics.layer_depths;
-const setup = internal.setup.o2_run_tables;
+const setup = internal.setup.run_tables;
 const source_levels = internal.optics.source_levels;
 
 const allocator = std.testing.allocator;
@@ -287,7 +287,7 @@ const source_probe_levels = [_]SourceLevelEvidence{
 };
 
 test "source levels reproduce shared RTM quadrature evidence rows" {
-    var tables = try setup.buildO2RunTables(allocator, defaults.referenceCase());
+    var tables = try setup.buildRunTables(allocator, defaults.referenceScene());
     defer tables.deinit(allocator);
 
     const line_sigma = try allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);

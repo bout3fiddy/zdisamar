@@ -16,7 +16,7 @@ HOT_FOLDERS = (
 )
 
 BANNED_EXACT_IDENTIFIERS = {
-    "Scene",
+    "Case",
     "PreparedOpticalState",
     "ProductStorage",
     "Context",

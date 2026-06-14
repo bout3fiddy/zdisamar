@@ -1,6 +1,6 @@
-const o2_case = @import("o2_case.zig");
+const scene_input = @import("scene.zig");
 
-const default_intervals = [_]o2_case.VerticalInterval{
+const default_intervals = [_]scene_input.VerticalInterval{
     .{
         .index_1based = 1,
         .top_pressure_hpa = 0.3,
@@ -23,8 +23,8 @@ const default_intervals = [_]o2_case.VerticalInterval{
 
 const default_isotopes = [_]u8{ 1, 2, 3 };
 
-pub fn referenceCase() o2_case.O2Case {
-    // referenceCase ------------------------------------------------------------------------------------------|
+pub fn referenceScene() scene_input.Scene {
+    // referenceScene -----------------------------------------------------------------------------------------|
     // Return the default product O2 A case used by Python and public forward runs.                            |
     // --------------------------------------------------------------------------------------------------------|
     return .{
@@ -36,7 +36,7 @@ pub fn referenceCase() o2_case.O2Case {
         },
         .surface_albedo = 0.2,
         .atmosphere = .{
-            .profile = o2_case.asset(
+            .profile = scene_input.asset(
                 "atmosphere_profile",
                 "data/reference_data/climatologies/vendor_config_o2a_profile.csv",
                 "profile_csv",
@@ -72,24 +72,24 @@ pub fn referenceCase() o2_case.O2Case {
             .adaptive_points_per_fwhm = 20,
             .strong_line_min_divisions = 8,
             .strong_line_max_divisions = 40,
-            .solar_reference = o2_case.asset(
+            .solar_reference = scene_input.asset(
                 "raw_solar_reference",
                 "data/reference_data/solar/o2a_solar_reference_753_778.csv",
                 "solar_reference_csv",
             ),
         },
         .line_gas = .{
-            .line_list = o2_case.asset(
+            .line_list = scene_input.asset(
                 "o2_hitran",
                 "data/reference_data/cross_sections/o2a_hitran_07_hit08_tropomi.par",
                 "hitran_par_o2a",
             ),
-            .line_mixing = o2_case.asset(
+            .line_mixing = scene_input.asset(
                 "o2_line_mixing",
                 "data/reference_data/cross_sections/o2a_lisa_rmf.dat",
                 "lisa_rmf",
             ),
-            .strong_lines = o2_case.asset(
+            .strong_lines = scene_input.asset(
                 "o2_strong_lines",
                 "data/reference_data/cross_sections/o2a_lisa_sdf.dat",
                 "lisa_sdf",
@@ -101,7 +101,7 @@ pub fn referenceCase() o2_case.O2Case {
         },
         .cia = .{
             .enabled = true,
-            .table = o2_case.asset(
+            .table = scene_input.asset(
                 "o2o2_cia",
                 "data/reference_data/cross_sections/o2o2_bira_o2a.dat",
                 "bira_cia",

@@ -9,22 +9,22 @@ from typing import Protocol, Self
 from ..shared import object_dict, object_dict_list, to_bool, to_float, to_int
 
 
-class RadiativeTransferCaseSection(Protocol):
+class RadiativeTransferSceneSection(Protocol):
     @property
     def performance_thresholds(self) -> object: ...
 
 
-class InstrumentResponseCaseSection(Protocol):
+class InstrumentResponseSceneSection(Protocol):
     @property
     def adaptive_reference_grid(self) -> dict[str, int]: ...
 
 
-class FastModeApplicationCase(Protocol):
+class FastModeApplicationScene(Protocol):
     @property
-    def radiative_transfer(self) -> RadiativeTransferCaseSection: ...
+    def radiative_transfer(self) -> RadiativeTransferSceneSection: ...
 
     @property
-    def instrument_response(self) -> InstrumentResponseCaseSection: ...
+    def instrument_response(self) -> InstrumentResponseSceneSection: ...
 
 
 def reject_unknown_fields(data: dict[str, object], allowed: set[str], label: str) -> None:
@@ -672,11 +672,11 @@ class FastModeOptimisation:
             oe=FastModeOe.from_dict(object_dict(data.get("oe", {}))),
         )
 
-    def apply_to_case(self, case: FastModeApplicationCase) -> None:
+    def apply_to_scene(self, scene: FastModeApplicationScene) -> None:
         """Apply fastmode RTM controls to a copied wavelength-band case."""
 
-        self.radiative_transfer.apply_to(case.radiative_transfer.performance_thresholds)
-        self.adaptive_reference_grid.apply_to(case.instrument_response.adaptive_reference_grid)
+        self.radiative_transfer.apply_to(scene.radiative_transfer.performance_thresholds)
+        self.adaptive_reference_grid.apply_to(scene.instrument_response.adaptive_reference_grid)
 
     def resolved_dict(self, measurement_wavelengths_nm: Sequence[float]) -> dict[str, object]:
         """Return the executed fastmode settings with explicit correction wavelengths."""
@@ -699,7 +699,7 @@ class FastModeOptimisation:
 
 
 @dataclass
-class O2AOptimisation:
+class Optimisation:
     """Case-owned optimisation modes for O2 A workflows.
 
     The public flow remains one O2 A case and one OE entrypoint.  Optimisation

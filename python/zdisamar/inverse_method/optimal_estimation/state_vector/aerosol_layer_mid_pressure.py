@@ -114,7 +114,7 @@ class AerosolLayerMidPressure:
             interval_index_1based=interval_index_1based,
         )
 
-    def resolve_for_case(
+    def resolve_for_scene(
         self,
         target,
         pressure_altitude_profile: PressureAltitudeProfile,

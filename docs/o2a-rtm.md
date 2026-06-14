@@ -1,14 +1,14 @@
 # O2 A RTM
 
-The Python package keeps wavelength-band cases separate from radiative-transfer
+The Python package keeps wavelength-band scenes separate from radiative-transfer
 execution:
 
 ```python
 from zdisamar import rtm
 from zdisamar.wavelength_bands import o2a
 
-case = o2a.reference_case()
-spectrum = rtm.spectrum(case, jacobian=True)
+scene = o2a.reference_scene()
+spectrum = rtm.spectrum(scene, jacobian=True)
 ```
 
 Repeated inverse-method evaluations can reuse RTM storage explicitly:
@@ -16,13 +16,13 @@ Repeated inverse-method evaluations can reuse RTM storage explicitly:
 ```python
 from zdisamar import rtm
 
-with rtm.SessionCache(case) as cache:
-    spectrum = rtm.spectrum(case, cache=cache, jacobian=True)
+with rtm.SessionCache(scene) as cache:
+    spectrum = rtm.spectrum(scene, cache=cache, jacobian=True)
 ```
 
 The public Python runtime surface is:
 
-- `zdisamar.wavelength_bands.o2a` for O2 A case data classes and reference-case
+- `zdisamar.wavelength_bands.o2a` for O2 A scene data classes and reference-scene
   construction,
 - `zdisamar.rtm` for radiance, reflectance, atmospheric-budget, instrument
   response, and collision-induced-absorption execution helpers,

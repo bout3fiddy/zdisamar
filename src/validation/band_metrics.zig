@@ -4,7 +4,7 @@ pub const Error = error{
     ShapeMismatch,
 };
 
-// o2a_band_metrics.zig -------------------------------------------------------------------------------------  |
+// band_metrics.zig -------------------------------------------------------------------------------------      |
 // Validation-only O2 A spectrum comparison metrics.                                                           |
 //                                                                                                             |
 //   Replaces the removed broad runtime-case metrics helper with explicit validation vectors.                  |

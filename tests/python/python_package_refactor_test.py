@@ -21,7 +21,7 @@ def assert_import_laziness() -> None:
     assert zd.__all__ == ["reference_data", "rtm", "wavelength_bands"]
     assert not hasattr(zd, "prepare")
     assert not hasattr(zd, "forward")
-    assert not hasattr(zd, "O2AInput")
+    assert not hasattr(zd, "Scene")
 
     import zdisamar.api as api
 
@@ -73,16 +73,16 @@ def assert_rtm_conversions() -> None:
 
 def assert_session_cache_warms_optimal_estimation_route_once() -> None:
 
-    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.input.wavelength_band.o2a import Scene
     from zdisamar.rtm import session_cache
 
     calls: list[tuple[str, object]] = []
-    case = cast(O2AInput, SimpleNamespace(scene_id="cache-case"))
+    scene = cast(Scene, SimpleNamespace(scene_id="cache-case"))
 
     class Handle:
-        def load_o2a_case(self, loaded_case, *, copy_case: bool = True) -> None:
+        def load_scene(self, loaded_scene, *, copy_scene: bool = True) -> None:
 
-            calls.append(("load", (loaded_case, copy_case)))
+            calls.append(("load", (loaded_scene, copy_scene)))
 
         def warm_optimal_estimation_cache(self, state_names: tuple[str, ...]) -> None:
 
@@ -103,13 +103,13 @@ def assert_session_cache_warms_optimal_estimation_route_once() -> None:
             else:
                 raise AssertionError("unloaded OE cache warm was accepted")
 
-            cache.load(case)
+            cache.load(scene)
             cache.warm_optimal_estimation(("aerosol_optical_depth",))
             cache.warm_optimal_estimation(("aerosol_optical_depth",))
             cache.warm_optimal_estimation(
                 ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")
             )
-            cache.load(case)
+            cache.load(scene)
             cache.warm_optimal_estimation(
                 ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")
             )
@@ -117,10 +117,10 @@ def assert_session_cache_warms_optimal_estimation_route_once() -> None:
             cache.close()
 
     assert calls == [
-        ("load", (case, True)),
+        ("load", (scene, True)),
         ("warm_oe", ("aerosol_optical_depth",)),
         ("warm_oe", ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")),
-        ("load", (case, True)),
+        ("load", (scene, True)),
         ("warm_oe", ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")),
         ("close", None),
     ]
@@ -398,7 +398,7 @@ def assert_optimal_estimation_diagnosis_display() -> None:
 
 def assert_optimal_estimation_diagnosis_auto_workers() -> None:
 
-    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.input.wavelength_band.o2a import Scene
     from zdisamar.inverse_method.optimal_estimation.diagnosis import diagnose_retrieval
     from zdisamar.inverse_method.optimal_estimation.o2a import BatchResult
     from zdisamar.inverse_method.optimal_estimation.retrieval import Measurement, RetrievalControls
@@ -462,7 +462,7 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
         ),
     ):
         diagnosis = diagnose_retrieval(
-            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
+            scene=cast(Scene, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
             measurement=measurement,
             state_vector=state_vector,
             controls=RetrievalControls(),
@@ -486,7 +486,7 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
         side_effect=diagnosis_batch,
     ):
         explicit = diagnose_retrieval(
-            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
+            scene=cast(Scene, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
             measurement=measurement,
             state_vector=state_vector,
             controls=RetrievalControls(),
@@ -522,7 +522,7 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
         side_effect=explicit_diagnosis_batch,
     ):
         explicit_large = diagnose_retrieval(
-            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
+            scene=cast(Scene, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
             measurement=measurement,
             state_vector=state_vector,
             controls=RetrievalControls(),
@@ -537,7 +537,7 @@ def assert_optimal_estimation_diagnosis_auto_workers() -> None:
 
 def assert_optimal_estimation_diagnosis_adaptive_grid() -> None:
 
-    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.input.wavelength_band.o2a import Scene
     from zdisamar.inverse_method.optimal_estimation.diagnosis import diagnose_retrieval
     from zdisamar.inverse_method.optimal_estimation.o2a import BatchResult
     from zdisamar.inverse_method.optimal_estimation.retrieval import Measurement, RetrievalControls
@@ -613,7 +613,7 @@ def assert_optimal_estimation_diagnosis_adaptive_grid() -> None:
         ),
     ):
         diagnosis = diagnose_retrieval(
-            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
+            scene=cast(Scene, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
             measurement=measurement,
             state_vector=state_vector,
             controls=RetrievalControls(),
@@ -636,7 +636,7 @@ def assert_optimal_estimation_diagnosis_adaptive_grid() -> None:
         side_effect=diagnosis_batch,
     ):
         dynamic = diagnose_retrieval(
-            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
+            scene=cast(Scene, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
             measurement=measurement,
             state_vector=state_vector,
             controls=RetrievalControls(),
@@ -666,7 +666,7 @@ def assert_optimal_estimation_diagnosis_adaptive_grid() -> None:
         side_effect=diagnosis_batch,
     ):
         custom = diagnose_retrieval(
-            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
+            scene=cast(Scene, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
             measurement=measurement,
             state_vector=state_vector,
             controls=RetrievalControls(),
@@ -731,7 +731,7 @@ def assert_optimal_estimation_diagnosis_adaptive_grid() -> None:
 
     try:
         diagnose_retrieval(
-            case=cast(O2AInput, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
+            scene=cast(Scene, SimpleNamespace(surface=SimpleNamespace(pressure_hpa=900.0))),
             measurement=measurement,
             state_vector=state_vector,
             controls=RetrievalControls(),
@@ -775,7 +775,7 @@ def assert_final_evaluation_reuses_last_rtm_evaluation() -> None:
     assert calls == 0
 
 
-def assert_lazy_final_evaluator_snapshots_case() -> None:
+def assert_lazy_final_evaluator_snapshots_scene() -> None:
 
     from zdisamar.inverse_method import optimal_estimation
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
@@ -784,8 +784,8 @@ def assert_lazy_final_evaluator_snapshots_case() -> None:
 
     sentinel = cast(RtmEvaluation, object())
     observed_solar_zenith: list[float] = []
-    case = o2a.reference_case()
-    original_solar_zenith = case.geometry.solar_zenith_deg
+    scene = o2a.reference_scene()
+    original_solar_zenith = scene.geometry.solar_zenith_deg
 
     def fake_evaluate_state(template, _state, _state_vector):
 
@@ -795,7 +795,7 @@ def assert_lazy_final_evaluator_snapshots_case() -> None:
 
     with patch.object(o2a_oe, "evaluate_state", fake_evaluate_state):
         evaluator = o2a_oe._lazy_final_evaluator(  # noqa: SLF001
-            case,
+            scene,
             optimal_estimation.StateVector(
                 [
                     optimal_estimation.AerosolOpticalDepth(
@@ -806,7 +806,7 @@ def assert_lazy_final_evaluator_snapshots_case() -> None:
                 ]
             ),
         )
-        case.geometry.solar_zenith_deg = 0.0
+        scene.geometry.solar_zenith_deg = 0.0
 
         assert evaluator([1.0]) is sentinel
 
@@ -856,28 +856,28 @@ def assert_measurement_accepts_scientific_numeric_scalars() -> None:
     assert math.isclose(from_uncertainty.reflectance_uncertainty[0], 1.0e-12)
 
 
-def assert_o2a_case_aerosol_state_properties() -> None:
+def assert_scene_aerosol_state_properties() -> None:
 
     from zdisamar.wavelength_bands import o2a
 
-    case = o2a.reference_case()
-    serialized_aerosol = case.aerosol.to_dict()
+    scene = o2a.reference_scene()
+    serialized_aerosol = scene.aerosol.to_dict()
     assert "layer_center_km" not in serialized_aerosol
     assert "layer_width_km" not in serialized_aerosol
 
-    case.aerosol_optical_depth_550_nm = 0.31
-    case.aerosol_layer.thickness_hpa = 50.0
-    case.aerosol_layer.mid_pressure_hpa = 900.0
+    scene.aerosol_optical_depth_550_nm = 0.31
+    scene.aerosol_layer.thickness_hpa = 50.0
+    scene.aerosol_layer.mid_pressure_hpa = 900.0
 
-    assert case.aerosol.optical_depth_550_nm == 0.31
-    assert case.aerosol_layer.thickness_hpa == 50.0
-    assert case.aerosol_layer.mid_pressure_hpa == 900.0
-    assert case.aerosol.placement.top_pressure_hpa == 875.0
-    assert case.aerosol.placement.bottom_pressure_hpa == 925.0
-    assert case.atmosphere.intervals[0].bottom_pressure_hpa == 875.0
-    assert case.atmosphere.intervals[1].top_pressure_hpa == 875.0
-    assert case.atmosphere.intervals[1].bottom_pressure_hpa == 925.0
-    assert case.atmosphere.intervals[2].top_pressure_hpa == 925.0
+    assert scene.aerosol.optical_depth_550_nm == 0.31
+    assert scene.aerosol_layer.thickness_hpa == 50.0
+    assert scene.aerosol_layer.mid_pressure_hpa == 900.0
+    assert scene.aerosol.placement.top_pressure_hpa == 875.0
+    assert scene.aerosol.placement.bottom_pressure_hpa == 925.0
+    assert scene.atmosphere.intervals[0].bottom_pressure_hpa == 875.0
+    assert scene.atmosphere.intervals[1].top_pressure_hpa == 875.0
+    assert scene.atmosphere.intervals[1].bottom_pressure_hpa == 925.0
+    assert scene.atmosphere.intervals[2].top_pressure_hpa == 925.0
 
     legacy = copy.deepcopy(serialized_aerosol)
     legacy["layer_center_km"] = 5.4
@@ -889,47 +889,47 @@ def assert_o2a_case_aerosol_state_properties() -> None:
     else:
         raise AssertionError("legacy aerosol placement fields were accepted")
 
-    invalid_case = copy.deepcopy(case)
-    invalid_case.aerosol.placement.semantics = "altitude_center_width_approximation"
+    invalid_scene = copy.deepcopy(scene)
+    invalid_scene.aerosol.placement.semantics = "altitude_center_width_approximation"
 
     try:
-        invalid_case.aerosol_layer.mid_pressure_hpa = 900.0
+        invalid_scene.aerosol_layer.mid_pressure_hpa = 900.0
     except ValueError as error:
         assert "explicit interval bounds" in str(error)
     else:
         raise AssertionError("pressure setter accepted altitude placement semantics")
 
-    invalid_case = copy.deepcopy(case)
+    invalid_scene = copy.deepcopy(scene)
 
     try:
-        invalid_case.aerosol_layer.mid_pressure_hpa = math.nan
+        invalid_scene.aerosol_layer.mid_pressure_hpa = math.nan
     except ValueError as error:
         assert "finite" in str(error)
     else:
         raise AssertionError("pressure setter accepted non-finite pressure")
 
-    invalid_case = copy.deepcopy(case)
-    original_top_pressure_hpa = invalid_case.aerosol.placement.top_pressure_hpa
-    original_bottom_pressure_hpa = invalid_case.aerosol.placement.bottom_pressure_hpa
+    invalid_scene = copy.deepcopy(scene)
+    original_top_pressure_hpa = invalid_scene.aerosol.placement.top_pressure_hpa
+    original_bottom_pressure_hpa = invalid_scene.aerosol.placement.bottom_pressure_hpa
 
     try:
-        invalid_case.aerosol_layer.thickness_hpa = 650.0
+        invalid_scene.aerosol_layer.thickness_hpa = 650.0
     except ValueError as error:
         assert "atmosphere ordering" in str(error)
     else:
         raise AssertionError("pressure setter accepted inverted neighboring intervals")
 
-    assert invalid_case.aerosol.placement.top_pressure_hpa == original_top_pressure_hpa
-    assert invalid_case.aerosol.placement.bottom_pressure_hpa == original_bottom_pressure_hpa
+    assert invalid_scene.aerosol.placement.top_pressure_hpa == original_top_pressure_hpa
+    assert invalid_scene.aerosol.placement.bottom_pressure_hpa == original_bottom_pressure_hpa
 
 
 def assert_deprecated_python_input_fields_rejected() -> None:
 
     from zdisamar.wavelength_bands import o2a
 
-    case = o2a.reference_case()
+    scene = o2a.reference_scene()
 
-    observation = copy.deepcopy(case.instrument_response.to_dict())
+    observation = copy.deepcopy(scene.instrument_response.to_dict())
     observation["noise_model"] = {"enabled": True}
 
     try:
@@ -939,7 +939,7 @@ def assert_deprecated_python_input_fields_rejected() -> None:
     else:
         raise AssertionError("deprecated observation noise_model field was accepted")
 
-    radiative_transfer = copy.deepcopy(case.radiative_transfer.to_dict())
+    radiative_transfer = copy.deepcopy(scene.radiative_transfer.to_dict())
     radiative_transfer["use_adding"] = True
     radiative_transfer["stokes_dimension"] = 1
 
@@ -951,9 +951,9 @@ def assert_deprecated_python_input_fields_rejected() -> None:
         raise AssertionError("deprecated radiative-transfer fields were accepted")
 
 
-def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
+def assert_native_oe_loads_requested_scene_into_supplied_cache() -> None:
 
-    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.input.wavelength_band.o2a import Scene
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
     from zdisamar.inverse_method.optimal_estimation.retrieval import (
         Measurement,
@@ -964,7 +964,7 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
     from zdisamar.rtm.session_cache import SessionCache
 
     events: list[tuple[str, object, object]] = []
-    requested_case = SimpleNamespace(scene_id="requested")
+    requested_scene = SimpleNamespace(scene_id="requested")
     measurement = Measurement((760.0,), (0.2,), signal_to_noise=100.0)
     state_vector = SimpleNamespace(parameters=(), jacobian_names=("aerosol_optical_depth",))
     controls = RetrievalControls(max_iterations=1)
@@ -980,15 +980,15 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
     class Cache:
         _handle = Handle()
 
-        def has_loaded_case(self, case) -> bool:
+        def has_loaded_scene(self, scene) -> bool:
 
-            events.append(("has_loaded_case", case, None))
+            events.append(("has_loaded_case", scene, None))
 
             return False
 
-        def load(self, case, *, copy_case: bool = True) -> None:
+        def load(self, scene, *, copy_scene: bool = True) -> None:
 
-            events.append(("load", case, copy_case))
+            events.append(("load", scene, copy_scene))
 
         def warm_optimal_estimation(self, state_names: tuple[str, ...]) -> None:
 
@@ -999,7 +999,7 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
         patch.object(o2a_oe, "attach_final_evaluation", side_effect=lambda result, _eval: result),
     ):
         result = o2a_oe.run_native_retrieval(
-            case=cast(O2AInput, requested_case),
+            scene=cast(Scene, requested_scene),
             measurement=measurement,
             state_vector=cast(StateVector, state_vector),
             controls=controls,
@@ -1008,8 +1008,8 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
 
     assert result is native_result
     assert events == [
-        ("has_loaded_case", requested_case, None),
-        ("load", requested_case, False),
+        ("has_loaded_case", requested_scene, None),
+        ("load", requested_scene, False),
         ("warm_oe", ("aerosol_optical_depth",), None),
         ("optimal_estimation", measurement, controls),
     ]
@@ -1017,7 +1017,7 @@ def assert_native_oe_loads_requested_case_into_supplied_cache() -> None:
 
 def assert_native_oe_reuses_matching_supplied_cache() -> None:
 
-    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.input.wavelength_band.o2a import Scene
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
     from zdisamar.inverse_method.optimal_estimation.retrieval import (
         Measurement,
@@ -1028,7 +1028,7 @@ def assert_native_oe_reuses_matching_supplied_cache() -> None:
     from zdisamar.rtm.session_cache import SessionCache
 
     events: list[tuple[str, object, object]] = []
-    requested_case = SimpleNamespace(scene_id="requested")
+    requested_scene = SimpleNamespace(scene_id="requested")
     measurement = Measurement((760.0,), (0.2,), signal_to_noise=100.0)
     state_vector = SimpleNamespace(parameters=(), jacobian_names=("aerosol_optical_depth",))
     controls = RetrievalControls(max_iterations=1)
@@ -1044,13 +1044,13 @@ def assert_native_oe_reuses_matching_supplied_cache() -> None:
     class Cache:
         _handle = Handle()
 
-        def has_loaded_case(self, case) -> bool:
+        def has_loaded_scene(self, scene) -> bool:
 
-            events.append(("has_loaded_case", case, None))
+            events.append(("has_loaded_case", scene, None))
 
             return True
 
-        def load(self, case, *, copy_case: bool = True) -> None:
+        def load(self, scene, *, copy_scene: bool = True) -> None:
 
             raise AssertionError("matching OE cache reloaded its prepared case")
 
@@ -1063,7 +1063,7 @@ def assert_native_oe_reuses_matching_supplied_cache() -> None:
         patch.object(o2a_oe, "attach_final_evaluation", side_effect=lambda result, _eval: result),
     ):
         result = o2a_oe.run_native_retrieval(
-            case=cast(O2AInput, requested_case),
+            scene=cast(Scene, requested_scene),
             measurement=measurement,
             state_vector=cast(StateVector, state_vector),
             controls=controls,
@@ -1072,7 +1072,7 @@ def assert_native_oe_reuses_matching_supplied_cache() -> None:
 
     assert result is native_result
     assert events == [
-        ("has_loaded_case", requested_case, None),
+        ("has_loaded_case", requested_scene, None),
         ("warm_oe", ("aerosol_optical_depth",), None),
         ("optimal_estimation", measurement, controls),
     ]
@@ -1080,8 +1080,8 @@ def assert_native_oe_reuses_matching_supplied_cache() -> None:
 
 def assert_fastmode_oe_runs_single_full_correction() -> None:
 
-    from zdisamar.input.wavelength_band.o2a import O2AInput
-    from zdisamar.input.wavelength_band.optimisation import O2AOptimisation
+    from zdisamar.input.wavelength_band.o2a import Scene
+    from zdisamar.input.wavelength_band.optimisation import Optimisation
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
     from zdisamar.inverse_method.optimal_estimation.retrieval import (
         Iteration,
@@ -1105,12 +1105,12 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
 
             del target, value
 
-    optimisation = O2AOptimisation.defaults()
+    optimisation = Optimisation.defaults()
     optimisation.fastmode.enabled = True
     optimisation.fastmode.oe.fast_stage_sampling.enabled = False
-    reference_case = SimpleNamespace(scene_id="reference", optimisation=optimisation)
-    full_case = SimpleNamespace(scene_id="full")
-    correction_case = SimpleNamespace(scene_id="correction")
+    reference_scene = SimpleNamespace(scene_id="reference", optimisation=optimisation)
+    full_scene = SimpleNamespace(scene_id="full")
+    correction_scene = SimpleNamespace(scene_id="correction")
     correction_measurement = Measurement((760.0, 760.1), (0.1, 0.2), signal_to_noise=100.0)
     measurement = Measurement(
         (765.2, 766.0, 768.0),
@@ -1185,15 +1185,15 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
 
         _handle = Handle()
 
-        def has_loaded_case(self, case) -> bool:
+        def has_loaded_scene(self, scene) -> bool:
 
-            assert case is reference_case
+            assert scene is reference_scene
 
             return False
 
-        def load(self, case, *, copy_case: bool = True) -> None:
+        def load(self, scene, *, copy_scene: bool = True) -> None:
 
-            loads.append((case, copy_case))
+            loads.append((scene, copy_scene))
 
         def warm(self) -> None:
 
@@ -1202,9 +1202,9 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
     class CorrectionCache:
         _handle = Cache.Handle()
 
-        def load(self, case, *, copy_case: bool = True) -> None:
+        def load(self, scene, *, copy_scene: bool = True) -> None:
 
-            correction_loads.append((case, copy_case))
+            correction_loads.append((scene, copy_scene))
 
         def __enter__(self):
 
@@ -1216,8 +1216,8 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
 
     with (
         patch.object(o2a_oe, "run_native_retrieval", side_effect=fake_native_retrieval),
-        patch.object(o2a_oe, "full_physics_case", return_value=full_case) as full_physics_case,
-        patch.object(o2a_oe, "case_for_state", return_value=correction_case) as case_for_state,
+        patch.object(o2a_oe, "full_physics_case", return_value=full_scene) as full_physics_scene,
+        patch.object(o2a_oe, "case_for_state", return_value=correction_scene) as scene_for_state,
         patch.object(
             o2a_oe,
             "full_correction_measurement",
@@ -1226,35 +1226,35 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
         patch.object(
             o2a_oe,
             "full_correction_case",
-            return_value=correction_case,
-        ) as correction_case_builder,
+            return_value=correction_scene,
+        ) as correction_scene_builder,
         patch.object(o2a_oe, "_result_from_native", return_value=full_result),
         patch.object(o2a_oe, "attach_final_evaluation", side_effect=lambda result, _eval: result),
         patch.object(o2a_oe.rtm, "SessionCache", side_effect=CorrectionCache) as session_cache,
     ):
         result = o2a_oe.retrieve(
-            case=cast(O2AInput, reference_case),
+            scene=cast(Scene, reference_scene),
             measurement=measurement,
             state_vector=state_vector,
             controls=controls,
             cache=cast(SessionCache, Cache()),
         )
 
-    assert calls[0]["case"] is reference_case
+    assert calls[0]["case"] is reference_scene
     assert calls[0]["controls"] is controls
     assert calls[0]["load_case"] is False
     assert len(calls) == 1
-    full_physics_case.assert_called_once_with(reference_case)
-    case_for_state.assert_called_once_with(full_case, fast_result.state, state_vector)
+    full_physics_scene.assert_called_once_with(reference_scene)
+    scene_for_state.assert_called_once_with(full_scene, fast_result.state, state_vector)
     correction_measurement_builder.assert_called_once_with(
         measurement,
         wavelengths_nm=(765.2, 766.0, 768.0),
         uncertainty_scale=None,
     )
-    correction_case_builder.assert_called_once_with(correction_case, correction_measurement)
+    correction_scene_builder.assert_called_once_with(correction_scene, correction_measurement)
     session_cache.assert_called_once_with()
-    assert loads == [(reference_case, False)]
-    assert correction_loads == [(correction_case, False)]
+    assert loads == [(reference_scene, False)]
+    assert correction_loads == [(correction_scene, False)]
     assert len(correction_calls) == 1
     corrected_state_vector = cast(StateVector, correction_calls[0][0])
     correction_controls = correction_calls[0][1]
@@ -1278,10 +1278,10 @@ def assert_fastmode_oe_runs_single_full_correction() -> None:
 def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
 
     from zdisamar.input.instrument import SpectralGrid
-    from zdisamar.input.wavelength_band.o2a import O2AInput
+    from zdisamar.input.wavelength_band.o2a import Scene
     from zdisamar.input.wavelength_band.optimisation import (
         FastModeWavelengthWindow,
-        O2AOptimisation,
+        Optimisation,
     )
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
     from zdisamar.inverse_method.optimal_estimation.retrieval import (
@@ -1292,7 +1292,7 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
     from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
     from zdisamar.rtm.session_cache import SessionCache
 
-    optimisation = O2AOptimisation.defaults()
+    optimisation = Optimisation.defaults()
     optimisation.fastmode.enabled = True
     optimisation.fastmode.oe.final_correction.enabled = False
     optimisation.fastmode.oe.controls.max_iterations = 3
@@ -1304,7 +1304,7 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
         tuple(0.1 + 0.001 * index for index in range(len(wavelengths))),
         signal_to_noise=100.0,
     )
-    reference_case = SimpleNamespace(
+    reference_scene = SimpleNamespace(
         scene_id="reference",
         optimisation=optimisation,
         spectral_grid=SpectralGrid(
@@ -1337,15 +1337,15 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
     class Cache:
         _handle = SimpleNamespace()
 
-        def has_loaded_case(self, case) -> bool:
+        def has_loaded_scene(self, scene) -> bool:
 
-            del case
+            del scene
 
             return False
 
-        def load(self, case, *, copy_case: bool = True) -> None:
+        def load(self, scene, *, copy_scene: bool = True) -> None:
 
-            loads.append((case, copy_case))
+            loads.append((scene, copy_scene))
 
         def warm(self) -> None:
 
@@ -1353,7 +1353,7 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
 
     with patch.object(o2a_oe, "run_native_retrieval", side_effect=fake_native_retrieval):
         result = o2a_oe.retrieve(
-            case=cast(O2AInput, reference_case),
+            scene=cast(Scene, reference_scene),
             measurement=measurement,
             state_vector=state_vector,
             cache=cast(SessionCache, Cache()),
@@ -1361,21 +1361,21 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
 
     assert result is not None
     assert len(calls) == 1
-    fast_case = cast(O2AInput, calls[0]["case"])
+    fast_scene = cast(Scene, calls[0]["case"])
     fast_measurement = cast(Measurement, calls[0]["measurement"])
     expected_wavelengths = optimisation.fastmode.oe.fast_stage_sampling.resolved_wavelengths(
         measurement.wavelength_nm
     )
     assert tuple(fast_measurement.wavelength_nm) == expected_wavelengths
     assert len(fast_measurement.wavelength_nm) < len(measurement.wavelength_nm)
-    assert fast_case is loads[0][0]
-    assert fast_case is not reference_case
-    assert fast_case.spectral_grid.sample_count == len(fast_measurement.wavelength_nm)
-    assert tuple(fast_case.instrument_response.measured_wavelengths_nm) == expected_wavelengths
+    assert fast_scene is loads[0][0]
+    assert fast_scene is not reference_scene
+    assert fast_scene.spectral_grid.sample_count == len(fast_measurement.wavelength_nm)
+    assert tuple(fast_scene.instrument_response.measured_wavelengths_nm) == expected_wavelengths
     assert calls[0]["load_case"] is False
     active_controls = cast(RetrievalControls, calls[0]["controls"])
     assert active_controls.max_iterations == 3
-    assert loads == [(fast_case, False)]
+    assert loads == [(fast_scene, False)]
 
     optimisation.fastmode.oe.fast_stage_sampling.windows = (
         FastModeWavelengthWindow((755.0, 755.2), 1),
@@ -1391,8 +1391,8 @@ def assert_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
 
 def assert_fastmode_batch_uses_native_fused_correction() -> None:
 
-    from zdisamar.input.wavelength_band.o2a import O2AInput
-    from zdisamar.input.wavelength_band.optimisation import O2AOptimisation
+    from zdisamar.input.wavelength_band.o2a import Scene
+    from zdisamar.input.wavelength_band.optimisation import Optimisation
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
     from zdisamar.inverse_method.optimal_estimation.retrieval import (
         Measurement,
@@ -1413,12 +1413,12 @@ def assert_fastmode_batch_uses_native_fused_correction() -> None:
 
             del target, value
 
-    optimisation = O2AOptimisation.defaults()
+    optimisation = Optimisation.defaults()
     optimisation.fastmode.enabled = True
-    reference_case = SimpleNamespace(scene_id="reference", optimisation=optimisation)
-    reference_o2a_case = cast(O2AInput, reference_case)
-    full_case = SimpleNamespace(scene_id="full")
-    correction_case = SimpleNamespace(scene_id="correction")
+    reference_scene = SimpleNamespace(scene_id="reference", optimisation=optimisation)
+    reference_scene = cast(Scene, reference_scene)
+    full_scene = SimpleNamespace(scene_id="full")
+    correction_scene = SimpleNamespace(scene_id="correction")
     measurement = Measurement((765.2, 766.0, 768.0), (0.1, 0.2, 0.3), signal_to_noise=100.0)
     fast_measurement = Measurement((765.2, 768.0), (0.1, 0.3), signal_to_noise=100.0)
     correction_measurement = Measurement((765.2, 766.0), (0.1, 0.2), signal_to_noise=100.0)
@@ -1500,9 +1500,9 @@ def assert_fastmode_batch_uses_native_fused_correction() -> None:
     class CorrectionCache:
         _handle = correction_handle
 
-        def load(self, case, *, copy_case: bool = True) -> None:
+        def load(self, scene, *, copy_scene: bool = True) -> None:
 
-            correction_loads.append((case, copy_case))
+            correction_loads.append((scene, copy_scene))
 
         def __enter__(self):
 
@@ -1513,7 +1513,7 @@ def assert_fastmode_batch_uses_native_fused_correction() -> None:
             return None
 
     with (
-        patch.object(o2a_oe, "full_physics_case", return_value=full_case) as full_physics_case,
+        patch.object(o2a_oe, "full_physics_case", return_value=full_scene) as full_physics_scene,
         patch.object(
             o2a_oe,
             "full_correction_measurement",
@@ -1522,8 +1522,8 @@ def assert_fastmode_batch_uses_native_fused_correction() -> None:
         patch.object(
             o2a_oe,
             "full_correction_case",
-            return_value=correction_case,
-        ) as correction_case_builder,
+            return_value=correction_scene,
+        ) as correction_scene_builder,
         patch.object(o2a_oe.rtm, "SessionCache", side_effect=CorrectionCache) as session_cache,
         patch.object(
             o2a_oe,
@@ -1532,7 +1532,7 @@ def assert_fastmode_batch_uses_native_fused_correction() -> None:
         ) as resolved_template,
     ):
         result = o2a_oe.run_native_fastmode_retrieval_batch(
-            case=reference_o2a_case,
+            scene=reference_scene,
             measurement=measurement,
             fast_measurement=fast_measurement,
             state_vector=state_vectors[0],
@@ -1543,15 +1543,15 @@ def assert_fastmode_batch_uses_native_fused_correction() -> None:
             batch_workers=3,
         )
 
-    full_physics_case.assert_called_once_with(reference_case)
+    full_physics_scene.assert_called_once_with(reference_scene)
     correction_measurement_builder.assert_called_once_with(
         measurement,
         wavelengths_nm=(765.2, 766.0, 768.0),
         uncertainty_scale=None,
     )
-    correction_case_builder.assert_called_once_with(full_case, correction_measurement)
+    correction_scene_builder.assert_called_once_with(full_scene, correction_measurement)
     session_cache.assert_called_once_with()
-    assert correction_loads == [(correction_case, False)]
+    assert correction_loads == [(correction_scene, False)]
     resolved_template.assert_called_once()
     assert len(native_calls) == 1
     native_call = native_calls[0]
@@ -1586,8 +1586,8 @@ def assert_fastmode_batch_uses_native_fused_correction() -> None:
 def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
 
     from zdisamar.input.instrument import SpectralGrid
-    from zdisamar.input.wavelength_band.o2a import O2AInput
-    from zdisamar.input.wavelength_band.optimisation import O2AOptimisation
+    from zdisamar.input.wavelength_band.o2a import Scene
+    from zdisamar.input.wavelength_band.optimisation import Optimisation
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
     from zdisamar.inverse_method.optimal_estimation.retrieval import (
         Measurement,
@@ -1619,9 +1619,9 @@ def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
         lower: float | None = None
         upper: float | None = None
 
-        def resolve_for_case(self, case, pressure_altitude_profile) -> ResolvedParameter:
+        def resolve_for_scene(self, scene, pressure_altitude_profile) -> ResolvedParameter:
 
-            del case
+            del scene
             assert pressure_altitude_profile == "profile-from-loaded-fast-cache"
 
             return ResolvedParameter(
@@ -1637,7 +1637,7 @@ def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
 
             del target, value
 
-    optimisation = O2AOptimisation.defaults()
+    optimisation = Optimisation.defaults()
     optimisation.fastmode.enabled = True
     optimisation.fastmode.oe.final_correction.enabled = False
     optimisation.fastmode.oe.controls.max_iterations = 4
@@ -1649,7 +1649,7 @@ def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
         tuple(0.1 + 0.001 * index for index in range(len(wavelengths))),
         signal_to_noise=100.0,
     )
-    reference_case = SimpleNamespace(
+    reference_scene = SimpleNamespace(
         scene_id="reference",
         optimisation=optimisation,
         spectral_grid=SpectralGrid(
@@ -1668,23 +1668,23 @@ def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
     class Cache:
         _handle = SimpleNamespace()
 
-        def has_loaded_case(self, case) -> bool:
+        def has_loaded_scene(self, scene) -> bool:
 
-            match_checks.append(case)
+            match_checks.append(scene)
 
-            return bool(loads and loads[-1][0] is case)
+            return bool(loads and loads[-1][0] is scene)
 
-        def load(self, case, *, copy_case: bool = True) -> None:
+        def load(self, scene, *, copy_scene: bool = True) -> None:
 
-            loads.append((case, copy_case))
+            loads.append((scene, copy_scene))
 
         def warm(self) -> None:
 
             pass
 
-    def fake_pressure_profile(case, cache):
+    def fake_pressure_profile(scene, cache):
 
-        profile_calls.append((case, cache))
+        profile_calls.append((scene, cache))
 
         return "profile-from-loaded-fast-cache"
 
@@ -1715,7 +1715,7 @@ def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
         patch.object(o2a_oe, "run_native_retrieval", side_effect=fake_native_retrieval),
     ):
         result = o2a_oe.retrieve(
-            case=cast(O2AInput, reference_case),
+            scene=cast(Scene, reference_scene),
             measurement=measurement,
             state_vector=state_vector,
             cache=cast(SessionCache, cache),
@@ -1723,11 +1723,11 @@ def assert_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
 
     assert result.converged
     assert len(loads) == 1
-    fast_case = cast(O2AInput, loads[0][0])
-    assert fast_case is not reference_case
-    assert fast_case.spectral_grid.sample_count < reference_case.spectral_grid.sample_count
-    assert match_checks == [fast_case]
-    assert profile_calls == [(fast_case, cache)]
+    fast_scene = cast(Scene, loads[0][0])
+    assert fast_scene is not reference_scene
+    assert fast_scene.spectral_grid.sample_count < reference_scene.spectral_grid.sample_count
+    assert match_checks == [fast_scene]
+    assert profile_calls == [(fast_scene, cache)]
     assert len(retrieval_calls) == 1
     active_controls = cast(RetrievalControls, retrieval_calls[0]["controls"])
     assert active_controls.max_iterations == 4
@@ -1878,9 +1878,9 @@ def assert_native_oe_runs_after_default_prepare() -> None:
     handle = RtmHandle()
 
     try:
-        case = handle.default_o2a_case()
+        scene = handle.default_scene()
         measurement = optimal_estimation.simulate_measurement(
-            case,
+            scene,
             signal_to_noise=100.0,
         )
         state_vector = optimal_estimation.StateVector(
@@ -1922,9 +1922,9 @@ def assert_reference_data_and_rtm_tables() -> None:
 
         try:
             os.chdir(tmpdir)
-            case = o2a.reference_case()
-            assert "vendor/disamar-fortran" not in case.o2_lines.line_list_asset.path
-            thresholds = case.radiative_transfer.performance_thresholds
+            scene = o2a.reference_scene()
+            assert "vendor/disamar-fortran" not in scene.o2_lines.line_list_asset.path
+            thresholds = scene.radiative_transfer.performance_thresholds
             assert thresholds.aerosol_tangent_order_cap is None
             assert math.isclose(thresholds.fourier_tail_reflectance_epsilon, 3.0e-14)
             fast_thresholds = o2a.RadiativeTransferPerformanceThresholds.fast()
@@ -1953,13 +1953,13 @@ def assert_reference_data_and_rtm_tables() -> None:
                 validation_fast_thresholds.phase_function_truncation_threshold,
                 validation_thresholds.phase_function_truncation_threshold,
             )
-            fast_case = copy.deepcopy(case)
-            fast_case.optimisation.fastmode.enabled = True
-            assert fast_case is not case
-            assert fast_case.optimisation.fastmode.enabled
-            assert not case.optimisation.fastmode.enabled
-            resolved_fastmode = fast_case.optimisation.fastmode.resolved_dict(
-                fast_case.measurement_wavelengths_nm
+            fast_scene = copy.deepcopy(scene)
+            fast_scene.optimisation.fastmode.enabled = True
+            assert fast_scene is not scene
+            assert fast_scene.optimisation.fastmode.enabled
+            assert not scene.optimisation.fastmode.enabled
+            resolved_fastmode = fast_scene.optimisation.fastmode.resolved_dict(
+                fast_scene.measurement_wavelengths_nm
             )
             fastmode_radiative_transfer = cast(
                 dict[str, object],
@@ -1974,7 +1974,7 @@ def assert_reference_data_and_rtm_tables() -> None:
             fast_sampling_count = cast(int, fast_sampling["sample_count"])
             assert fast_sampling["enabled"]
             assert fast_sampling_count == len(fast_sampling_wavelengths)
-            assert fast_sampling_count < len(fast_case.measurement_wavelengths_nm)
+            assert fast_sampling_count < len(fast_scene.measurement_wavelengths_nm)
             assert fast_sampling["windows"] == [
                 {"wavelength_window_nm": [758.0, 758.08], "wavelength_count": 2},
                 {"wavelength_window_nm": [758.2, 758.28], "wavelength_count": 2},
@@ -1988,9 +1988,9 @@ def assert_reference_data_and_rtm_tables() -> None:
             final_correction_wavelengths = cast(list[float], final_correction["wavelengths_nm"])
             assert final_correction["wavelength_count"] == 4
             assert len(final_correction_wavelengths) == 4
-            fast_case.optimisation.fastmode.oe.fast_stage_sampling.enabled = False
-            disabled_fastmode = fast_case.optimisation.fastmode.resolved_dict(
-                fast_case.measurement_wavelengths_nm
+            fast_scene.optimisation.fastmode.oe.fast_stage_sampling.enabled = False
+            disabled_fastmode = fast_scene.optimisation.fastmode.resolved_dict(
+                fast_scene.measurement_wavelengths_nm
             )
             disabled_fastmode_oe = cast(dict[str, object], disabled_fastmode["oe"])
             disabled_fast_sampling = cast(
@@ -2003,19 +2003,19 @@ def assert_reference_data_and_rtm_tables() -> None:
             )
             disabled_sampling_count = cast(int, disabled_fast_sampling["sample_count"])
             assert not disabled_fast_sampling["enabled"]
-            assert disabled_sampling_count == len(fast_case.measurement_wavelengths_nm)
+            assert disabled_sampling_count == len(fast_scene.measurement_wavelengths_nm)
             assert disabled_sampling_count == len(disabled_sampling_wavelengths)
-            fast_case.optimisation.fastmode.oe.fast_stage_sampling.enabled = True
-            fast_case.optimisation.fastmode.oe.fast_stage_sampling.windows = (
+            fast_scene.optimisation.fastmode.oe.fast_stage_sampling.enabled = True
+            fast_scene.optimisation.fastmode.oe.fast_stage_sampling.windows = (
                 o2a.FastModeWavelengthWindow((759.7, 762.5), 10),
                 o2a.FastModeWavelengthWindow((765.2, 768.0), 10),
             )
-            fast_case.optimisation.fastmode.oe.final_correction.wavelengths_nm = (
+            fast_scene.optimisation.fastmode.oe.final_correction.wavelengths_nm = (
                 765.2,
                 766.0,
                 768.0,
             )
-            fast_roundtrip = o2a.O2ACase.from_json(fast_case.to_json_bytes())
+            fast_roundtrip = o2a.Scene.from_json(fast_scene.to_json_bytes())
             assert fast_roundtrip.optimisation.fastmode.enabled
             assert fast_roundtrip.optimisation.fastmode.oe.fast_stage_sampling.windows == (
                 o2a.FastModeWavelengthWindow((759.7, 762.5), 10),
@@ -2026,27 +2026,27 @@ def assert_reference_data_and_rtm_tables() -> None:
                 766.0,
                 768.0,
             )
-            assert b'"optimisation"' in fast_case.to_json_bytes()
-            assert b'"optimisation"' not in fast_case.to_native_json_bytes()
-            invalid_optimisation_case = copy.deepcopy(fast_case.to_dict())
+            assert b'"optimisation"' in fast_scene.to_json_bytes()
+            assert b'"optimisation"' not in fast_scene.to_native_json_bytes()
+            invalid_optimisation_scene = copy.deepcopy(fast_scene.to_dict())
             invalid_optimisation = cast(
                 dict[str, object],
-                invalid_optimisation_case["optimisation"],
+                invalid_optimisation_scene["optimisation"],
             )
             invalid_fastmode = cast(dict[str, object], invalid_optimisation["fastmode"])
             invalid_fastmode["ignored"] = True
 
             try:
-                o2a.O2ACase.from_dict(invalid_optimisation_case)
+                o2a.Scene.from_dict(invalid_optimisation_scene)
             except ValueError as exc:
                 assert "unsupported fastmode fields" in str(exc)
             else:
                 raise AssertionError("unsupported fastmode optimisation control was accepted")
 
-            invalid_sampling_case = copy.deepcopy(fast_case.to_dict())
+            invalid_sampling_scene = copy.deepcopy(fast_scene.to_dict())
             invalid_sampling_optimisation = cast(
                 dict[str, object],
-                invalid_sampling_case["optimisation"],
+                invalid_sampling_scene["optimisation"],
             )
             invalid_sampling_fastmode = cast(
                 dict[str, object],
@@ -2057,55 +2057,55 @@ def assert_reference_data_and_rtm_tables() -> None:
             invalid_sampling["ignored"] = True
 
             try:
-                o2a.O2ACase.from_dict(invalid_sampling_case)
+                o2a.Scene.from_dict(invalid_sampling_scene)
             except ValueError as exc:
                 assert "unsupported fastmode fast-stage sampling fields" in str(exc)
             else:
                 raise AssertionError("unsupported fast-stage sampling control was accepted")
 
-            assert fast_case.radiative_transfer.performance_thresholds.fourier_order_cap is None
-            fast_rtm_case = fast_case.with_rtm_optimisation_applied()
-            assert fast_rtm_case.optimisation.fastmode.enabled is False
-            assert fast_rtm_case.radiative_transfer.performance_thresholds.fourier_order_cap == 5
+            assert fast_scene.radiative_transfer.performance_thresholds.fourier_order_cap is None
+            fast_rtm_scene = fast_scene.with_rtm_optimisation_applied()
+            assert fast_rtm_scene.optimisation.fastmode.enabled is False
+            assert fast_rtm_scene.radiative_transfer.performance_thresholds.fourier_order_cap == 5
             assert (
-                fast_rtm_case.radiative_transfer.performance_thresholds.aerosol_tangent_order_cap
+                fast_rtm_scene.radiative_transfer.performance_thresholds.aerosol_tangent_order_cap
                 == 11
             )
             assert math.isclose(
-                fast_rtm_case.radiative_transfer.performance_thresholds.threshold_doubl,
+                fast_rtm_scene.radiative_transfer.performance_thresholds.threshold_doubl,
                 3.0e-5,
             )
-            fast_thresholds = fast_rtm_case.radiative_transfer.performance_thresholds
-            fast_grid = fast_rtm_case.instrument_response.adaptive_reference_grid
+            fast_thresholds = fast_rtm_scene.radiative_transfer.performance_thresholds
+            fast_grid = fast_rtm_scene.instrument_response.adaptive_reference_grid
             assert fast_grid["points_per_fwhm"] == 28
             assert fast_grid["strong_line_min_divisions"] == 6
             assert fast_grid["strong_line_max_divisions"] == 22
             assert (
-                case.instrument_response.adaptive_reference_grid["strong_line_max_divisions"] != 22
+                scene.instrument_response.adaptive_reference_grid["strong_line_max_divisions"] != 22
             )
-            nominal_wavelengths = rtm.nominal_wavelengths(case)
-            assert nominal_wavelengths[0] == case.spectral_grid.start_nm
-            assert nominal_wavelengths[-1] == case.spectral_grid.end_nm
-            invalid_grid_case = copy.deepcopy(case)
-            invalid_grid_case.spectral_grid.sample_count = -1
+            nominal_wavelengths = rtm.nominal_wavelengths(scene)
+            assert nominal_wavelengths[0] == scene.spectral_grid.start_nm
+            assert nominal_wavelengths[-1] == scene.spectral_grid.end_nm
+            invalid_grid_scene = copy.deepcopy(scene)
+            invalid_grid_scene.spectral_grid.sample_count = -1
 
             try:
-                rtm.nominal_wavelengths(invalid_grid_case)
+                rtm.nominal_wavelengths(invalid_grid_scene)
             except ValueError as error:
                 assert "sample_count" in str(error)
             else:
                 raise AssertionError("negative nominal spectral sample count was accepted")
 
-            mutable_case = copy.deepcopy(case)
+            mutable_scene = copy.deepcopy(scene)
 
             with rtm.SessionCache() as cache:
-                cache.load(mutable_case)
-                mutable_case.geometry.solar_zenith_deg = 0.0
-                spectrum = cache.spectrum(include_case=True)
-                assert spectrum.case is not None
-                assert spectrum.case.geometry.solar_zenith_deg == case.geometry.solar_zenith_deg
+                cache.load(mutable_scene)
+                mutable_scene.geometry.solar_zenith_deg = 0.0
+                spectrum = cache.spectrum(include_scene=True)
+                assert spectrum.scene is not None
+                assert spectrum.scene.geometry.solar_zenith_deg == scene.geometry.solar_zenith_deg
 
-            budget = rtm.atmospheric_budget(case, np.array([760.76], dtype=np.float64))
+            budget = rtm.atmospheric_budget(scene, np.array([760.76], dtype=np.float64))
             assert budget.row_count > 0
             assert len(budget.column("wavelength_nm")) == budget.row_count
             first_table = budget.table
@@ -2116,7 +2116,7 @@ def assert_reference_data_and_rtm_tables() -> None:
             assert len(rows) == budget.row_count
             assert "support_row_kind_label" in rows[0]
 
-            spectrum = rtm.spectrum(case)
+            spectrum = rtm.spectrum(scene)
             output = Path(tmpdir) / "reflectance"
             chart = spectrum.plot.reflectance(save=output)
             assert chart is not None
@@ -2145,12 +2145,12 @@ def main() -> int:
     assert_optimal_estimation_diagnosis_auto_workers()
     assert_optimal_estimation_diagnosis_adaptive_grid()
     assert_final_evaluation_reuses_last_rtm_evaluation()
-    assert_lazy_final_evaluator_snapshots_case()
+    assert_lazy_final_evaluator_snapshots_scene()
     assert_state_vector_uncertainty_rejected()
     assert_measurement_accepts_scientific_numeric_scalars()
-    assert_o2a_case_aerosol_state_properties()
+    assert_scene_aerosol_state_properties()
     assert_deprecated_python_input_fields_rejected()
-    assert_native_oe_loads_requested_case_into_supplied_cache()
+    assert_native_oe_loads_requested_scene_into_supplied_cache()
     assert_native_oe_reuses_matching_supplied_cache()
     assert_fastmode_oe_runs_single_full_correction()
     assert_fastmode_oe_uses_sparse_fast_stage_sampling()

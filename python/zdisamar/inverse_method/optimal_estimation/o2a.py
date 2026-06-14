@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 
 from ... import rtm
 from ...input.instrument import SpectralGrid
-from ...input.wavelength_band.o2a import O2AInput
+from ...input.wavelength_band.o2a import Scene
 from ...input.wavelength_band.optimisation import (
     FastModeFastStageSampling,
     measurement_indices_for_wavelengths,
@@ -55,62 +55,62 @@ class BatchResult:
 class RetrievalRoute:
     """Resolved case/cache inputs for one O2 A retrieval handoff."""
 
-    case: O2AInput
+    scene: Scene
     measurement: Measurement
     state_vector: StateVector
     cache: rtm.SessionCache
-    load_case: bool
+    load_scene: bool
     preserve_fast_cache: bool
 
 
 @contextmanager
 def resolved_retrieval_route(
     *,
-    case: O2AInput,
+    scene: Scene,
     measurement: Measurement,
     state_vector: StateVector,
     cache: rtm.SessionCache | None,
 ) -> Iterator[RetrievalRoute]:
     """Resolve the shared case/cache/template setup for single and batch OE."""
 
-    if case.optimisation.fastmode.enabled:
-        fast_case, fast_measurement = fast_stage_retrieval_inputs(case, measurement)
+    if scene.optimisation.fastmode.enabled:
+        fast_scene, fast_measurement = fast_stage_retrieval_inputs(scene, measurement)
 
         if cache is None:
             with rtm.SessionCache() as local_cache:
-                local_cache.load(fast_case, copy_case=False)
-                resolved_state_vector = resolved_state_vector_for_loaded_case(
-                    fast_case,
+                local_cache.load(fast_scene, copy_scene=False)
+                resolved_state_vector = resolved_state_vector_for_loaded_scene(
+                    fast_scene,
                     state_vector,
                     local_cache,
                 )
 
                 yield RetrievalRoute(
-                    case=fast_case,
+                    scene=fast_scene,
                     measurement=fast_measurement,
                     state_vector=resolved_state_vector,
                     cache=local_cache,
-                    load_case=False,
+                    load_scene=False,
                     preserve_fast_cache=False,
                 )
 
             return
 
-        if not cache.has_loaded_case(fast_case):
-            cache.load(fast_case, copy_case=False)
+        if not cache.has_loaded_scene(fast_scene):
+            cache.load(fast_scene, copy_scene=False)
 
-        resolved_state_vector = resolved_state_vector_for_loaded_case(
-            fast_case,
+        resolved_state_vector = resolved_state_vector_for_loaded_scene(
+            fast_scene,
             state_vector,
             cache,
         )
 
         yield RetrievalRoute(
-            case=fast_case,
+            scene=fast_scene,
             measurement=fast_measurement,
             state_vector=resolved_state_vector,
             cache=cache,
-            load_case=False,
+            load_scene=False,
             preserve_fast_cache=True,
         )
 
@@ -118,54 +118,54 @@ def resolved_retrieval_route(
 
     if cache is None:
         with rtm.SessionCache() as local_cache:
-            local_cache.load(case, copy_case=False)
-            resolved_state_vector = resolved_state_vector_for_loaded_case(
-                case,
+            local_cache.load(scene, copy_scene=False)
+            resolved_state_vector = resolved_state_vector_for_loaded_scene(
+                scene,
                 state_vector,
                 local_cache,
             )
 
             yield RetrievalRoute(
-                case=case,
+                scene=scene,
                 measurement=measurement,
                 state_vector=resolved_state_vector,
                 cache=local_cache,
-                load_case=False,
+                load_scene=False,
                 preserve_fast_cache=False,
             )
 
         return
 
     yield RetrievalRoute(
-        case=case,
+        scene=scene,
         measurement=measurement,
-        state_vector=resolved_state_vector_for_case(case, state_vector),
+        state_vector=resolved_state_vector_for_scene(scene, state_vector),
         cache=cache,
-        load_case=True,
+        load_scene=True,
         preserve_fast_cache=False,
     )
 
 
-def case_for_state(
-    template: O2AInput,
+def scene_for_state(
+    template: Scene,
     state: Sequence[float],
     state_vector: StateVector,
-) -> O2AInput:
+) -> Scene:
     """Create a wavelength-band case for one retrieval state."""
 
-    case = copy.copy(template)
-    case.aerosol = copy.copy(template.aerosol)
-    case.aerosol.placement = copy.copy(template.aerosol.placement)
-    case.atmosphere = copy.copy(template.atmosphere)
-    case.atmosphere.intervals = [copy.copy(interval) for interval in template.atmosphere.intervals]
-    case.surface = copy.copy(template.surface)
-    state_vector.write_to(case, state)
+    scene = copy.copy(template)
+    scene.aerosol = copy.copy(template.aerosol)
+    scene.aerosol.placement = copy.copy(template.aerosol.placement)
+    scene.atmosphere = copy.copy(template.atmosphere)
+    scene.atmosphere.intervals = [copy.copy(interval) for interval in template.atmosphere.intervals]
+    scene.surface = copy.copy(template.surface)
+    state_vector.write_to(scene, state)
 
-    return case
+    return scene
 
 
 def evaluate_state(
-    template: O2AInput,
+    template: Scene,
     state: Sequence[float],
     state_vector: StateVector,
     *,
@@ -173,10 +173,10 @@ def evaluate_state(
 ) -> RtmEvaluation:
     """Evaluate reflectance and Jacobians for one retrieval state."""
 
-    resolved_state_vector = resolved_state_vector_for_case(template, state_vector)
-    case = case_for_state(template, state, resolved_state_vector)
+    resolved_state_vector = resolved_state_vector_for_scene(template, state_vector)
+    scene = scene_for_state(template, state, resolved_state_vector)
     evaluation = evaluate_reflectance(
-        case,
+        scene,
         resolved_state_vector.jacobian_names,
         cache=cache,
     )
@@ -186,7 +186,7 @@ def evaluate_state(
 
 def retrieve(
     *,
-    case: O2AInput,
+    scene: Scene,
     measurement: Measurement,
     state_vector: StateVector,
     controls: RetrievalControls | None = None,
@@ -194,40 +194,40 @@ def retrieve(
 ) -> Result:
     """Retrieve O2 A state-vector parameters."""
 
-    _require_aerosol_retrieval_compatible(case)
-    active_controls = retrieval_controls_for_case(case, controls)
+    _require_aerosol_retrieval_compatible(scene)
+    active_controls = retrieval_controls_for_scene(scene, controls)
 
     with resolved_retrieval_route(
-        case=case,
+        scene=scene,
         measurement=measurement,
         state_vector=state_vector,
         cache=cache,
     ) as route:
-        if case.optimisation.fastmode.enabled:
+        if scene.optimisation.fastmode.enabled:
             result = run_fastmode_oe(
-                case=case,
+                scene=scene,
                 measurement=measurement,
-                fast_case=route.case,
+                fast_scene=route.scene,
                 fast_measurement=route.measurement,
                 state_vector=route.state_vector,
                 controls=active_controls,
                 cache=route.cache,
-                fast_case_loaded=True,
+                fast_scene_loaded=True,
                 preserve_fast_cache=route.preserve_fast_cache,
             )
         else:
             result = run_native_retrieval(
-                case=route.case,
+                scene=route.scene,
                 measurement=route.measurement,
                 state_vector=route.state_vector,
                 controls=active_controls,
                 cache=route.cache,
-                load_case=route.load_case,
+                load_scene=route.load_scene,
             )
 
     return attach_diagnosis(
         result,
-        case=case,
+        scene=scene,
         measurement=measurement,
         state_vector=state_vector,
         controls=active_controls,
@@ -236,7 +236,7 @@ def retrieve(
 
 def diagnosis_batch(
     *,
-    case: O2AInput,
+    scene: Scene,
     measurement: Measurement,
     state_vector: StateVector,
     start_rows: Sequence[Sequence[float]],
@@ -246,32 +246,32 @@ def diagnosis_batch(
 ) -> BatchResult:
     """Run the native same-scene batch used by Result.diagnose()."""
 
-    _require_aerosol_retrieval_compatible(case)
-    active_controls = retrieval_controls_for_case(case, controls)
+    _require_aerosol_retrieval_compatible(scene)
+    active_controls = retrieval_controls_for_scene(scene, controls)
 
     with resolved_retrieval_route(
-        case=case,
+        scene=scene,
         measurement=measurement,
         state_vector=state_vector,
         cache=cache,
     ) as route:
-        if case.optimisation.fastmode.enabled:
-            final_correction = case.optimisation.fastmode.oe.final_correction
+        if scene.optimisation.fastmode.enabled:
+            final_correction = scene.optimisation.fastmode.oe.final_correction
 
             if not final_correction.enabled:
                 return run_native_retrieval_batch(
-                    case=route.case,
+                    scene=route.scene,
                     measurement=route.measurement,
                     resolved_template=route.state_vector,
                     controls=active_controls,
                     cache=route.cache,
                     start_rows=start_rows,
-                    load_case=route.load_case,
+                    load_scene=route.load_scene,
                     batch_workers=batch_workers,
                 )
 
             return run_native_fastmode_retrieval_batch(
-                case=case,
+                scene=scene,
                 measurement=measurement,
                 fast_measurement=route.measurement,
                 state_vector=state_vector,
@@ -283,19 +283,19 @@ def diagnosis_batch(
             )
 
         return run_native_retrieval_batch(
-            case=route.case,
+            scene=route.scene,
             measurement=route.measurement,
             resolved_template=route.state_vector,
             controls=active_controls,
             cache=route.cache,
             start_rows=start_rows,
-            load_case=route.load_case,
+            load_scene=route.load_scene,
             batch_workers=batch_workers,
         )
 
 
-def retrieval_controls_for_case(
-    case: O2AInput,
+def retrieval_controls_for_scene(
+    scene: Scene,
     controls: RetrievalControls | None,
 ) -> RetrievalControls:
     """Return caller controls or the active case-owned OE defaults."""
@@ -303,10 +303,10 @@ def retrieval_controls_for_case(
     if controls is not None:
         return controls
 
-    if not case.optimisation.fastmode.enabled:
+    if not scene.optimisation.fastmode.enabled:
         return RetrievalControls.from_disamar_retrieval_specs()
 
-    fastmode_controls = case.optimisation.fastmode.oe.controls
+    fastmode_controls = scene.optimisation.fastmode.oe.controls
 
     return RetrievalControls(
         max_iterations=fastmode_controls.max_iterations,
@@ -317,61 +317,61 @@ def retrieval_controls_for_case(
 
 def run_fastmode_oe(
     *,
-    case: O2AInput,
+    scene: Scene,
     measurement: Measurement,
-    fast_case: O2AInput,
+    fast_scene: Scene,
     fast_measurement: Measurement,
     state_vector: StateVector,
     controls: RetrievalControls,
     cache: rtm.SessionCache,
-    fast_case_loaded: bool,
+    fast_scene_loaded: bool,
     preserve_fast_cache: bool = False,
 ) -> Result:
     """Run an O2 A fastmode retrieval in one session cache."""
 
     fast_result = run_native_retrieval(
-        case=fast_case,
+        scene=fast_scene,
         measurement=fast_measurement,
         state_vector=state_vector,
         controls=controls,
         cache=cache,
-        load_case=not fast_case_loaded,
+        load_scene=not fast_scene_loaded,
     )
 
-    final_correction = case.optimisation.fastmode.oe.final_correction
+    final_correction = scene.optimisation.fastmode.oe.final_correction
 
     if not final_correction.enabled:
         return fast_result
 
     corrected_state_vector = state_vector_with_initial(state_vector, fast_result.state)
-    full_case = full_physics_case(case)
-    full_state_case = case_for_state(full_case, fast_result.state, state_vector)
+    full_scene = full_physics_scene(scene)
+    full_state_scene = scene_for_state(full_scene, fast_result.state, state_vector)
     correction_wavelengths_nm = final_correction.resolved_wavelengths(measurement.wavelength_nm)
     correction_measurement = full_correction_measurement(
         measurement,
         wavelengths_nm=correction_wavelengths_nm,
         uncertainty_scale=final_correction.uncertainty_scale,
     )
-    correction_case = full_correction_case(full_state_case, correction_measurement)
+    correction_scene = full_correction_scene(full_state_scene, correction_measurement)
 
     if preserve_fast_cache:
         full_result = run_full_physics_correction_in_temporary_cache(
-            case=correction_case,
+            scene=correction_scene,
             measurement=correction_measurement,
             state_vector=corrected_state_vector,
             controls=controls,
             result_measurement=measurement,
-            final_evaluation_case=full_case,
+            final_evaluation_scene=full_scene,
         )
     else:
         full_result = run_full_physics_correction(
-            case=correction_case,
+            scene=correction_scene,
             measurement=correction_measurement,
             state_vector=corrected_state_vector,
             controls=controls,
             cache=cache,
             result_measurement=measurement,
-            final_evaluation_case=full_case,
+            final_evaluation_scene=full_scene,
         )
 
     return combine_fastmode_correction_result(fast_result, full_result)
@@ -379,7 +379,7 @@ def run_fastmode_oe(
 
 def run_native_fastmode_retrieval_batch(
     *,
-    case: O2AInput,
+    scene: Scene,
     measurement: Measurement,
     fast_measurement: Measurement,
     state_vector: StateVector,
@@ -391,23 +391,23 @@ def run_native_fastmode_retrieval_batch(
 ) -> BatchResult:
     """Run fast-stage and sparse correction starts inside one native handoff."""
 
-    final_correction = case.optimisation.fastmode.oe.final_correction
-    full_case = full_physics_case(case)
+    final_correction = scene.optimisation.fastmode.oe.final_correction
+    full_scene = full_physics_scene(scene)
     correction_wavelengths_nm = final_correction.resolved_wavelengths(measurement.wavelength_nm)
     correction_measurement = full_correction_measurement(
         measurement,
         wavelengths_nm=correction_wavelengths_nm,
         uncertainty_scale=final_correction.uncertainty_scale,
     )
-    correction_case = full_correction_case(full_case, correction_measurement)
+    correction_scene = full_correction_scene(full_scene, correction_measurement)
     correction_controls = replace(controls, max_iterations=1)
     initial_rows, prior_rows = batch_start_rows(resolved_template, start_rows)
 
     with rtm.SessionCache() as correction_cache:
-        correction_cache.load(correction_case, copy_case=False)
+        correction_cache.load(correction_scene, copy_scene=False)
 
-        correction_template = resolved_state_vector_for_loaded_case(
-            correction_case,
+        correction_template = resolved_state_vector_for_loaded_scene(
+            correction_scene,
             state_vector,
             correction_cache,
         )
@@ -438,20 +438,20 @@ def run_native_fastmode_retrieval_batch(
 
 
 def fast_stage_retrieval_inputs(
-    case: O2AInput,
+    scene: Scene,
     measurement: Measurement,
-) -> tuple[O2AInput, Measurement]:
+) -> tuple[Scene, Measurement]:
     """Return the case and measurement used by the fast OE stage."""
 
-    sampling = case.optimisation.fastmode.oe.fast_stage_sampling
+    sampling = scene.optimisation.fastmode.oe.fast_stage_sampling
 
     if not sampling.enabled:
-        return case, measurement
+        return scene, measurement
 
     fast_measurement = fast_stage_measurement(measurement, sampling=sampling)
-    fast_case = case_on_measurement_grid(case, fast_measurement)
+    fast_scene = scene_on_measurement_grid(scene, fast_measurement)
 
-    return fast_case, fast_measurement
+    return fast_scene, fast_measurement
 
 
 def fast_stage_measurement(
@@ -473,17 +473,17 @@ def fast_stage_measurement(
 
 def run_full_physics_correction(
     *,
-    case: O2AInput,
+    scene: Scene,
     measurement: Measurement,
     state_vector: StateVector,
     controls: RetrievalControls,
     cache: rtm.SessionCache,
     result_measurement: Measurement | None = None,
-    final_evaluation_case: O2AInput | None = None,
+    final_evaluation_scene: Scene | None = None,
 ) -> Result:
     """Apply one full-physics native correction for an already converged fast state."""
 
-    cache.load(case, copy_case=False)
+    cache.load(scene, copy_scene=False)
     raw = cache._handle.optimal_estimation_correction(
         measurement=measurement,
         state_vector=state_vector,
@@ -492,40 +492,40 @@ def run_full_physics_correction(
 
     return attach_final_evaluation(
         _result_from_native(raw, state_vector, result_measurement or measurement),
-        _lazy_final_evaluator(final_evaluation_case or case, state_vector),
+        _lazy_final_evaluator(final_evaluation_scene or scene, state_vector),
     )
 
 
 def run_full_physics_correction_in_temporary_cache(
     *,
-    case: O2AInput,
+    scene: Scene,
     measurement: Measurement,
     state_vector: StateVector,
     controls: RetrievalControls,
     result_measurement: Measurement | None = None,
-    final_evaluation_case: O2AInput | None = None,
+    final_evaluation_scene: Scene | None = None,
 ) -> Result:
     """Run final correction without replacing a caller-owned fast-stage cache."""
 
     with rtm.SessionCache() as correction_cache:
         return run_full_physics_correction(
-            case=case,
+            scene=scene,
             measurement=measurement,
             state_vector=state_vector,
             controls=controls,
             cache=correction_cache,
             result_measurement=result_measurement,
-            final_evaluation_case=final_evaluation_case,
+            final_evaluation_scene=final_evaluation_scene,
         )
 
 
-def full_physics_case(case: O2AInput) -> O2AInput:
+def full_physics_scene(scene: Scene) -> Scene:
     """Return the same physical case with fastmode disabled."""
 
-    full_case = copy.deepcopy(case)
-    full_case.optimisation.fastmode.enabled = False
+    full_scene = copy.deepcopy(scene)
+    full_scene.optimisation.fastmode.enabled = False
 
-    return full_case
+    return full_scene
 
 
 def full_correction_measurement(
@@ -592,27 +592,27 @@ def measurement_on_wavelengths(
     )
 
 
-def full_correction_case(case: O2AInput, measurement: Measurement) -> O2AInput:
+def full_correction_scene(scene: Scene, measurement: Measurement) -> Scene:
     """Use full physics on the correction window instead of the whole O2 A band."""
 
-    return case_on_measurement_grid(case, measurement)
+    return scene_on_measurement_grid(scene, measurement)
 
 
-def case_on_measurement_grid(case: O2AInput, measurement: Measurement) -> O2AInput:
+def scene_on_measurement_grid(scene: Scene, measurement: Measurement) -> Scene:
     """Return the same case sampled on a selected measured wavelength grid."""
 
-    correction_case = copy.copy(case)
-    correction_case.instrument_response = copy.copy(case.instrument_response)
-    correction_case.spectral_grid = SpectralGrid(
+    correction_scene = copy.copy(scene)
+    correction_scene.instrument_response = copy.copy(scene.instrument_response)
+    correction_scene.spectral_grid = SpectralGrid(
         start_nm=float(measurement.wavelength_nm[0]),
         end_nm=float(measurement.wavelength_nm[-1]),
         sample_count=len(measurement.wavelength_nm),
     )
-    correction_case.instrument_response.measured_wavelengths_nm = tuple(
+    correction_scene.instrument_response.measured_wavelengths_nm = tuple(
         float(wavelength_nm) for wavelength_nm in measurement.wavelength_nm
     )
 
-    return correction_case
+    return correction_scene
 
 
 def state_vector_with_initial(
@@ -682,22 +682,22 @@ def combine_fastmode_correction_result(fast_result: Result, full_result: Result)
 
 def run_native_retrieval(
     *,
-    case: O2AInput,
+    scene: Scene,
     measurement: Measurement,
     state_vector: StateVector,
     controls: RetrievalControls | None,
     cache: rtm.SessionCache,
-    load_case: bool = True,
+    load_scene: bool = True,
 ) -> Result:
     """Bind the O2 A RTM relation to the generic OE solver."""
 
-    _require_aerosol_retrieval_compatible(case)
-    resolved_state_vector = resolved_state_vector_for_case(case, state_vector)
-    final_evaluate_state = _lazy_final_evaluator(case, resolved_state_vector)
+    _require_aerosol_retrieval_compatible(scene)
+    resolved_state_vector = resolved_state_vector_for_scene(scene, state_vector)
+    final_evaluate_state = _lazy_final_evaluator(scene, resolved_state_vector)
     active_controls = controls or RetrievalControls.from_disamar_retrieval_specs()
 
-    if load_case and not cache.has_loaded_case(case):
-        cache.load(case, copy_case=False)
+    if load_scene and not cache.has_loaded_scene(scene):
+        cache.load(scene, copy_scene=False)
 
     cache.warm_optimal_estimation(resolved_state_vector.jacobian_names)
 
@@ -716,22 +716,22 @@ def run_native_retrieval(
 
 def run_native_retrieval_batch(
     *,
-    case: O2AInput,
+    scene: Scene,
     measurement: Measurement,
     resolved_template: StateVector,
     controls: RetrievalControls | None,
     cache: rtm.SessionCache,
     start_rows: Sequence[Sequence[float]],
-    load_case: bool = True,
+    load_scene: bool = True,
     batch_workers: int = 1,
 ) -> BatchResult:
     """Bind one prepared O2 A relation to many native OE starts."""
 
-    _require_aerosol_retrieval_compatible(case)
+    _require_aerosol_retrieval_compatible(scene)
     active_controls = controls or RetrievalControls.from_disamar_retrieval_specs()
 
-    if load_case and not cache.has_loaded_case(case):
-        cache.load(case, copy_case=False)
+    if load_scene and not cache.has_loaded_scene(scene):
+        cache.load(scene, copy_scene=False)
 
     if batch_workers == 1:
         cache.warm_optimal_estimation(resolved_template.jacobian_names)
@@ -859,35 +859,35 @@ def batch_start_rows(
     return start_tuple, start_tuple
 
 
-def resolved_state_vector_for_case(
-    case: O2AInput,
+def resolved_state_vector_for_scene(
+    scene: Scene,
     state_vector: StateVector,
 ) -> StateVector:
     """Attach case-owned pressure metadata before native OE sees the state vector."""
 
     return resolved_state_vector_from_profile(
-        case,
+        scene,
         state_vector,
-        lambda: pressure_altitude_profile_from_case(case),
+        lambda: pressure_altitude_profile_from_scene(scene),
     )
 
 
-def resolved_state_vector_for_loaded_case(
-    case: O2AInput,
+def resolved_state_vector_for_loaded_scene(
+    scene: Scene,
     state_vector: StateVector,
     cache: rtm.SessionCache,
 ) -> StateVector:
     """Attach pressure metadata from a cache already matched to this case."""
 
     return resolved_state_vector_from_profile(
-        case,
+        scene,
         state_vector,
-        lambda: pressure_altitude_profile_from_loaded_cache(case, cache),
+        lambda: pressure_altitude_profile_from_loaded_cache(scene, cache),
     )
 
 
 def resolved_state_vector_from_profile(
-    case: O2AInput,
+    scene: Scene,
     state_vector: StateVector,
     pressure_profile: Callable[[], PressureAltitudeProfile],
 ) -> StateVector:
@@ -908,7 +908,7 @@ def resolved_state_vector_from_profile(
         if pressure_altitude_profile is None:
             pressure_altitude_profile = pressure_profile()
 
-        parameters.append(resolver(case, pressure_altitude_profile))
+        parameters.append(resolver(scene, pressure_altitude_profile))
         changed = True
 
     if not changed:
@@ -917,9 +917,9 @@ def resolved_state_vector_from_profile(
     return StateVector(tuple(parameters))
 
 
-def _require_aerosol_retrieval_compatible(case: object) -> None:
+def _require_aerosol_retrieval_compatible(scene: object) -> None:
 
-    aerosol = getattr(case, "aerosol", None)
+    aerosol = getattr(scene, "aerosol", None)
     checker = getattr(aerosol, "require_retrieval_compatible", None)
 
     if checker is not None:
@@ -927,12 +927,12 @@ def _require_aerosol_retrieval_compatible(case: object) -> None:
 
 
 def _lazy_final_evaluator(
-    case: O2AInput,
+    scene: Scene,
     state_vector: StateVector,
 ) -> Callable[[Sequence[float]], RtmEvaluation]:
     """Keep a way to evaluate the final retrieval state after the run ends."""
 
-    template = copy.deepcopy(case)
+    template = copy.deepcopy(scene)
 
     def evaluate_with_fresh_cache(state: Sequence[float]) -> RtmEvaluation:
 
@@ -975,14 +975,14 @@ def attach_final_evaluation(
 def attach_diagnosis(
     result: Result,
     *,
-    case: O2AInput,
+    scene: Scene,
     measurement: Measurement,
     state_vector: StateVector,
     controls: RetrievalControls,
 ) -> Result:
     """Attach a lazy multi-start diagnosis runner to one retrieval result."""
 
-    diagnosis_case = copy.deepcopy(case)
+    diagnosis_scene = copy.deepcopy(scene)
     diagnosis_measurement = copy.deepcopy(measurement)
     diagnosis_state_vector = copy.deepcopy(state_vector)
 
@@ -995,7 +995,7 @@ def attach_diagnosis(
         from .diagnosis import diagnose_retrieval
 
         return diagnose_retrieval(
-            case=diagnosis_case,
+            scene=diagnosis_scene,
             measurement=diagnosis_measurement,
             state_vector=diagnosis_state_vector,
             controls=controls,
@@ -1009,7 +1009,7 @@ def attach_diagnosis(
 
 
 def evaluate_reflectance(
-    case: O2AInput,
+    scene: Scene,
     state_names: tuple[str, ...],
     *,
     cache: rtm.SessionCache | None = None,
@@ -1017,11 +1017,11 @@ def evaluate_reflectance(
     """Evaluate reflectance and selected reflectance Jacobian columns."""
 
     spectrum = rtm.spectrum(
-        case,
+        scene,
         cache=cache,
         jacobian=True,
         jacobian_state_names=state_names,
-        include_case=False,
+        include_scene=False,
     )
     wavelength_nm = spectrum.wavelength_nm
     reflectance = spectrum.reflectance
@@ -1032,7 +1032,7 @@ def evaluate_reflectance(
     reflectance_jacobian_all = rtm.reflectance_jacobian_from_radiance_jacobian(
         radiance_jacobian,
         irradiance,
-        case.geometry.solar_mu0,
+        scene.geometry.solar_mu0,
     )
 
     if available_state_names != state_names:
@@ -1073,13 +1073,13 @@ def scale_reflectance_jacobian(
 
 
 def simulate_measurement(
-    case: O2AInput,
+    scene: Scene,
     *,
     signal_to_noise: float | Sequence[float],
 ) -> Measurement:
     """Simulate a reflectance measurement from a truth case."""
 
-    spectrum = rtm.spectrum(case)
+    spectrum = rtm.spectrum(scene)
 
     return Measurement(
         wavelength_nm=array("d", spectrum.wavelength_nm),
@@ -1088,22 +1088,22 @@ def simulate_measurement(
     )
 
 
-def pressure_altitude_profile_from_case(case: O2AInput) -> PressureAltitudeProfile:
+def pressure_altitude_profile_from_scene(scene: Scene) -> PressureAltitudeProfile:
     """Read the pressure-altitude relation from the RTM atmospheric grid."""
 
-    budget = rtm.atmospheric_budget(case, [case.spectral_grid.start_nm])
+    budget = rtm.atmospheric_budget(scene, [scene.spectral_grid.start_nm])
 
     return pressure_altitude_profile_from_budget(budget)
 
 
 def pressure_altitude_profile_from_loaded_cache(
-    case: O2AInput,
+    scene: Scene,
     cache: rtm.SessionCache,
 ) -> PressureAltitudeProfile:
     """Read pressure-altitude metadata from a cache already matched to this case."""
 
     return pressure_altitude_profile_from_budget(
-        cache.atmospheric_budget([case.spectral_grid.start_nm])
+        cache.atmospheric_budget([scene.spectral_grid.start_nm])
     )
 
 
@@ -1141,7 +1141,7 @@ def budget_row_float(row: Mapping[str, object], key: str) -> float:
 
 
 def measurement_from_sun_normalized_radiance_noise(
-    case: O2AInput,
+    scene: Scene,
     *,
     wavelength_nm: Sequence[float],
     sun_normalized_radiance_noise: Sequence[float],
@@ -1165,7 +1165,7 @@ def measurement_from_sun_normalized_radiance_noise(
     if any(value <= 0.0 for value in source_noise):
         raise ValueError("sun-normalized radiance noise must be positive")
 
-    spectrum = rtm.spectrum(case)
+    spectrum = rtm.spectrum(scene)
     measurement_wavelength = array("d", spectrum.wavelength_nm)
     reflectance = array("d", spectrum.reflectance)
 
@@ -1177,7 +1177,7 @@ def measurement_from_sun_normalized_radiance_noise(
     )
     reflectance_noise = rtm.reflectance_noise_from_sun_normalized_radiance_noise(
         source_noise,
-        case.geometry.solar_mu0,
+        scene.geometry.solar_mu0,
     )
 
     return Measurement(

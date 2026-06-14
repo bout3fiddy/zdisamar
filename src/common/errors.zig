@@ -8,6 +8,6 @@ pub const Error = error{
     InvalidControl,
     InvalidRequest,
     InvalidNumber,
-    InvalidO2Case,
+    InvalidScene,
     UnsupportedJsonInput,
 };

@@ -1,4 +1,4 @@
-const o2_case = @import("../input/o2_case.zig");
+const scene_input = @import("../input/scene.zig");
 
 // InstrumentTable --------------------------------------------------------------------------------------------|
 // Instrument line-shape and support-grid setup controls.                                                      |
@@ -28,17 +28,17 @@ pub const InstrumentTable = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn build(case: o2_case.O2Case) InstrumentTable {
+pub fn build(scene: scene_input.Scene) InstrumentTable {
     // build --------------------------------------------------------------------------------------------------|
     // Copy instrument and support-grid controls into a setup table.                                           |
     // --------------------------------------------------------------------------------------------------------|
     return .{
-        .name = case.observation.instrument_name,
-        .line_fwhm_nm = case.observation.instrument_line_fwhm_nm,
-        .high_resolution_step_nm = case.observation.high_resolution_step_nm,
-        .high_resolution_half_span_nm = case.observation.high_resolution_half_span_nm,
-        .adaptive_points_per_fwhm = case.observation.adaptive_points_per_fwhm,
-        .strong_line_min_divisions = case.observation.strong_line_min_divisions,
-        .strong_line_max_divisions = case.observation.strong_line_max_divisions,
+        .name = scene.observation.instrument_name,
+        .line_fwhm_nm = scene.observation.instrument_line_fwhm_nm,
+        .high_resolution_step_nm = scene.observation.high_resolution_step_nm,
+        .high_resolution_half_span_nm = scene.observation.high_resolution_half_span_nm,
+        .adaptive_points_per_fwhm = scene.observation.adaptive_points_per_fwhm,
+        .strong_line_min_divisions = scene.observation.strong_line_min_divisions,
+        .strong_line_max_divisions = scene.observation.strong_line_max_divisions,
     };
 }

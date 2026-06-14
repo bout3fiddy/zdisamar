@@ -10,7 +10,7 @@ from pathlib import Path
 
 from ... import rtm
 from ...display import NotebookDisplay, PrettyMapping
-from ...input.wavelength_band.o2a import O2AInput
+from ...input.wavelength_band.o2a import Scene
 from .retrieval import Measurement, RetrievalControls
 from .state_vector import (
     AEROSOL_LAYER_MID_PRESSURE_HPA,
@@ -263,7 +263,7 @@ class RetrievalDiagnosis(NotebookDisplay):
 
 def diagnose_retrieval(
     *,
-    case: O2AInput,
+    scene: Scene,
     measurement: Measurement,
     state_vector: StateVector,
     controls: RetrievalControls | None,
@@ -290,7 +290,7 @@ def diagnose_retrieval(
     if explicit_start_rows is None and n is not None and n > DIAGNOSIS_DEFAULT_START_CAP:
         raise ValueError(f"n must be at most {DIAGNOSIS_DEFAULT_START_CAP}")
 
-    axes = diagnosis_bounds(case, state_vector)
+    axes = diagnosis_bounds(scene, state_vector)
     active_start_count = (
         len(explicit_start_rows)
         if explicit_start_rows is not None
@@ -313,7 +313,7 @@ def diagnose_retrieval(
     start_s = time.perf_counter()
     active_start_rows, batch = run_diagnosis_schedule(
         o2a_oe,
-        case=case,
+        scene=scene,
         measurement=measurement,
         state_vector=state_vector,
         controls=controls,
@@ -349,7 +349,7 @@ def diagnose_retrieval(
 def run_diagnosis_schedule(
     o2a_oe,
     *,
-    case: O2AInput,
+    scene: Scene,
     measurement: Measurement,
     state_vector: StateVector,
     controls: RetrievalControls | None,
@@ -369,7 +369,7 @@ def run_diagnosis_schedule(
 
         batch = run_diagnosis_batch(
             o2a_oe,
-            case=case,
+            scene=scene,
             measurement=measurement,
             state_vector=state_vector,
             controls=controls,
@@ -383,7 +383,7 @@ def run_diagnosis_schedule(
     if dynamic:
         return run_dynamic_diagnosis_schedule(
             o2a_oe,
-            case=case,
+            scene=scene,
             measurement=measurement,
             state_vector=state_vector,
             controls=controls,
@@ -398,7 +398,7 @@ def run_diagnosis_schedule(
         start_rows = diagnosis_start_grid(axes, start_count)
         batch = run_diagnosis_batch(
             o2a_oe,
-            case=case,
+            scene=scene,
             measurement=measurement,
             state_vector=state_vector,
             controls=controls,
@@ -413,7 +413,7 @@ def run_diagnosis_schedule(
     coarse_rows = square_start_grid(axes, coarse_side)
     coarse_batch = run_diagnosis_batch(
         o2a_oe,
-        case=case,
+        scene=scene,
         measurement=measurement,
         state_vector=state_vector,
         controls=controls,
@@ -435,7 +435,7 @@ def run_diagnosis_schedule(
 
     refinement_batch = run_diagnosis_batch(
         o2a_oe,
-        case=case,
+        scene=scene,
         measurement=measurement,
         state_vector=state_vector,
         controls=controls,
@@ -450,7 +450,7 @@ def run_diagnosis_schedule(
 def run_diagnosis_batch(
     o2a_oe,
     *,
-    case: O2AInput,
+    scene: Scene,
     measurement: Measurement,
     state_vector: StateVector,
     controls: RetrievalControls | None,
@@ -461,7 +461,7 @@ def run_diagnosis_batch(
     """Run one native diagnosis batch and copy the relevant summary fields."""
 
     batch = o2a_oe.diagnosis_batch(
-        case=case,
+        scene=scene,
         measurement=measurement,
         state_vector=state_vector,
         start_rows=start_rows,
@@ -486,7 +486,7 @@ def run_diagnosis_batch(
 def run_dynamic_diagnosis_schedule(
     o2a_oe,
     *,
-    case: O2AInput,
+    scene: Scene,
     measurement: Measurement,
     state_vector: StateVector,
     controls: RetrievalControls | None,
@@ -501,7 +501,7 @@ def run_dynamic_diagnosis_schedule(
     active_rows = seeding_strategy.initial_rows(axes)
     active_batch = run_diagnosis_batch(
         o2a_oe,
-        case=case,
+        scene=scene,
         measurement=measurement,
         state_vector=state_vector,
         controls=controls,
@@ -524,7 +524,7 @@ def run_dynamic_diagnosis_schedule(
 
         refinement_batch = run_diagnosis_batch(
             o2a_oe,
-            case=case,
+            scene=scene,
             measurement=measurement,
             state_vector=state_vector,
             controls=controls,
@@ -1448,7 +1448,7 @@ def native_worker_ceiling() -> int:
 
 
 def diagnosis_bounds(
-    case: O2AInput,
+    scene: Scene,
     state_vector: StateVector,
 ) -> tuple[tuple[float, float], ...]:
     """Resolve the diagnosis domain for each state-vector coordinate."""
@@ -1462,7 +1462,7 @@ def diagnosis_bounds(
         if parameter.name == AEROSOL_OPTICAL_DEPTH:
             low, high = DIAGNOSIS_AOD_LOWER, 2.0
         elif parameter.name == AEROSOL_LAYER_MID_PRESSURE_HPA:
-            low, high = 50.0, float(case.surface.pressure_hpa)
+            low, high = 50.0, float(scene.surface.pressure_hpa)
         else:
             low = parameter.lower
             high = parameter.upper

@@ -1,59 +1,59 @@
 const std = @import("std");
 const internal = @import("internal");
 
-test "default O2 case consumes every O2 A setup control" {
-    const case = internal.input.defaults.referenceCase();
-    try internal.input.validate.o2Case(case);
+test "default O2 scene consumes every O2 A setup control" {
+    const scene = internal.input.defaults.referenceScene();
+    try internal.input.validate.sceneControls(scene);
 
-    try std.testing.expectEqual(@as(usize, 701), case.spectral_grid.sample_count);
-    try std.testing.expectEqual(@as(usize, 3), case.atmosphere.intervals.len);
-    try std.testing.expectEqual(@as(usize, 2), case.atmosphere.fit_interval_index_1based);
-    try std.testing.expectEqual(@as(usize, 3), case.line_gas.isotopes_sim.len);
-    try std.testing.expect(case.geometry.pseudo_spherical);
-    try std.testing.expectEqual(@as(f64, 0.2), case.surface_albedo);
+    try std.testing.expectEqual(@as(usize, 701), scene.spectral_grid.sample_count);
+    try std.testing.expectEqual(@as(usize, 3), scene.atmosphere.intervals.len);
+    try std.testing.expectEqual(@as(usize, 2), scene.atmosphere.fit_interval_index_1based);
+    try std.testing.expectEqual(@as(usize, 3), scene.line_gas.isotopes_sim.len);
+    try std.testing.expect(scene.geometry.pseudo_spherical);
+    try std.testing.expectEqual(@as(f64, 0.2), scene.surface_albedo);
 }
 
 test "invalid controls are rejected instead of carried inertly" {
-    var case = internal.input.defaults.referenceCase();
-    case.observation.high_resolution_step_nm = 0.0;
-    try std.testing.expectError(error.InvalidControl, internal.input.validate.o2Case(case));
+    var scene = internal.input.defaults.referenceScene();
+    scene.observation.high_resolution_step_nm = 0.0;
+    try std.testing.expectError(error.InvalidControl, internal.input.validate.sceneControls(scene));
 
-    case = internal.input.defaults.referenceCase();
-    case.cia.enabled = false;
-    try std.testing.expectError(error.InvalidControl, internal.input.validate.o2Case(case));
+    scene = internal.input.defaults.referenceScene();
+    scene.cia.enabled = false;
+    try std.testing.expectError(error.InvalidControl, internal.input.validate.sceneControls(scene));
 
     try std.testing.expectError(
         error.MissingField,
-        internal.input.json.parseO2CaseJson(std.testing.allocator, "{}"),
+        internal.input.json.parseSceneJson(std.testing.allocator, "{}"),
     );
 }
 
-test "Python native O2 case JSON round-trips into typed controls" {
+test "Python native O2 scene JSON round-trips into typed controls" {
     const allocator = std.testing.allocator;
 
-    const rendered = try internal.input.json.renderDefaultO2CaseJson(allocator);
+    const rendered = try internal.input.json.renderDefaultSceneJson(allocator);
     defer allocator.free(rendered);
 
-    var parsed = try internal.input.json.parseO2CaseJson(allocator, rendered);
+    var parsed = try internal.input.json.parseSceneJson(allocator, rendered);
     defer parsed.deinit();
 
-    try std.testing.expectEqual(@as(usize, 701), parsed.case.spectral_grid.sample_count);
-    try std.testing.expectEqual(@as(f64, 0.2), parsed.case.surface_albedo);
-    try std.testing.expectEqualStrings("o2a_disamar_reference_python", parsed.case.id);
+    try std.testing.expectEqual(@as(usize, 701), parsed.scene.spectral_grid.sample_count);
+    try std.testing.expectEqual(@as(f64, 0.2), parsed.scene.surface_albedo);
+    try std.testing.expectEqualStrings("o2a_disamar_reference_python", parsed.scene.id);
     try std.testing.expectEqualStrings(
         "data/reference_data/solar/o2a_solar_reference_753_778.csv",
-        parsed.case.observation.solar_reference.path,
+        parsed.scene.observation.solar_reference.path,
     );
     try std.testing.expectEqual(
         internal.rtm.controls.PerformanceThresholds.o2a_default,
-        parsed.case.rtm.performance_thresholds,
+        parsed.scene.rtm.performance_thresholds,
     );
 }
 
 test "Python NaN altitude placeholders are normalized before typed parsing" {
     const allocator = std.testing.allocator;
 
-    const rendered = try internal.input.json.renderDefaultO2CaseJson(allocator);
+    const rendered = try internal.input.json.renderDefaultSceneJson(allocator);
     defer allocator.free(rendered);
     const with_nan = try std.mem.replaceOwned(
         u8,
@@ -64,17 +64,17 @@ test "Python NaN altitude placeholders are normalized before typed parsing" {
     );
     defer allocator.free(with_nan);
 
-    var parsed = try internal.input.json.parseO2CaseJson(allocator, with_nan);
+    var parsed = try internal.input.json.parseSceneJson(allocator, with_nan);
     defer parsed.deinit();
 
-    try std.testing.expectEqual(@as(usize, 3), parsed.case.atmosphere.intervals.len);
-    try std.testing.expectEqual(@as(f64, 0.3), parsed.case.atmosphere.intervals[0].top_pressure_hpa);
+    try std.testing.expectEqual(@as(usize, 3), parsed.scene.atmosphere.intervals.len);
+    try std.testing.expectEqual(@as(f64, 0.3), parsed.scene.atmosphere.intervals[0].top_pressure_hpa);
 }
 
 test "Python native fast RTM thresholds are consumed by solve config" {
     const allocator = std.testing.allocator;
 
-    const rendered = try internal.input.json.renderDefaultO2CaseJson(allocator);
+    const rendered = try internal.input.json.renderDefaultSceneJson(allocator);
     defer allocator.free(rendered);
     const fast_threshold = try std.mem.replaceOwned(
         u8,
@@ -85,23 +85,23 @@ test "Python native fast RTM thresholds are consumed by solve config" {
     );
     defer allocator.free(fast_threshold);
 
-    var parsed = try internal.input.json.parseO2CaseJson(allocator, fast_threshold);
+    var parsed = try internal.input.json.parseSceneJson(allocator, fast_threshold);
     defer parsed.deinit();
 
     try std.testing.expectEqual(
         @as(?u16, 5),
-        parsed.case.rtm.performance_thresholds.fourier_order_cap,
+        parsed.scene.rtm.performance_thresholds.fourier_order_cap,
     );
     try std.testing.expectEqual(
         @as(?u16, 5),
-        internal.public.o2aSolveConfig(parsed.case).controls.performance_thresholds.fourier_order_cap,
+        internal.public.solveConfig(parsed.scene).controls.performance_thresholds.fourier_order_cap,
     );
 }
 
 test "Python native measured wavelengths are consumed as sparse product axes" {
     const allocator = std.testing.allocator;
 
-    const rendered = try internal.input.json.renderDefaultO2CaseJson(allocator);
+    const rendered = try internal.input.json.renderDefaultSceneJson(allocator);
     defer allocator.free(rendered);
 
     const sparse_count = try std.mem.replaceOwned(
@@ -121,14 +121,14 @@ test "Python native measured wavelengths are consumed as sparse product axes" {
     );
     defer allocator.free(sparse_axis);
 
-    var parsed = try internal.input.json.parseO2CaseJson(allocator, sparse_axis);
+    var parsed = try internal.input.json.parseSceneJson(allocator, sparse_axis);
     defer parsed.deinit();
 
-    try std.testing.expectEqual(@as(usize, 3), parsed.case.spectral_grid.sample_count);
-    try std.testing.expectEqual(@as(usize, 3), parsed.case.observation.measured_wavelengths_nm.len);
+    try std.testing.expectEqual(@as(usize, 3), parsed.scene.spectral_grid.sample_count);
+    try std.testing.expectEqual(@as(usize, 3), parsed.scene.observation.measured_wavelengths_nm.len);
     try std.testing.expectApproxEqAbs(
         765.5,
-        parsed.case.observation.measured_wavelengths_nm[1],
+        parsed.scene.observation.measured_wavelengths_nm[1],
         0.0,
     );
 
@@ -143,14 +143,14 @@ test "Python native measured wavelengths are consumed as sparse product axes" {
 
     try std.testing.expectError(
         error.InvalidControl,
-        internal.input.json.parseO2CaseJson(allocator, mismatched_axis),
+        internal.input.json.parseSceneJson(allocator, mismatched_axis),
     );
 }
 
 test "Python native aerosol profile JSON validates explicit multi-layer rows" {
     const allocator = std.testing.allocator;
 
-    const rendered = try internal.input.json.renderDefaultO2CaseJson(allocator);
+    const rendered = try internal.input.json.renderDefaultSceneJson(allocator);
     defer allocator.free(rendered);
 
     const valid_profile = try jsonWithAerosolProfile(allocator, rendered,
@@ -165,18 +165,18 @@ test "Python native aerosol profile JSON validates explicit multi-layer rows" {
     );
     defer allocator.free(valid_profile);
 
-    var parsed = try internal.input.json.parseO2CaseJson(allocator, valid_profile);
+    var parsed = try internal.input.json.parseSceneJson(allocator, valid_profile);
     defer parsed.deinit();
 
-    try std.testing.expectEqual(@as(usize, 2), parsed.case.aerosol.profile.len);
-    try std.testing.expectApproxEqAbs(0.18, parsed.case.aerosol.profile[0].optical_depth, 0.0);
-    try std.testing.expectApproxEqAbs(0.24, parsed.case.aerosol.profile[1].optical_depth, 0.0);
+    try std.testing.expectEqual(@as(usize, 2), parsed.scene.aerosol.profile.len);
+    try std.testing.expectApproxEqAbs(0.18, parsed.scene.aerosol.profile[0].optical_depth, 0.0);
+    try std.testing.expectApproxEqAbs(0.24, parsed.scene.aerosol.profile[1].optical_depth, 0.0);
 }
 
 test "Python native aerosol profile JSON rejects unsupported pressure and merge shapes" {
     const allocator = std.testing.allocator;
 
-    const rendered = try internal.input.json.renderDefaultO2CaseJson(allocator);
+    const rendered = try internal.input.json.renderDefaultSceneJson(allocator);
     defer allocator.free(rendered);
 
     const off_grid_profile = try jsonWithAerosolProfile(allocator, rendered,
@@ -188,7 +188,7 @@ test "Python native aerosol profile JSON rejects unsupported pressure and merge 
     defer allocator.free(off_grid_profile);
     try std.testing.expectError(
         error.InvalidRequest,
-        internal.input.json.parseO2CaseJson(allocator, off_grid_profile),
+        internal.input.json.parseSceneJson(allocator, off_grid_profile),
     );
 
     const spectral_merge_profile = try jsonWithAerosolProfile(allocator, rendered,
@@ -202,7 +202,7 @@ test "Python native aerosol profile JSON rejects unsupported pressure and merge 
     defer allocator.free(spectral_merge_profile);
     try std.testing.expectError(
         error.InvalidRequest,
-        internal.input.json.parseO2CaseJson(allocator, spectral_merge_profile),
+        internal.input.json.parseSceneJson(allocator, spectral_merge_profile),
     );
 }
 

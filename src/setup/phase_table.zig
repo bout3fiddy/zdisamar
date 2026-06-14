@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const hashing = @import("../common/hashing.zig");
-const o2_case = @import("../input/o2_case.zig");
+const scene_input = @import("../input/scene.zig");
 
 pub const coefficient_count: usize = 151;
 pub const vendor_hg_max_phase_index: usize = coefficient_count - 1;
@@ -52,20 +52,20 @@ pub fn hashAll(hasher: *std.hash.Wyhash, table: PhaseTable) void {
 }
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn build(case: o2_case.O2Case) PhaseTable {
+pub fn build(scene: scene_input.Scene) PhaseTable {
     // build --------------------------------------------------------------------------------------------------|
     // Prepare the case aerosol HG phase row for later LABOS phase-kernel construction.                        |
     //                                                                                                         |
     //   profileEquivalentPhaseCoefficients: one equivalent HG g is weighted by midpoint-wavelength            |
     //   scattering optical depth.                                                                             |
     // --------------------------------------------------------------------------------------------------------|
-    const asymmetry_factor = if (case.aerosol.profile.len == 0)
-        case.aerosol.asymmetry_factor
+    const asymmetry_factor = if (scene.aerosol.profile.len == 0)
+        scene.aerosol.asymmetry_factor
     else
-        profileEquivalentAsymmetryFactor(case);
+        profileEquivalentAsymmetryFactor(scene);
     const coefficients = hgPhaseCoefficientsWithThreshold(
         asymmetry_factor,
-        case.rtm.performance_thresholds.phase_function_truncation_threshold,
+        scene.rtm.performance_thresholds.phase_function_truncation_threshold,
     );
     return .{
         .aerosol_phase_coefficients = coefficients,
@@ -133,7 +133,7 @@ pub fn maxPhaseCoefficientIndex(coefficients: *const [coefficient_count]f64) usi
     return 0;
 }
 
-fn profileEquivalentAsymmetryFactor(case: o2_case.O2Case) f64 {
+fn profileEquivalentAsymmetryFactor(scene: scene_input.Scene) f64 {
     // profileEquivalentAsymmetryFactor -----------------------------------------------------------------------|
     // Collapse explicit aerosol profile layers into one midpoint-wavelength HG asymmetry value.               |
     //                                                                                                         |
@@ -142,11 +142,11 @@ fn profileEquivalentAsymmetryFactor(case: o2_case.O2Case) f64 {
     //   scattering_i = scaled_tau_i(midpoint_nm) * single_scatter_albedo_i                                    |
     //   g_equiv = sum(scattering_i * asymmetry_i) / sum(scattering_i)                                         |
     // --------------------------------------------------------------------------------------------------------|
-    const midpoint_nm = 0.5 * (case.spectral_grid.start_nm + case.spectral_grid.end_nm);
+    const midpoint_nm = 0.5 * (scene.spectral_grid.start_nm + scene.spectral_grid.end_nm);
     var scattering_sum: f64 = 0.0;
     var asymmetry_sum: f64 = 0.0;
 
-    for (case.aerosol.profile) |layer| {
+    for (scene.aerosol.profile) |layer| {
         const scattering = scaleOpticalDepth(
             layer.optical_depth,
             layer.reference_wavelength_nm,
@@ -159,7 +159,7 @@ fn profileEquivalentAsymmetryFactor(case: o2_case.O2Case) f64 {
         asymmetry_sum += scattering * layer.asymmetry_factor;
     }
 
-    return if (scattering_sum > 0.0) asymmetry_sum / scattering_sum else case.aerosol.asymmetry_factor;
+    return if (scattering_sum > 0.0) asymmetry_sum / scattering_sum else scene.aerosol.asymmetry_factor;
 }
 
 fn scaleOpticalDepth(

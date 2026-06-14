@@ -55,7 +55,7 @@ pub const input = struct {
     pub const defaults = @import("input/defaults.zig");
     pub const hitran_partition_tables = @import("input/hitran_partition_tables.zig");
     pub const json = @import("input/json.zig");
-    pub const o2_case = @import("input/o2_case.zig");
+    pub const scene_input = @import("input/scene.zig");
     pub const validate = @import("input/validate.zig");
 };
 // ------------------------------------------------------------------------------------------------------------|
@@ -92,7 +92,7 @@ pub const setup = struct {
     pub const cia_table = @import("setup/cia_table.zig");
     pub const instrument_tables = @import("setup/instrument_tables.zig");
     pub const line_tables = @import("setup/line_tables.zig");
-    pub const o2_run_tables = @import("setup/o2_run_tables.zig");
+    pub const run_tables = @import("setup/run_tables.zig");
     pub const phase_table = @import("setup/phase_table.zig");
     pub const solar_table = @import("setup/solar_table.zig");
 };
@@ -110,7 +110,7 @@ pub const setup = struct {
 // footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
 pub const cache = struct {
     pub const forward_worker_pool = @import("cache/forward_worker_pool.zig");
-    pub const o2_session_memory = @import("cache/o2_session_memory.zig");
+    pub const session_memory = @import("cache/session_memory.zig");
     pub const profile_line_memory = @import("cache/profile_line_memory.zig");
     pub const radiance_memory = @import("cache/radiance_memory.zig");
     pub const solar_irradiance_memory = @import("cache/solar_irradiance_memory.zig");
@@ -151,8 +151,8 @@ pub const optics = struct {
 pub const output = struct {
     pub const atmospheric_budget = @import("output/atmospheric_budget.zig");
     pub const instrument_response = @import("output/instrument_response.zig");
-    pub const o2_line_contributions = @import("output/o2_line_contributions.zig");
-    pub const o2_o2_cia = @import("output/o2_o2_cia.zig");
+    pub const line_contributions = @import("output/line_contributions.zig");
+    pub const cia_diagnostics = @import("output/cia_diagnostics.zig");
     pub const spectrum = @import("output/spectrum.zig");
 };
 // ------------------------------------------------------------------------------------------------------------|
@@ -229,7 +229,7 @@ pub const spectrum = struct {
 //                                                                                                             |
 // footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
 pub const validation = struct {
-    pub const o2a_band_metrics = @import("validation/o2a_band_metrics.zig");
+    pub const band_metrics = @import("validation/band_metrics.zig");
 };
 // ------------------------------------------------------------------------------------------------------------|
 

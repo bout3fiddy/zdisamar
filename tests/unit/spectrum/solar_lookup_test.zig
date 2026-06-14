@@ -8,9 +8,9 @@ const solar_lookup = internal.spectrum.solar_lookup;
 const solar_table = internal.setup.solar_table;
 
 test "SolarTable prepares canonical spline state for reference solar rows" {
-    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
+    var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
-        internal.input.defaults.referenceCase(),
+        internal.input.defaults.referenceScene(),
     );
     defer tables.deinit(std.testing.allocator);
 
@@ -37,9 +37,9 @@ test "SolarTable prepares canonical spline state for reference solar rows" {
 }
 
 test "irradianceAtWavelength matches operational spline and clamp behavior" {
-    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
+    var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
-        internal.input.defaults.referenceCase(),
+        internal.input.defaults.referenceScene(),
     );
     defer tables.deinit(std.testing.allocator);
 
@@ -52,9 +52,9 @@ test "irradianceAtWavelength matches operational spline and clamp behavior" {
 }
 
 test "integrateIrradianceAtNominalAssumeCapacity weights cached irradiance samples" {
-    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
+    var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
-        internal.input.defaults.referenceCase(),
+        internal.input.defaults.referenceScene(),
     );
     defer tables.deinit(std.testing.allocator);
 

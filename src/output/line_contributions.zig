@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const o2_run_tables = @import("../setup/o2_run_tables.zig");
+const run_tables = @import("../setup/run_tables.zig");
 const readers = @import("../assets/readers.zig");
 const line_physics = @import("../spectrum/line_physics.zig");
 
@@ -10,7 +10,7 @@ const min_spectroscopy_pressure_atm = 1.0e-12;
 const missing_index = std.math.maxInt(u32);
 const vendor_cutoff_prewindow_margin_cm1 = line_physics.vendor_cutoff_prewindow_margin_cm1;
 
-// o2_line_contributions.zig ----------------------------------------------------------------------------------|
+// line_contributions.zig -------------------------------------------------------------------------------------|
 // Public O2 line-by-line diagnostic rows for selected wavelengths and spectroscopy profile nodes.             |
 //                                                                                                             |
 // boundary                                                                                                    |
@@ -28,17 +28,17 @@ const vendor_cutoff_prewindow_margin_cm1 = line_physics.vendor_cutoff_prewindow_
 //   row count so Python can distinguish a short materialized table from a short route.                        |
 // ------------------------------------------------------------------------------------------------------------|
 
-// O2LineRowKind ----------------------------------------------------------------------------------------------|
+// LineRowKind ------------------------------------------------------------------------------------------------|
 // Public row kind labels used by python/zdisamar/output/tables.py.                                            |
-pub const O2LineRowKind = enum(u32) {
+pub const LineRowKind = enum(u32) {
     weak_line = 0,
     strong_line = 1,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// O2LineStatus -----------------------------------------------------------------------------------------------|
+// LineStatus -------------------------------------------------------------------------------------------------|
 // Public row status labels used by python/zdisamar/output/tables.py.                                          |
-pub const O2LineStatus = enum(u32) {
+pub const LineStatus = enum(u32) {
     weak_included = 0,
     weak_excluded_by_strong_line = 1,
     strong_sidecar = 2,
@@ -46,7 +46,7 @@ pub const O2LineStatus = enum(u32) {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// O2LineContributionRow --------------------------------------------------------------------------------------|
+// LineContributionRow ----------------------------------------------------------------------------------------|
 // One public O2 spectroscopy diagnostic row for one wavelength and thermodynamic profile node.                |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -57,8 +57,8 @@ pub const O2LineStatus = enum(u32) {
 // [  8.. 11] profile_node_index                 : u32                                                         |
 // [ 12.. 15] padding                            : 4 B                                                         |
 // [ 16.. 23] altitude_km                        : f64                                                         |
-// [ 24.. 27] row_kind                           : O2LineRowKind                                               |
-// [ 28.. 31] status                             : O2LineStatus                                                |
+// [ 24.. 27] row_kind                           : LineRowKind                                                 |
+// [ 28.. 31] status                             : LineStatus                                                  |
 // [ 32.. 35] line_index                         : u32                                                         |
 // [ 36.. 39] strong_line_index                  : u32                                                         |
 // [ 40.. 43] matched_strong_line_index          : u32                                                         |
@@ -81,12 +81,12 @@ pub const O2LineStatus = enum(u32) {
 // [144..151] line_mixing_sigma_cm2_per_molecule : f64                                                         |
 // [152..159] total_sigma_cm2_per_molecule       : f64                                                         |
 // [160..167] abs_total_sigma_cm2_per_molecule   : f64                                                         |
-pub const O2LineContributionRow = extern struct {
+pub const LineContributionRow = extern struct {
     wavelength_nm: f64,
     profile_node_index: u32,
     altitude_km: f64,
-    row_kind: O2LineRowKind,
-    status: O2LineStatus,
+    row_kind: LineRowKind,
+    status: LineStatus,
     line_index: u32,
     strong_line_index: u32,
     matched_strong_line_index: u32,
@@ -110,27 +110,27 @@ pub const O2LineContributionRow = extern struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// O2LineContributions ----------------------------------------------------------------------------------------|
+// LineContributions ------------------------------------------------------------------------------------------|
 // Owned O2 spectroscopy diagnostic table returned through root/API calls.                                     |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 32 B (0.031 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [ 0..15] rows            : []O2LineContributionRow                                                          |
+// [ 0..15] rows            : []LineContributionRow                                                            |
 // [16..23] total_row_count : usize                                                                            |
 // [24..24] truncated       : bool                                                                             |
 // [25..31] padding         : 7 B                                                                              |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   rows owns min(total_row_count, max_rows) records.                                                         |
-pub const O2LineContributions = struct {
-    rows: []O2LineContributionRow = &.{},
+pub const LineContributions = struct {
+    rows: []LineContributionRow = &.{},
     total_row_count: usize = 0,
     truncated: bool = false,
 
-    pub fn deinit(self: *O2LineContributions, allocator: Allocator) void {
-        // O2LineContributions.deinit -------------------------------------------------------------------------|
+    pub fn deinit(self: *LineContributions, allocator: Allocator) void {
+        // LineContributions.deinit ---------------------------------------------------------------------------|
         // Release materialized diagnostic rows.                                                               |
         // ----------------------------------------------------------------------------------------------------|
         allocator.free(self.rows);
@@ -152,7 +152,7 @@ const RuntimeControls = struct {
 };
 
 const RuntimeLine = struct {
-    line: readers.O2LineAssetRow,
+    line: readers.LineAssetRow,
     line_index: u32,
 };
 
@@ -171,22 +171,22 @@ const StrongAnchorFields = struct {
 };
 
 const StrongAnchorMatch = struct {
-    line: *const readers.O2LineAssetRow,
+    line: *const readers.LineAssetRow,
     line_index: u32,
 };
 
 pub fn build(
     allocator: Allocator,
-    tables: *const o2_run_tables.O2RunTables,
+    tables: *const run_tables.RunTables,
     wavelengths_nm: []const f64,
     max_rows: usize,
-) !O2LineContributions {
+) !LineContributions {
     // build --------------------------------------------------------------------------------------------------|
     // Build public O2 line-contribution diagnostics for caller-selected wavelengths.                          |
     //                                                                                                         |
     // memory                                                                                                  |
     //   Allocates one output table capped by max_rows; all spectroscopy rows and profile nodes are borrowed   |
-    //   from O2RunTables.                                                                                     |
+    //   from RunTables.                                                                                       |
     // --------------------------------------------------------------------------------------------------------|
     if (wavelengths_nm.len == 0) return error.EmptyWavelengths;
     if (max_rows == 0) return error.InvalidRowLimit;
@@ -198,7 +198,7 @@ pub fn build(
     const runtime_lines = try collectRuntimeLines(allocator, tables.lines.rows, tables.lines.isotopes_sim);
     defer allocator.free(runtime_lines);
     const strong_line_count = @min(tables.lines.strong_lines.len, line_physics.max_strong_line_sidecars);
-    var rows = std.ArrayList(O2LineContributionRow).empty;
+    var rows = std.ArrayList(LineContributionRow).empty;
     errdefer rows.deinit(allocator);
     try rows.ensureTotalCapacity(allocator, @min(max_rows, runtime_lines.len + strong_line_count));
     var window_rows = std.ArrayList(RuntimeLine).empty;
@@ -242,10 +242,10 @@ pub fn build(
 
 fn appendRowsForState(
     allocator: Allocator,
-    rows: *std.ArrayList(O2LineContributionRow),
+    rows: *std.ArrayList(LineContributionRow),
     total_row_count: *usize,
     max_rows: usize,
-    tables: *const o2_run_tables.O2RunTables,
+    tables: *const run_tables.RunTables,
     window: LineWindow,
     runtime: RuntimeControls,
     wavelength_nm: f64,
@@ -302,7 +302,7 @@ fn appendRowsForState(
 }
 
 fn weakLineRow(
-    strong_lines: []const readers.O2StrongLineAssetRow,
+    strong_lines: []const readers.StrongLineAssetRow,
     window: LineWindow,
     wavelength_nm: f64,
     thermodynamic_state: ThermodynamicState,
@@ -312,7 +312,7 @@ fn weakLineRow(
     line_index: usize,
     vendor_partition: bool,
     runtime: RuntimeControls,
-) O2LineContributionRow {
+) LineContributionRow {
     // weakLineRow --------------------------------------------------------------------------------------------|
     // Project one HITRAN weak-line row and its canonical inclusion status into the public diagnostic shape.   |
     // --------------------------------------------------------------------------------------------------------|
@@ -321,7 +321,7 @@ fn weakLineRow(
     const excluded = shouldExcludeWeakLine(line, line_index, window.lines, strong_lines, vendor_partition);
 
     var weak_sigma: f64 = 0.0;
-    var status: O2LineStatus = .weak_excluded_by_strong_line;
+    var status: LineStatus = .weak_excluded_by_strong_line;
 
     if (!excluded) {
         weak_sigma = line_physics.weakLineContribution(
@@ -373,8 +373,8 @@ fn weakLineRow(
 }
 
 fn strongLineRow(
-    strong_lines: []const readers.O2StrongLineAssetRow,
-    strong_line: readers.O2StrongLineAssetRow,
+    strong_lines: []const readers.StrongLineAssetRow,
+    strong_line: readers.StrongLineAssetRow,
     strong_index: usize,
     window: LineWindow,
     wavelength_nm: f64,
@@ -384,7 +384,7 @@ fn strongLineRow(
     runtime: RuntimeControls,
     vendor_partition: bool,
     strong_state: *const StrongLinePreparedState,
-) O2LineContributionRow {
+) LineContributionRow {
     // strongLineRow ------------------------------------------------------------------------------------------|
     // Project one LISA strong-line sidecar row and its weak-line anchor metadata into the public table.       |
     // --------------------------------------------------------------------------------------------------------|
@@ -456,7 +456,7 @@ fn resolveStrongAnchorFields(anchor: ?StrongAnchorMatch) StrongAnchorFields {
 }
 
 fn strongAnchorLine(
-    strong_lines: []const readers.O2StrongLineAssetRow,
+    strong_lines: []const readers.StrongLineAssetRow,
     window: LineWindow,
     strong_index: usize,
     vendor_partition: bool,
@@ -518,7 +518,7 @@ fn relevantLineWindow(
 
 fn collectRuntimeLines(
     allocator: Allocator,
-    lines: []const readers.O2LineAssetRow,
+    lines: []const readers.LineAssetRow,
     active_isotopes: []const u8,
 ) ![]RuntimeLine {
     // collectRuntimeLines ------------------------------------------------------------------------------------|
@@ -553,7 +553,7 @@ fn lessRuntimeLineByCenter(_: void, lhs: RuntimeLine, rhs: RuntimeLine) bool {
     return lhs.line.center_wavelength_nm < rhs.line.center_wavelength_nm;
 }
 
-fn runtimeLine(line: readers.O2LineAssetRow, active_isotopes: []const u8) bool {
+fn runtimeLine(line: readers.LineAssetRow, active_isotopes: []const u8) bool {
     // runtimeLine --------------------------------------------------------------------------------------------|
     // Apply the total-sigma gas/isotope controls without the weak-line threshold filter.                      |
     // --------------------------------------------------------------------------------------------------------|
@@ -567,7 +567,7 @@ fn runtimeLine(line: readers.O2LineAssetRow, active_isotopes: []const u8) bool {
 
 fn usesVendorStrongLinePartition(
     lines: []const RuntimeLine,
-    strong_lines: []const readers.O2StrongLineAssetRow,
+    strong_lines: []const readers.StrongLineAssetRow,
 ) bool {
     // usesVendorStrongLinePartition --------------------------------------------------------------------------|
     // Detect the O2 A sidecar partition from retained HITRAN branch metadata.                                 |
@@ -588,29 +588,29 @@ fn usesVendorStrongLinePartition(
 }
 
 fn matchedStrongIndexForRelevantLine(
-    strong_lines: []const readers.O2StrongLineAssetRow,
-    line: readers.O2LineAssetRow,
+    strong_lines: []const readers.StrongLineAssetRow,
+    line: readers.LineAssetRow,
     vendor_partition: bool,
 ) ?usize {
     // matchedStrongIndexForRelevantLine ----------------------------------------------------------------------|
     // Report the sidecar index associated with a weak line when the partition rules assign one.               |
     // --------------------------------------------------------------------------------------------------------|
-    if (vendor_partition and !line_physics.isVendorO2AStrongCandidateFromSource(line)) return null;
+    if (vendor_partition and !line_physics.isVendorStrongCandidateFromSource(line)) return null;
     return line_physics.findStrongLineMatch(strong_lines, line.center_wavelength_nm);
 }
 
 fn shouldExcludeWeakLine(
-    line: readers.O2LineAssetRow,
+    line: readers.LineAssetRow,
     line_index: usize,
     window: []const RuntimeLine,
-    strong_lines: []const readers.O2StrongLineAssetRow,
+    strong_lines: []const readers.StrongLineAssetRow,
     vendor_partition: bool,
 ) bool {
     // shouldExcludeWeakLine ----------------------------------------------------------------------------------|
     // Keep lines covered by O2 strong-line sidecars out of the weak-line contribution.                        |
     // --------------------------------------------------------------------------------------------------------|
     if (vendor_partition) {
-        if (!line_physics.isVendorO2AStrongCandidateFromSource(line)) return false;
+        if (!line_physics.isVendorStrongCandidateFromSource(line)) return false;
         return line_physics.findStrongLineMatch(strong_lines, line.center_wavelength_nm) != null;
     }
 
@@ -620,7 +620,7 @@ fn shouldExcludeWeakLine(
 
 fn strongestWindowAnchorForSidecar(
     window: []const RuntimeLine,
-    strong_line: readers.O2StrongLineAssetRow,
+    strong_line: readers.StrongLineAssetRow,
 ) usize {
     // strongestWindowAnchorForSidecar ------------------------------------------------------------------------|
     // Select the generic sidecar anchor: closest line center, then strongest line on an equal delta.          |
@@ -646,6 +646,6 @@ fn strongestWindowAnchorForSidecar(
 }
 
 comptime {
-    std.debug.assert(@sizeOf(O2LineContributionRow) == 168);
-    std.debug.assert(@sizeOf(O2LineContributions) == 32);
+    std.debug.assert(@sizeOf(LineContributionRow) == 168);
+    std.debug.assert(@sizeOf(LineContributions) == 32);
 }

@@ -2,7 +2,7 @@ const std = @import("std");
 
 const readers = @import("../assets/readers.zig");
 const errors = @import("../common/errors.zig");
-const o2_case = @import("../input/o2_case.zig");
+const scene_input = @import("../input/scene.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -46,11 +46,11 @@ pub fn hashAll(hasher: *std.hash.Wyhash, table: SolarTable) void {
 }
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn build(allocator: Allocator, case: o2_case.O2Case) !SolarTable {
+pub fn build(allocator: Allocator, scene: scene_input.Scene) !SolarTable {
     // build --------------------------------------------------------------------------------------------------|
     // Load solar reference rows and prepare the operational-table spline state once during setup.             |
     // --------------------------------------------------------------------------------------------------------|
-    const rows = try readers.readSolarReference(allocator, case.observation.solar_reference.path);
+    const rows = try readers.readSolarReference(allocator, scene.observation.solar_reference.path);
     errdefer allocator.free(rows);
 
     const second_derivatives = try buildSplineSecondDerivatives(allocator, rows);

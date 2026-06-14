@@ -201,7 +201,7 @@ pub fn fillSupportOpticsAtWavelength(
     wavelength_nm: f64,
     layer_grid: atmosphere_layers.LayerGrid,
     line_sigma_cm2_per_molecule: []const f64,
-    cia: cia_table.O2CiaTable,
+    cia: cia_table.CiaTable,
     aerosol: aerosol_tables.AerosolLayerTable,
     noalias out_support: []SupportOptics,
     stage_cost: ?CostTiming.Active,

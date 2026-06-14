@@ -6,7 +6,7 @@ const instrument_response = internal.output.instrument_response;
 const allocator = std.testing.allocator;
 
 // RowEvidence ------------------------------------------------------------------------------------------------|
-// `rtm.instrument_response(o2a.reference_case(), [758.0, 760.0, 765.0, 767.0, 776.0])`.                       |
+// `rtm.instrument_response(o2a.reference_scene(), [758.0, 760.0, 765.0, 767.0, 776.0])`.                      |
 // The O2 A public artifact records no instrument-response rows, so this canonical probe is the source oracle. |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -177,7 +177,7 @@ const expected_rows = [_]RowEvidence{
 };
 
 test "instrument response rows match public route at probe wavelengths" {
-    var prepared = try internal.public.prepareO2A(allocator, internal.input.defaults.referenceCase());
+    var prepared = try internal.public.prepare(allocator, internal.input.defaults.referenceScene());
     defer prepared.deinit(allocator);
 
     const wavelengths_nm = [_]f64{ 758.0, 760.0, 765.0, 767.0, 776.0 };
@@ -197,7 +197,7 @@ test "instrument response rows match public route at probe wavelengths" {
 }
 
 test "instrument response channel mask selects one public channel" {
-    var prepared = try internal.public.prepareO2A(allocator, internal.input.defaults.referenceCase());
+    var prepared = try internal.public.prepare(allocator, internal.input.defaults.referenceScene());
     defer prepared.deinit(allocator);
 
     const wavelengths_nm = [_]f64{ 758.0, 760.0, 765.0, 767.0, 776.0 };
@@ -223,7 +223,7 @@ test "instrument response channel mask selects one public channel" {
 }
 
 test "instrument response rejects empty and unsupported channel masks" {
-    var prepared = try internal.public.prepareO2A(allocator, internal.input.defaults.referenceCase());
+    var prepared = try internal.public.prepare(allocator, internal.input.defaults.referenceScene());
     defer prepared.deinit(allocator);
 
     const wavelengths_nm = [_]f64{758.0};

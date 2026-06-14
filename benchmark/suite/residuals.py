@@ -141,7 +141,7 @@ def result_delta(current: Any, reference: Any) -> dict[str, float]:
 
 def mid_pressure_jacobian_scale(case: Any) -> float:
 
-    profile = band_retrieval.pressure_altitude_profile_from_case(case)
+    profile = band_retrieval.pressure_altitude_profile_from_scene(case)
     aerosol_mid_pressure_hpa = 0.5 * (
         case.aerosol.placement.top_pressure_hpa + case.aerosol.placement.bottom_pressure_hpa
     )

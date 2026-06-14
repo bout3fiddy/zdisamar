@@ -3,28 +3,28 @@ const builtin = @import("builtin");
 
 const internal = @import("internal");
 
-const o2_session_memory = internal.cache.o2_session_memory;
+const session_memory = internal.cache.session_memory;
 
-test "O2SessionMemory groups named reusable memory owners only" {
-    var memory = o2_session_memory.O2SessionMemory.init(std.testing.allocator);
+test "SessionMemory groups named reusable memory owners only" {
+    var memory = session_memory.SessionMemory.init(std.testing.allocator);
     defer memory.deinit(std.testing.allocator);
 
-    try std.testing.expect(@hasField(o2_session_memory.O2SessionMemory, "spectrum"));
-    try std.testing.expect(@hasField(o2_session_memory.O2SessionMemory, "radiance"));
-    try std.testing.expect(@hasField(o2_session_memory.O2SessionMemory, "profile_lines"));
-    try std.testing.expect(@hasField(o2_session_memory.O2SessionMemory, "solar_irradiance"));
-    try std.testing.expect(@hasField(o2_session_memory.O2SessionMemory, "worker_pool"));
-    try std.testing.expect(@hasField(o2_session_memory.O2SessionMemory, "transport_workers"));
-    try std.testing.expect(!@hasField(o2_session_memory.O2SessionMemory, "scene"));
-    try std.testing.expect(!@hasField(o2_session_memory.O2SessionMemory, "request"));
-    try std.testing.expect(!@hasField(o2_session_memory.O2SessionMemory, "controls"));
+    try std.testing.expect(@hasField(session_memory.SessionMemory, "spectrum"));
+    try std.testing.expect(@hasField(session_memory.SessionMemory, "radiance"));
+    try std.testing.expect(@hasField(session_memory.SessionMemory, "profile_lines"));
+    try std.testing.expect(@hasField(session_memory.SessionMemory, "solar_irradiance"));
+    try std.testing.expect(@hasField(session_memory.SessionMemory, "worker_pool"));
+    try std.testing.expect(@hasField(session_memory.SessionMemory, "transport_workers"));
+    try std.testing.expect(!@hasField(session_memory.SessionMemory, "scene"));
+    try std.testing.expect(!@hasField(session_memory.SessionMemory, "request"));
+    try std.testing.expect(!@hasField(session_memory.SessionMemory, "controls"));
 
     try memory.solar_irradiance.reserve(1);
     memory.solar_irradiance.putAssumeCapacity(760.0, 4.0);
     try std.testing.expectApproxEqAbs(4.0, memory.solar_irradiance.get(760.0) orelse return error.MissingSolar, 0.0);
 }
 
-test "O2SessionMemory layout matches named owner composition" {
+test "SessionMemory layout matches named owner composition" {
     const ExpectedLayout = struct {
         size: usize,
         worker_pool_offset: usize,
@@ -43,25 +43,25 @@ test "O2SessionMemory layout matches named owner composition" {
         },
     };
 
-    try std.testing.expectEqual(@as(usize, expected_layout.size), @sizeOf(o2_session_memory.O2SessionMemory));
-    try std.testing.expectEqual(@as(usize, 8), @alignOf(o2_session_memory.O2SessionMemory));
-    try std.testing.expectEqual(@as(usize, 0), @offsetOf(o2_session_memory.O2SessionMemory, "spectrum"));
-    try std.testing.expectEqual(@as(usize, 56), @offsetOf(o2_session_memory.O2SessionMemory, "radiance"));
-    try std.testing.expectEqual(@as(usize, 168), @offsetOf(o2_session_memory.O2SessionMemory, "profile_lines"));
-    try std.testing.expectEqual(@as(usize, 232), @offsetOf(o2_session_memory.O2SessionMemory, "solar_irradiance"));
+    try std.testing.expectEqual(@as(usize, expected_layout.size), @sizeOf(session_memory.SessionMemory));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(session_memory.SessionMemory));
+    try std.testing.expectEqual(@as(usize, 0), @offsetOf(session_memory.SessionMemory, "spectrum"));
+    try std.testing.expectEqual(@as(usize, 56), @offsetOf(session_memory.SessionMemory, "radiance"));
+    try std.testing.expectEqual(@as(usize, 168), @offsetOf(session_memory.SessionMemory, "profile_lines"));
+    try std.testing.expectEqual(@as(usize, 232), @offsetOf(session_memory.SessionMemory, "solar_irradiance"));
 
     try std.testing.expectEqual(
         @as(usize, expected_layout.worker_pool_offset),
-        @offsetOf(o2_session_memory.O2SessionMemory, "worker_pool"),
+        @offsetOf(session_memory.SessionMemory, "worker_pool"),
     );
     try std.testing.expectEqual(
         @as(usize, expected_layout.transport_workers_offset),
-        @offsetOf(o2_session_memory.O2SessionMemory, "transport_workers"),
+        @offsetOf(session_memory.SessionMemory, "transport_workers"),
     );
 }
 
-test "O2SessionMemory preserves warm per-worker memory across collection growth" {
-    var memory = o2_session_memory.O2SessionMemory.init(std.testing.allocator);
+test "SessionMemory preserves warm per-worker memory across collection growth" {
+    var memory = session_memory.SessionMemory.init(std.testing.allocator);
     defer memory.deinit(std.testing.allocator);
 
     try memory.transport_workers.ensureWorkerCount(std.testing.allocator, 2);

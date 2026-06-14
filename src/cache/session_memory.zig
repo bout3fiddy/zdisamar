@@ -9,7 +9,7 @@ const transport_worker_memory = @import("transport_worker_memory.zig");
 
 const Allocator = std.mem.Allocator;
 
-// o2_session_memory.zig ------------------------------------------------------------------------------------- |
+// session_memory.zig -------------------------------------------------------------------------------------    |
 // Named memory owners retained by one O2 forward session.                                                     |
 //                                                                                                             |
 // ownership boundary                                                                                          |
@@ -17,7 +17,7 @@ const Allocator = std.mem.Allocator;
 //   controls, optical settings, or output formatting state.                                                   |
 // ------------------------------------------------------------------------------------------------------------|
 
-// O2SessionMemory ------------------------------------------------------------------------------------------- |
+// SessionMemory -------------------------------------------------------------------------------------------   |
 // Top-level allocation owner for reusable O2 A setup, spectrum, solar, workers, and transport work.           |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -38,7 +38,7 @@ const Allocator = std.mem.Allocator;
 // referenced storage                                                                                          |
 //   Child memory owners release their own heap storage through deinit. Worker-local transport buffers live    |
 //   out-of-line in transport_workers so the session can grow from one worker to many.                         |
-pub const O2SessionMemory = struct {
+pub const SessionMemory = struct {
     spectrum: spectrum_memory.SpectrumMemory = .{},
     radiance: radiance_memory.RadianceMemory = .{},
     profile_lines: profile_line_memory.ProfileLineValues = .{},
@@ -46,8 +46,8 @@ pub const O2SessionMemory = struct {
     worker_pool: forward_worker_pool.ForwardWorkerPool = .{},
     transport_workers: transport_worker_memory.TransportWorkerMemoryCollection = .{},
 
-    pub fn init(allocator: Allocator) O2SessionMemory {
-        // O2SessionMemory.init ------------------------------------------------------------------------------ |
+    pub fn init(allocator: Allocator) SessionMemory {
+        // SessionMemory.init ------------------------------------------------------------------------------   |
         // Create empty child owners; hash-map backed solar memory receives the session allocator.             |
         // ----------------------------------------------------------------------------------------------------|
         return .{
@@ -55,8 +55,8 @@ pub const O2SessionMemory = struct {
         };
     }
 
-    pub fn deinit(self: *O2SessionMemory, allocator: Allocator) void {
-        // O2SessionMemory.deinit ---------------------------------------------------------------------------- |
+    pub fn deinit(self: *SessionMemory, allocator: Allocator) void {
+        // SessionMemory.deinit ----------------------------------------------------------------------------   |
         // Release every child memory owner in reverse hot-path dependency order.                              |
         // ----------------------------------------------------------------------------------------------------|
         self.transport_workers.deinit(allocator);
@@ -72,5 +72,5 @@ pub const O2SessionMemory = struct {
 
 comptime {
     const expected_size: usize = if (@import("builtin").mode == .Debug) 424 else 392;
-    std.debug.assert(@sizeOf(O2SessionMemory) == expected_size);
+    std.debug.assert(@sizeOf(SessionMemory) == expected_size);
 }

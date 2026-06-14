@@ -4,7 +4,7 @@ const atmospheric_budget = @import("atmospheric_budget.zig");
 
 const Allocator = std.mem.Allocator;
 
-// o2_o2_cia.zig ----------------------------------------------------------------------------------------------|
+// cia_diagnostics.zig ----------------------------------------------------------------------------------------|
 // O2-O2 collision-induced absorption diagnostic rows for the explicit O2 A route.                             |
 //                                                                                                             |
 // boundary                                                                                                    |
@@ -22,7 +22,7 @@ const Allocator = std.mem.Allocator;
 //   `build` allocates one output row table and frees the temporary atmospheric-budget owner before returning. |
 // ------------------------------------------------------------------------------------------------------------|
 
-// O2O2CIARow -------------------------------------------------------------------------------------------------|
+// CiaRow -----------------------------------------------------------------------------------------------------|
 // One public O2-O2 CIA diagnostic row for one wavelength and support row.                                     |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -45,7 +45,7 @@ const Allocator = std.mem.Allocator;
 // [ 88.. 95] total_optical_depth                : f64                                                         |
 // [ 96..103] cia_share_of_total_absorption      : f64                                                         |
 // [104..111] cia_share_of_total_optical_depth   : f64                                                         |
-pub const O2O2CIARow = extern struct {
+pub const CiaRow = extern struct {
     wavelength_nm: f64,
     layer_index: u32,
     sublayer_index: u32,
@@ -65,22 +65,22 @@ pub const O2O2CIARow = extern struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// O2O2CIADiagnostics -----------------------------------------------------------------------------------------|
+// CiaDiagnostics ---------------------------------------------------------------------------------------------|
 // Owned O2-O2 CIA diagnostic table returned through root/API calls.                                           |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 16 B (0.016 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [0..15] rows : []O2O2CIARow                                                                                 |
+// [0..15] rows : []CiaRow                                                                                     |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   rows owns wavelength_count * support_row_count records in wavelength-major order.                         |
-pub const O2O2CIADiagnostics = struct {
-    rows: []O2O2CIARow = &.{},
+pub const CiaDiagnostics = struct {
+    rows: []CiaRow = &.{},
 
-    pub fn deinit(self: *O2O2CIADiagnostics, allocator: Allocator) void {
-        // O2O2CIADiagnostics.deinit --------------------------------------------------------------------------|
+    pub fn deinit(self: *CiaDiagnostics, allocator: Allocator) void {
+        // CiaDiagnostics.deinit ------------------------------------------------------------------------------|
         // Release the owned CIA diagnostic row table.                                                         |
         // ----------------------------------------------------------------------------------------------------|
         allocator.free(self.rows);
@@ -92,11 +92,11 @@ pub const O2O2CIADiagnostics = struct {
 pub fn build(
     allocator: Allocator,
     budget: atmospheric_budget.AtmosphericBudget,
-) !O2O2CIADiagnostics {
+) !CiaDiagnostics {
     // build --------------------------------------------------------------------------------------------------|
     // Build CIA-focused rows from an atmospheric-budget table with the same row order.                        |
     // --------------------------------------------------------------------------------------------------------|
-    const rows = try allocator.alloc(O2O2CIARow, budget.rows.len);
+    const rows = try allocator.alloc(CiaRow, budget.rows.len);
     errdefer allocator.free(rows);
 
     for (budget.rows, rows) |source, *target| {
@@ -106,7 +106,7 @@ pub fn build(
     return .{ .rows = rows };
 }
 
-fn rowFromBudget(row: atmospheric_budget.AtmosphericBudgetRow) O2O2CIARow {
+fn rowFromBudget(row: atmospheric_budget.AtmosphericBudgetRow) CiaRow {
     // rowFromBudget ------------------------------------------------------------------------------------------|
     // Derive the public CIA-focused columns from one atmospheric-budget row.                                  |
     // --------------------------------------------------------------------------------------------------------|
@@ -141,6 +141,6 @@ fn safeDivide(numerator: f64, denominator: f64) f64 {
 }
 
 comptime {
-    std.debug.assert(@sizeOf(O2O2CIARow) == 112);
-    std.debug.assert(@sizeOf(O2O2CIADiagnostics) == 16);
+    std.debug.assert(@sizeOf(CiaRow) == 112);
+    std.debug.assert(@sizeOf(CiaDiagnostics) == 16);
 }

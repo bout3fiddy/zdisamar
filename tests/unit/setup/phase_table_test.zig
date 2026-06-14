@@ -23,7 +23,7 @@ test "HG phase coefficients match scalar formula" {
 }
 
 test "PhaseTable build retains reference aerosol phase support" {
-    const table = phase_table.build(internal.input.defaults.referenceCase());
+    const table = phase_table.build(internal.input.defaults.referenceScene());
 
     try std.testing.expectApproxEqAbs(0.7, table.aerosol_asymmetry_factor, 0.0);
     try std.testing.expectEqual(@as(usize, 39), table.aerosol_phase_max_index);
@@ -34,11 +34,11 @@ test "PhaseTable build retains reference aerosol phase support" {
     try std.testing.expect(table.aerosol_phase_coefficients[40] == 0.0);
 }
 
-test "PhaseTable build consumes case phase truncation threshold" {
-    var case = internal.input.defaults.referenceCase();
-    case.rtm.performance_thresholds.phase_function_truncation_threshold = 1.0e-6;
+test "PhaseTable build consumes scene phase truncation threshold" {
+    var scene = internal.input.defaults.referenceScene();
+    scene.rtm.performance_thresholds.phase_function_truncation_threshold = 1.0e-6;
 
-    const table = phase_table.build(case);
+    const table = phase_table.build(scene);
     const expected = scalarHgCoefficients(0.7, 1.0e-6);
 
     try std.testing.expectEqual(@as(usize, 27), table.aerosol_phase_max_index);

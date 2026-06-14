@@ -3,20 +3,20 @@ const internal = @import("internal");
 
 test "asset readers load reference profile, line list, CIA, and solar rows" {
     const allocator = std.testing.allocator;
-    const case = internal.input.defaults.referenceCase();
+    const scene = internal.input.defaults.referenceScene();
 
-    const profile = try internal.assets.readers.readAtmosphereProfile(allocator, case.atmosphere.profile.path);
+    const profile = try internal.assets.readers.readAtmosphereProfile(allocator, scene.atmosphere.profile.path);
     defer allocator.free(profile);
     try std.testing.expectEqual(@as(usize, 47), profile.len);
     try std.testing.expectApproxEqAbs(1013.0, profile[1].pressure_hpa, 0.0);
 
-    const lines = try internal.assets.readers.readO2LineList(allocator, case.line_gas.line_list.path);
+    const lines = try internal.assets.readers.readLineList(allocator, scene.line_gas.line_list.path);
     defer allocator.free(lines);
     try std.testing.expectEqual(@as(usize, 1314), lines.len);
     try std.testing.expectEqual(@as(u16, 7), lines[0].gas_index);
     try std.testing.expectEqual(@as(u8, 1), lines[0].isotope_number);
 
-    const strong_lines = try internal.assets.readers.readO2StrongLines(allocator, case.line_gas.strong_lines.path);
+    const strong_lines = try internal.assets.readers.readStrongLines(allocator, scene.line_gas.strong_lines.path);
     defer allocator.free(strong_lines);
     try std.testing.expectEqual(@as(usize, 70), strong_lines.len);
 
@@ -27,9 +27,9 @@ test "asset readers load reference profile, line list, CIA, and solar rows" {
     try std.testing.expectApproxEqAbs(0.02828068983548333, strong_lines[0].air_half_width_cm1, 1.0e-15);
     try std.testing.expectEqual(@as(i32, -35), strong_lines[0].rotational_index_m1);
 
-    var relaxation_matrix = try internal.assets.readers.readO2RelaxationMatrix(
+    var relaxation_matrix = try internal.assets.readers.readRelaxationMatrix(
         allocator,
-        case.line_gas.line_mixing.path,
+        scene.line_gas.line_mixing.path,
     );
     defer relaxation_matrix.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 70), relaxation_matrix.line_count);
@@ -38,14 +38,14 @@ test "asset readers load reference profile, line list, CIA, and solar rows" {
     try std.testing.expectApproxEqAbs(0.02764486, relaxation_matrix.weightAt(0, 0), 0.0);
     try std.testing.expectApproxEqAbs(0.629999646133, relaxation_matrix.temperatureExponentAt(0, 0), 0.0);
 
-    var cia = try internal.assets.readers.readCiaTable(allocator, case.cia.table.path);
+    var cia = try internal.assets.readers.readCiaTable(allocator, scene.cia.table.path);
     defer cia.deinit(allocator);
     try std.testing.expectEqual(@as(usize, 18938), cia.rows.len);
     try std.testing.expectApproxEqAbs(1.0e-46, cia.scale_factor_cm5_per_molecule2, 0.0);
     try std.testing.expectApproxEqAbs(260.0, cia.rows[0].wavelength_nm, 0.0);
     try std.testing.expectApproxEqAbs(2400.0, cia.rows[cia.rows.len - 1].wavelength_nm, 0.0);
 
-    const solar = try internal.assets.readers.readSolarReference(allocator, case.observation.solar_reference.path);
+    const solar = try internal.assets.readers.readSolarReference(allocator, scene.observation.solar_reference.path);
     defer allocator.free(solar);
     try std.testing.expectEqual(@as(usize, 2501), solar.len);
     try std.testing.expectApproxEqAbs(753.0, solar[0].wavelength_nm, 0.0);

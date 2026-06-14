@@ -278,7 +278,7 @@ from zdisamar.wavelength_bands import o2a
 Start from the packaged O2 A reference case and set the aerosol state directly.
 
 ```python
-case = o2a.reference_case()
+case = o2a.reference_scene()
 case.aerosol_optical_depth_550_nm = 0.32
 case.aerosol_layer.mid_pressure_hpa = 760.0
 ```
@@ -307,7 +307,7 @@ Forward simulations can use an explicit aerosol profile instead of one scalar
 layer.
 
 ```python
-profile_case = o2a.reference_case()
+profile_case = o2a.reference_scene()
 profile_case.aerosol_profile = (
     o2a.AerosolProfileLayer(
         top_pressure_hpa=620.0,
@@ -335,7 +335,7 @@ and exposes the RTM, adaptive-grid, OE, sparse fast-stage, and final-correction
 controls in one place.
 
 ```python
-fast_case = o2a.reference_case()
+fast_case = o2a.reference_scene()
 fast_case.optimisation.fastmode.enabled = True
 
 fastmode = fast_case.optimisation.fastmode
@@ -365,7 +365,7 @@ wavelength. State-vector prior uncertainty is the one-sigma prior spread in the
 same units as the state value.
 
 ```python
-truth = o2a.reference_case()
+truth = o2a.reference_scene()
 truth.aerosol_optical_depth_550_nm = 0.18
 truth.aerosol_layer.mid_pressure_hpa = 820.0
 
@@ -392,20 +392,20 @@ Run the same retrieval in full mode and fastmode. Fastmode keeps the session
 flow but runs the tuned fast RTM stage and one sparse full-physics correction.
 
 ```python
-full_case = o2a.reference_case()
+full_case = o2a.reference_scene()
 with SessionCache(full_case) as cache:
     full_result = oe.retrieve(
-        case=full_case,
+        scene=full_case,
         measurement=measurement,
         state_vector=state_vector,
         cache=cache,
     )
 
-fast_case = o2a.reference_case()
+fast_case = o2a.reference_scene()
 fast_case.optimisation.fastmode.enabled = True
 with SessionCache(fast_case) as cache:
     fast_result = oe.retrieve(
-        case=fast_case,
+        scene=fast_case,
         measurement=measurement,
         state_vector=state_vector,
         cache=cache,

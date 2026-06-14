@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const hashing = @import("../common/hashing.zig");
-const o2_case = @import("../input/o2_case.zig");
+const scene_input = @import("../input/scene.zig");
 
 // AerosolLayerTable ------------------------------------------------------------------------------------------|
 // Aerosol optical-depth setup inputs copied into table form.                                                  |
@@ -31,7 +31,7 @@ pub const AerosolLayerTable = struct {
     interval_index_1based: usize,
     top_pressure_hpa: f64,
     bottom_pressure_hpa: f64,
-    profile: []const o2_case.AerosolProfileLayer = &.{},
+    profile: []const scene_input.AerosolProfileLayer = &.{},
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -63,19 +63,19 @@ pub fn hashAll(hasher: *std.hash.Wyhash, aerosol: AerosolLayerTable) void {
 }
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn build(case: o2_case.O2Case) AerosolLayerTable {
+pub fn build(scene: scene_input.Scene) AerosolLayerTable {
     // build --------------------------------------------------------------------------------------------------|
     // Copy scalar aerosol controls and the optional explicit profile view into setup table form.              |
     // --------------------------------------------------------------------------------------------------------|
     return .{
-        .optical_depth = case.aerosol.optical_depth,
-        .single_scatter_albedo = case.aerosol.single_scatter_albedo,
-        .asymmetry_factor = case.aerosol.asymmetry_factor,
-        .angstrom_exponent = case.aerosol.angstrom_exponent,
-        .reference_wavelength_nm = case.aerosol.reference_wavelength_nm,
-        .interval_index_1based = case.aerosol.interval_index_1based,
-        .top_pressure_hpa = case.aerosol.top_pressure_hpa,
-        .bottom_pressure_hpa = case.aerosol.bottom_pressure_hpa,
-        .profile = case.aerosol.profile,
+        .optical_depth = scene.aerosol.optical_depth,
+        .single_scatter_albedo = scene.aerosol.single_scatter_albedo,
+        .asymmetry_factor = scene.aerosol.asymmetry_factor,
+        .angstrom_exponent = scene.aerosol.angstrom_exponent,
+        .reference_wavelength_nm = scene.aerosol.reference_wavelength_nm,
+        .interval_index_1based = scene.aerosol.interval_index_1based,
+        .top_pressure_hpa = scene.aerosol.top_pressure_hpa,
+        .bottom_pressure_hpa = scene.aerosol.bottom_pressure_hpa,
+        .profile = scene.aerosol.profile,
     };
 }

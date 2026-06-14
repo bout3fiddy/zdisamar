@@ -1,6 +1,6 @@
 """Wavelength-band-specific input objects."""
 
-from .o2a import O2AInput
+from .o2a import Scene
 from .optimisation import (
     FastModeAdaptiveReferenceGrid,
     FastModeFastStageSampling,
@@ -10,7 +10,7 @@ from .optimisation import (
     FastModeOptimisation,
     FastModeRadiativeTransfer,
     FastModeWavelengthWindow,
-    O2AOptimisation,
+    Optimisation,
 )
 
 __all__ = [
@@ -22,6 +22,6 @@ __all__ = [
     "FastModeOptimisation",
     "FastModeRadiativeTransfer",
     "FastModeWavelengthWindow",
-    "O2AInput",
-    "O2AOptimisation",
+    "Scene",
+    "Optimisation",
 ]

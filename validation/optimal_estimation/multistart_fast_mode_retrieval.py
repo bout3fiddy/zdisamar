@@ -297,7 +297,7 @@ def run_scene(
     try:
         with rtm.SessionCache() as cache:
             result = diagnose_retrieval(
-                case=case,
+                scene=case,
                 measurement=measurement,
                 state_vector=state_template,
                 controls=None,

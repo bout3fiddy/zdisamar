@@ -3,7 +3,7 @@ const std = @import("std");
 const errors = @import("../common/errors.zig");
 const gauss_legendre = @import("../common/math/gauss_legendre.zig");
 const worker_partition = @import("../common/worker_partition.zig");
-const o2_case = @import("../input/o2_case.zig");
+const scene_input = @import("../input/scene.zig");
 const instrument_tables = @import("../setup/instrument_tables.zig");
 const line_tables = @import("../setup/line_tables.zig");
 const Trace = @import("../instrumentation/trace.zig");
@@ -448,7 +448,7 @@ pub const SamplingTableSummary = struct {
 // [73..79] padding                         : 7 B                                                              |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   offsets_nm and weights own temporary backing arrays until buildO2SpectrumSamplingTableWithNominals        |
+//   offsets_nm and weights own temporary backing arrays until buildSpectrumSamplingTableWithNominals          |
 //   moves them into OwnedSpectrumSamplingTable.                                                               |
 const KernelStorageBuilder = struct {
     mutex: std.Thread.Mutex = .{},
@@ -543,7 +543,7 @@ const KernelStorageBuilder = struct {
 //   scheduling : shared ChunkQueue, worker index, first-error state                                           |
 const SamplingTableWorker = struct {
     allocator: Allocator,
-    grid: o2_case.SpectralGrid,
+    grid: scene_input.SpectralGrid,
     explicit_nominals: ?[]const f64,
     instrument: instrument_tables.InstrumentTable,
     plan: *const AdaptiveIntervalPlan,
@@ -555,13 +555,13 @@ const SamplingTableWorker = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn buildO2SpectrumSamplingTable(
+pub fn buildSpectrumSamplingTable(
     allocator: Allocator,
-    case: o2_case.O2Case,
+    scene: scene_input.Scene,
     instrument: instrument_tables.InstrumentTable,
-    lines: line_tables.O2LineTable,
+    lines: line_tables.LineTable,
 ) !OwnedSpectrumSamplingTable {
-    // buildO2SpectrumSamplingTable -------------------------------------------------------------------------- |
+    // buildSpectrumSamplingTable --------------------------------------------------------------------------   |
     // Build the O2 A spectrum sampling plan from explicit setup tables.                                       |
     //                                                                                                         |
     //   This module owns the sampling, integration-kernel, and adaptive-interval rows that feed spectrum      |
@@ -577,49 +577,49 @@ pub fn buildO2SpectrumSamplingTable(
     //   raw_w_j   = flat_top_n4(lambda_j - nominal_i) * interval_width * Gauss weight                         |
     //   w_j       = raw_w_j / sum_k raw_w_k after duplicate wavelengths are merged                            |
     // --------------------------------------------------------------------------------------------------------|
-    const explicit_nominals = if (case.observation.measured_wavelengths_nm.len == 0)
+    const explicit_nominals = if (scene.observation.measured_wavelengths_nm.len == 0)
         null
     else
-        case.observation.measured_wavelengths_nm;
+        scene.observation.measured_wavelengths_nm;
 
-    return buildO2SpectrumSamplingTableWithNominals(allocator, case, instrument, lines, explicit_nominals);
+    return buildSpectrumSamplingTableWithNominals(allocator, scene, instrument, lines, explicit_nominals);
 }
 
-pub fn buildO2SpectrumSamplingTableForWavelengths(
+pub fn buildSpectrumSamplingTableForWavelengths(
     allocator: Allocator,
-    case: o2_case.O2Case,
+    scene: scene_input.Scene,
     instrument: instrument_tables.InstrumentTable,
-    lines: line_tables.O2LineTable,
+    lines: line_tables.LineTable,
     nominal_wavelengths_nm: []const f64,
 ) !OwnedSpectrumSamplingTable {
-    // buildO2SpectrumSamplingTableForWavelengths -------------------------------------------------------------|
+    // buildSpectrumSamplingTableForWavelengths ---------------------------------------------------------------|
     // Build compact integration kernels at caller-provided nominal wavelengths.                               |
     // --------------------------------------------------------------------------------------------------------|
     if (nominal_wavelengths_nm.len == 0) return errors.Error.InvalidControl;
-    return buildO2SpectrumSamplingTableWithNominals(
+    return buildSpectrumSamplingTableWithNominals(
         allocator,
-        case,
+        scene,
         instrument,
         lines,
         nominal_wavelengths_nm,
     );
 }
 
-fn buildO2SpectrumSamplingTableWithNominals(
+fn buildSpectrumSamplingTableWithNominals(
     allocator: Allocator,
-    case: o2_case.O2Case,
+    scene: scene_input.Scene,
     instrument: instrument_tables.InstrumentTable,
-    lines: line_tables.O2LineTable,
+    lines: line_tables.LineTable,
     explicit_nominals: ?[]const f64,
 ) !OwnedSpectrumSamplingTable {
-    // buildO2SpectrumSamplingTableWithNominals ---------------------------------------------------------------|
+    // buildSpectrumSamplingTableWithNominals -----------------------------------------------------------------|
     // Share the adaptive-plan builder between product-grid sampling and diagnostic wavelength probes.         |
     // --------------------------------------------------------------------------------------------------------|
-    const row_count = if (explicit_nominals) |nominals| nominals.len else case.spectral_grid.sample_count;
+    const row_count = if (explicit_nominals) |nominals| nominals.len else scene.spectral_grid.sample_count;
     if (row_count == 0) return errors.Error.InvalidControl;
 
     var plan: AdaptiveIntervalPlan = .{};
-    if (!buildAdaptiveIntervalPlan(case.spectral_grid, instrument, lines, &plan)) {
+    if (!buildAdaptiveIntervalPlan(scene.spectral_grid, instrument, lines, &plan)) {
         return errors.Error.InvalidControl;
     }
 
@@ -631,7 +631,7 @@ fn buildO2SpectrumSamplingTableWithNominals(
 
     try fillSamplingRows(
         allocator,
-        case.spectral_grid,
+        scene.spectral_grid,
         explicit_nominals,
         instrument,
         &plan,
@@ -651,7 +651,7 @@ fn buildO2SpectrumSamplingTableWithNominals(
 
 fn fillSamplingRows(
     allocator: Allocator,
-    grid: o2_case.SpectralGrid,
+    grid: scene_input.SpectralGrid,
     explicit_nominals: ?[]const f64,
     instrument: instrument_tables.InstrumentTable,
     plan: *const AdaptiveIntervalPlan,
@@ -757,7 +757,7 @@ fn samplingTableWorkerMain(worker: *SamplingTableWorker) void {
 
 fn fillSamplingRowRange(
     allocator: Allocator,
-    grid: o2_case.SpectralGrid,
+    grid: scene_input.SpectralGrid,
     explicit_nominals: ?[]const f64,
     instrument: instrument_tables.InstrumentTable,
     plan: *const AdaptiveIntervalPlan,
@@ -790,7 +790,7 @@ fn fillSamplingRowRange(
 
 fn buildSamplingRow(
     allocator: Allocator,
-    grid: o2_case.SpectralGrid,
+    grid: scene_input.SpectralGrid,
     explicit_nominals: ?[]const f64,
     instrument: instrument_tables.InstrumentTable,
     plan: *const AdaptiveIntervalPlan,
@@ -867,7 +867,7 @@ pub fn summarize(table: SpectrumSamplingTable) SamplingTableSummary {
     return summary;
 }
 
-fn nominalWavelengthNm(grid: o2_case.SpectralGrid, index: usize) f64 {
+fn nominalWavelengthNm(grid: scene_input.SpectralGrid, index: usize) f64 {
     // nominalWavelengthNm ----------------------------------------------------------------------------------- |
     // Compute the public output grid coordinate using the linear endpoint-inclusive grid rule.                |
     // --------------------------------------------------------------------------------------------------------|
@@ -961,9 +961,9 @@ fn buildAdaptiveIntegrationKernelFromPlan(
 }
 
 fn buildAdaptiveIntervalPlan(
-    grid: o2_case.SpectralGrid,
+    grid: scene_input.SpectralGrid,
     instrument: instrument_tables.InstrumentTable,
-    lines: line_tables.O2LineTable,
+    lines: line_tables.LineTable,
     plan: *AdaptiveIntervalPlan,
 ) bool {
     // buildAdaptiveIntervalPlan ----------------------------------------------------------------------------- |
@@ -1028,7 +1028,7 @@ fn buildAdaptiveIntervalPlan(
 }
 
 fn adaptiveKernelSupportWindow(
-    grid: o2_case.SpectralGrid,
+    grid: scene_input.SpectralGrid,
     instrument: instrument_tables.InstrumentTable,
     nominal_wavelength_nm: f64,
 ) AdaptiveKernelSupportWindow {
@@ -1177,7 +1177,7 @@ fn finalizeAdaptiveKernel(
 }
 
 fn collectAdaptiveStrongLineCenters(
-    lines: line_tables.O2LineTable,
+    lines: line_tables.LineTable,
     global_start_nm: f64,
     global_end_nm: f64,
     centers_nm: *[max_integration_sample_count]f64,
@@ -1212,7 +1212,7 @@ fn collectAdaptiveStrongLineCenters(
     return true;
 }
 
-fn thresholdStrength(rows: []const @import("../assets/readers.zig").O2LineAssetRow, scale: f64) ?f64 {
+fn thresholdStrength(rows: []const @import("../assets/readers.zig").LineAssetRow, scale: f64) ?f64 {
     // thresholdStrength ------------------------------------------------------------------------------------- |
     // Return the absolute strong-center cutoff used by the SpectroscopyRuntimeControls route.                 |
     // --------------------------------------------------------------------------------------------------------|

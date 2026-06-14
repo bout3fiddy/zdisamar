@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const o2_o2_cia = internal.output.o2_o2_cia;
+const cia_diagnostics = internal.output.cia_diagnostics;
 
 const allocator = std.testing.allocator;
 
@@ -15,10 +15,10 @@ const allocator = std.testing.allocator;
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0..  7] row_index: usize                                                                                 |
-// [  8..119] row      : O2O2CIARow                                                                            |
+// [  8..119] row      : CiaRow                                                                                |
 const RowEvidence = struct {
     row_index: usize,
-    row: o2_o2_cia.O2O2CIARow,
+    row: cia_diagnostics.CiaRow,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -131,11 +131,11 @@ const expected_cia_rows = [_]RowEvidence{
 };
 
 test "O2-O2 CIA diagnostics match O2 A public Python evidence at probe wavelengths" {
-    var prepared = try internal.public.prepareO2A(allocator, internal.input.defaults.referenceCase());
+    var prepared = try internal.public.prepare(allocator, internal.input.defaults.referenceScene());
     defer prepared.deinit(allocator);
 
     const wavelengths_nm = [_]f64{ 758.0, 760.0, 765.0, 767.0, 776.0 };
-    var diagnostics = try internal.public.buildO2O2CIADiagnostics(
+    var diagnostics = try internal.public.buildCiaDiagnostics(
         allocator,
         &prepared,
         wavelengths_nm[0..],
@@ -150,7 +150,7 @@ test "O2-O2 CIA diagnostics match O2 A public Python evidence at probe wavelengt
     }
 }
 
-fn expectRowEqual(expected: o2_o2_cia.O2O2CIARow, actual: o2_o2_cia.O2O2CIARow) !void {
+fn expectRowEqual(expected: cia_diagnostics.CiaRow, actual: cia_diagnostics.CiaRow) !void {
     // expectRowEqual -----------------------------------------------------------------------------------------|
     // Compare one CIA diagnostic row field-by-field so drift points at the first diverging column.            |
     // --------------------------------------------------------------------------------------------------------|

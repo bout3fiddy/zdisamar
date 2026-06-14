@@ -98,15 +98,15 @@ test "SpectrumSamplingTable summary matches O2 A aggregate sampling evidence sha
 }
 
 test "O2 SpectrumSamplingTable builder matches O2 A aggregate and exact-key evidence" {
-    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
+    var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
-        internal.input.defaults.referenceCase(),
+        internal.input.defaults.referenceScene(),
     );
     defer tables.deinit(std.testing.allocator);
 
-    var owned = try sampling_table.buildO2SpectrumSamplingTable(
+    var owned = try sampling_table.buildSpectrumSamplingTable(
         std.testing.allocator,
-        internal.input.defaults.referenceCase(),
+        internal.input.defaults.referenceScene(),
         tables.instrument,
         tables.lines,
     );
@@ -137,22 +137,22 @@ test "O2 SpectrumSamplingTable builder matches O2 A aggregate and exact-key evid
 
 test "O2 SpectrumSamplingTable consumes explicit sparse measured wavelengths" {
     const explicit_wavelengths = [_]f64{ 758.0, 758.06, 758.21, 758.27 };
-    var case = internal.input.defaults.referenceCase();
-    case.spectral_grid = .{
+    var scene = internal.input.defaults.referenceScene();
+    scene.spectral_grid = .{
         .start_nm = explicit_wavelengths[0],
         .end_nm = explicit_wavelengths[explicit_wavelengths.len - 1],
         .sample_count = explicit_wavelengths.len,
     };
-    case.observation.measured_wavelengths_nm = explicit_wavelengths[0..];
+    scene.observation.measured_wavelengths_nm = explicit_wavelengths[0..];
 
-    try internal.input.validate.o2Case(case);
+    try internal.input.validate.sceneControls(scene);
 
-    var tables = try internal.setup.o2_run_tables.buildO2RunTables(std.testing.allocator, case);
+    var tables = try internal.setup.run_tables.buildRunTables(std.testing.allocator, scene);
     defer tables.deinit(std.testing.allocator);
 
-    var owned = try sampling_table.buildO2SpectrumSamplingTable(
+    var owned = try sampling_table.buildSpectrumSamplingTable(
         std.testing.allocator,
-        case,
+        scene,
         tables.instrument,
         tables.lines,
     );
@@ -168,23 +168,23 @@ test "O2 SpectrumSamplingTable consumes explicit sparse measured wavelengths" {
 }
 
 test "O2 SpectrumSamplingTable parallel fill keeps resolved samples deterministic" {
-    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
+    var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
-        internal.input.defaults.referenceCase(),
+        internal.input.defaults.referenceScene(),
     );
     defer tables.deinit(std.testing.allocator);
 
-    var first = try sampling_table.buildO2SpectrumSamplingTable(
+    var first = try sampling_table.buildSpectrumSamplingTable(
         std.testing.allocator,
-        internal.input.defaults.referenceCase(),
+        internal.input.defaults.referenceScene(),
         tables.instrument,
         tables.lines,
     );
     defer first.deinit(std.testing.allocator);
 
-    var second = try sampling_table.buildO2SpectrumSamplingTable(
+    var second = try sampling_table.buildSpectrumSamplingTable(
         std.testing.allocator,
-        internal.input.defaults.referenceCase(),
+        internal.input.defaults.referenceScene(),
         tables.instrument,
         tables.lines,
     );

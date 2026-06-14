@@ -1,9 +1,9 @@
 const std = @import("std");
 
 const layer_depths = @import("../optics/layer_depths.zig");
-const o2_case = @import("../input/o2_case.zig");
+const scene_input = @import("../input/scene.zig");
 const atmosphere_layers = @import("../setup/atmosphere_layers.zig");
-const o2_run_tables = @import("../setup/o2_run_tables.zig");
+const run_tables = @import("../setup/run_tables.zig");
 const profile_line_memory = @import("../cache/profile_line_memory.zig");
 
 const Allocator = std.mem.Allocator;
@@ -122,8 +122,8 @@ pub const AtmosphericBudget = struct {
 
 pub fn build(
     allocator: Allocator,
-    case: o2_case.O2Case,
-    tables: *const o2_run_tables.O2RunTables,
+    scene: scene_input.Scene,
+    tables: *const run_tables.RunTables,
     wavelengths_nm: []const f64,
 ) !AtmosphericBudget {
     // build --------------------------------------------------------------------------------------------------|
@@ -138,9 +138,9 @@ pub fn build(
     const rows = try allocator.alloc(AtmosphericBudgetRow, row_count);
     errdefer allocator.free(rows);
 
-    var profile_values = try profile_line_memory.buildO2ProfileLineValuesForWavelengths(
+    var profile_values = try profile_line_memory.buildProfileLineValuesForWavelengths(
         allocator,
-        case,
+        scene,
         wavelengths_nm,
     );
     defer profile_values.deinit(allocator);

@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const metrics = internal.validation.o2a_band_metrics;
+const metrics = internal.validation.band_metrics;
 
 test "O2A band metrics preserve morphology windows and residual formulas" {
     const wavelengths = [_]f64{ 755.0, 758.0, 760.2, 760.6, 761.0, 762.0, 764.0, 765.0, 770.0 };

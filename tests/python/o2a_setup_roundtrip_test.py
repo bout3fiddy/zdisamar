@@ -45,24 +45,24 @@ def run_roundtrip() -> dict[str, Any]:
     tolerance = 1.0e-12
     start_s = time.perf_counter()
 
-    case_start_s = time.perf_counter()
-    case = o2a.reference_case()
-    case_s = time.perf_counter() - case_start_s
+    scene_start_s = time.perf_counter()
+    scene = o2a.reference_scene()
+    scene_s = time.perf_counter() - scene_start_s
 
     typed_rtm_start_s = time.perf_counter()
-    typed_spectrum = rtm.spectrum(case)
+    typed_spectrum = rtm.spectrum(scene)
     typed_rtm_s = time.perf_counter() - typed_rtm_start_s
     typed_report = typed_spectrum.diagnostic_report
     typed_arrays = spectrum_arrays(typed_spectrum)
 
     reference_rtm_start_s = time.perf_counter()
-    reference_spectrum = rtm.spectrum(o2a.reference_case())
+    reference_spectrum = rtm.spectrum(o2a.reference_scene())
     reference_rtm_s = time.perf_counter() - reference_rtm_start_s
     reference_report = reference_spectrum.diagnostic_report
     reference_arrays = spectrum_arrays(reference_spectrum)
 
-    perturbed_case = copy.deepcopy(case)
-    perturbed_case.aerosol.optical_depth_550_nm *= 1.05
+    perturbed_scene = copy.deepcopy(scene)
+    perturbed_scene.aerosol.optical_depth_550_nm *= 1.05
 
     session_create_start_s = time.perf_counter()
 
@@ -70,7 +70,7 @@ def run_roundtrip() -> dict[str, Any]:
         session_create_s = time.perf_counter() - session_create_start_s
 
         session_prepare_start_s = time.perf_counter()
-        cache.load(case)
+        cache.load(scene)
         session_prepare_s = time.perf_counter() - session_prepare_start_s
         session_rtm_start_s = time.perf_counter()
         session_spectrum = cache.spectrum()
@@ -78,7 +78,7 @@ def run_roundtrip() -> dict[str, Any]:
         session_arrays = spectrum_arrays(session_spectrum)
 
         perturbed_session_prepare_start_s = time.perf_counter()
-        cache.load(perturbed_case)
+        cache.load(perturbed_scene)
         perturbed_session_prepare_s = time.perf_counter() - perturbed_session_prepare_start_s
         perturbed_session_rtm_start_s = time.perf_counter()
         perturbed_session_spectrum = cache.spectrum(jacobian=True)
@@ -109,7 +109,7 @@ def run_roundtrip() -> dict[str, Any]:
         except ValueError:
             empty_jacobian_state_selection_rejected = True
 
-    perturbed_functional_spectrum = rtm.spectrum(perturbed_case, jacobian=True)
+    perturbed_functional_spectrum = rtm.spectrum(perturbed_scene, jacobian=True)
     perturbed_functional_arrays = spectrum_arrays(perturbed_functional_spectrum)
     perturbed_functional_jacobian = np.asarray(
         perturbed_functional_spectrum.radiance_jacobian,
@@ -234,7 +234,7 @@ def run_roundtrip() -> dict[str, Any]:
         "reference_diagnostic_report": asdict(reference_report),
         "checks": checks,
         "timing": {
-            "o2a_case_s": case_s,
+            "o2a_case_s": scene_s,
             "typed_rtm_s": typed_rtm_s,
             "reference_rtm_s": reference_rtm_s,
             "session_create_s": session_create_s,

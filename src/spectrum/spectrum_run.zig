@@ -51,7 +51,7 @@ pub const radiance_prefetch_pooled_chunk_size: usize = 8;
 
 const RadiancePrefetchErrorState = worker_partition.FirstWorkerErrorState(anyerror);
 
-// O2ASamplingPolicy ----------------------------------------------------------------------------------------- |
+// SamplingPolicy -----------------------------------------------------------------------------------------    |
 // Product-channel sampling and calibration policy for the exercised O2 A spectrum route.                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -65,7 +65,7 @@ const RadiancePrefetchErrorState = worker_partition.FirstWorkerErrorState(anyerr
 // [ 96.. 96] uses_integrated_radiance_sampling : bool                                                         |
 // [ 97.. 97] uses_integrated_irradiance_sampling: bool                                                        |
 // [ 98..103] padding                           : 6 B                                                          |
-pub const O2ASamplingPolicy = struct {
+pub const SamplingPolicy = struct {
     radiance_calibration: instrument_average.Calibration = .{},
     irradiance_calibration: instrument_average.Calibration = .{},
     radiance_slit_kernel: []const f64 = &.{},
@@ -148,7 +148,7 @@ const RadiancePrefetchWorker = struct {
     surface_albedo: f64,
     layer_grid: atmosphere_layers.LayerGrid,
     profile_lines: profile_line_memory.ProfileLineValues,
-    cia: cia_table.O2CiaTable,
+    cia: cia_table.CiaTable,
     aerosol: aerosol_tables.AerosolLayerTable,
     phase: phase_table.PhaseTable,
     solar: solar_table.SolarTable,
@@ -171,7 +171,7 @@ pub fn radianceAtWavelength(
     surface_albedo: f64,
     layer_grid: atmosphere_layers.LayerGrid,
     profile_lines: profile_line_memory.ProfileLineValues,
-    cia: cia_table.O2CiaTable,
+    cia: cia_table.CiaTable,
     aerosol: aerosol_tables.AerosolLayerTable,
     phase: phase_table.PhaseTable,
     solar_irradiance: f64,
@@ -321,13 +321,13 @@ pub fn radianceAtWavelength(
     );
 }
 
-fn prefetchO2ARadianceRows(
+fn prefetchRadianceRows(
     wavelengths: radiance_wavelengths.RadianceWavelengthList,
     angles: solve.ViewAngles,
     surface_albedo: f64,
     layer_grid: atmosphere_layers.LayerGrid,
     profile_lines: profile_line_memory.ProfileLineValues,
-    cia: cia_table.O2CiaTable,
+    cia: cia_table.CiaTable,
     aerosol: aerosol_tables.AerosolLayerTable,
     phase: phase_table.PhaseTable,
     solar: solar_table.SolarTable,
@@ -338,7 +338,7 @@ fn prefetchO2ARadianceRows(
     out_dense_radiance: []radiance_results.RadianceResult,
     transport_workers: []transport_worker_memory.TransportWorkerMemory,
 ) !void {
-    // prefetchO2ARadianceRows --------------------------------------------------------------------------------|
+    // prefetchRadianceRows -----------------------------------------------------------------------------------|
     // Fill dense high-resolution radiance rows through the worker-count and pool/raw scheduling route.        |
     //                                                                                                         |
     //   `prefetchForwardSamples`, `ForwardPrefetchWorker`, and `prefetchForwardWorkerMain`. The               |
@@ -548,19 +548,19 @@ fn nextRadiancePrefetchChunk(worker: *RadiancePrefetchWorker) ?worker_partition.
     return worker_partition.nextStaticChunk(&worker.start_index, worker.end_index, radiance_prefetch_chunk_size);
 }
 
-pub fn runO2ASpectrum(
+pub fn runForwardSpectrum(
     table: sampling_table.SpectrumSamplingTable,
     wavelengths: radiance_wavelengths.RadianceWavelengthList,
     angles: solve.ViewAngles,
     surface_albedo: f64,
     layer_grid: atmosphere_layers.LayerGrid,
     profile_lines: profile_line_memory.ProfileLineValues,
-    cia: cia_table.O2CiaTable,
+    cia: cia_table.CiaTable,
     aerosol: aerosol_tables.AerosolLayerTable,
     phase: phase_table.PhaseTable,
     solar: solar_table.SolarTable,
     prepared_solve_config: controls.SolveConfig,
-    sampling_policy: O2ASamplingPolicy,
+    sampling_policy: SamplingPolicy,
     prefetch_dense_radiance: bool,
     pool: ?*std.Thread.Pool,
     worker_count: usize,
@@ -569,7 +569,7 @@ pub fn runO2ASpectrum(
     transport_workers: []transport_worker_memory.TransportWorkerMemory,
     solar_memory: *solar_irradiance_memory.SolarIrradianceMemory,
 ) !instrument_average.ReflectanceAssemblySummary {
-    // runO2ASpectrum -----------------------------------------------------------------------------------------|
+    // runForwardSpectrum -------------------------------------------------------------------------------------|
     // Run the explicit O2 A spectrum path from exact radiance wavelengths to product reflectance.             |
     //                                                                                                         |
     //   `grid_calculation/spectral_forward.zig` dense prefetch and `grid_calculation/simulate.zig` nominal    |
@@ -609,7 +609,7 @@ pub fn runO2ASpectrum(
     // end instrumentation: trace zone: O2 A spectrum run -----------------------------------------------------|
 
     if (prefetch_dense_radiance) {
-        try prefetchO2ARadianceRows(
+        try prefetchRadianceRows(
             wavelengths,
             angles,
             surface_albedo,

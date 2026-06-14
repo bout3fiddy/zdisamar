@@ -129,10 +129,10 @@ pub const WeakLinePreparedState = struct {
 // size: 24 B (0.023 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [ 0..15] lines       : []const O2LineAssetRow                                                               |
+// [ 0..15] lines       : []const LineAssetRow                                                                 |
 // [16..23] start_index : usize                                                                                |
 pub const LineWindow = struct {
-    lines: []const readers.O2LineAssetRow,
+    lines: []const readers.LineAssetRow,
     start_index: usize,
 };
 // ------------------------------------------------------------------------------------------------------------|
@@ -159,7 +159,7 @@ const ComplexProbability = struct {
 
 pub fn fillWeakLineStateInto(
     state: *WeakLinePreparedState,
-    lines: []const readers.O2LineAssetRow,
+    lines: []const readers.LineAssetRow,
     temperature_k: f64,
     pressure_atm: f64,
     stage_cost: ?CostTiming.Active,
@@ -179,7 +179,7 @@ pub fn fillWeakLineStateInto(
 }
 
 fn prepareWeakLinePreparedLineState(
-    line: readers.O2LineAssetRow,
+    line: readers.LineAssetRow,
     safe_temperature: f64,
     safe_pressure: f64,
     stage_cost: ?CostTiming.Active,
@@ -231,10 +231,10 @@ fn prepareWeakLinePreparedLineState(
 }
 
 pub fn totalSpectroscopyAt(
-    runtime_lines: []const readers.O2LineAssetRow,
+    runtime_lines: []const readers.LineAssetRow,
     window: LineWindow,
-    strong_lines: []const readers.O2StrongLineAssetRow,
-    relaxation_matrix: readers.O2RelaxationMatrixAsset,
+    strong_lines: []const readers.StrongLineAssetRow,
+    relaxation_matrix: readers.RelaxationMatrixAsset,
     wavelength_nm: f64,
     wavelength_state: WeakLineWavelengthState,
     temperature_k: f64,
@@ -335,7 +335,7 @@ pub fn totalSpectroscopyAt(
 }
 
 pub fn weakLineSigmaAtPrepared(
-    active_lines: []const readers.O2LineAssetRow,
+    active_lines: []const readers.LineAssetRow,
     window: LineWindow,
     state: *const WeakLinePreparedState,
     wavelength_state: WeakLineWavelengthState,
@@ -370,7 +370,7 @@ pub fn weakLineSigmaAtPrepared(
 }
 
 pub fn weakLineSigmaAtPreparedFiniteDifference(
-    active_lines: []const readers.O2LineAssetRow,
+    active_lines: []const readers.LineAssetRow,
     window: LineWindow,
     state: *const WeakLinePreparedState,
     wavelength_state: WeakLineWavelengthState,
@@ -405,7 +405,7 @@ pub fn weakLineSigmaAtPreparedFiniteDifference(
 }
 
 pub fn relevantLineWindow(
-    active_lines: []const readers.O2LineAssetRow,
+    active_lines: []const readers.LineAssetRow,
     wavelength_nm: f64,
     cutoff_cm1: f64,
 ) LineWindow {
@@ -427,8 +427,8 @@ pub fn relevantLineWindow(
 }
 
 fn usesVendorStrongLinePartition(
-    lines: []const readers.O2LineAssetRow,
-    strong_lines: []const readers.O2StrongLineAssetRow,
+    lines: []const readers.LineAssetRow,
+    strong_lines: []const readers.StrongLineAssetRow,
 ) bool {
     // usesVendorStrongLinePartition ------------------------------------------------------------------------- |
     // Detect the O2 A sidecar partition from retained HITRAN branch metadata.                                 |
@@ -450,17 +450,17 @@ fn usesVendorStrongLinePartition(
 }
 
 fn shouldExcludeWeakLine(
-    line: readers.O2LineAssetRow,
+    line: readers.LineAssetRow,
     line_index: usize,
-    window: []const readers.O2LineAssetRow,
-    strong_lines: []const readers.O2StrongLineAssetRow,
+    window: []const readers.LineAssetRow,
+    strong_lines: []const readers.StrongLineAssetRow,
     vendor_partition: bool,
 ) bool {
     // shouldExcludeWeakLine --------------------------------------------------------------------------------- |
     // Keep lines covered by O2 strong-line sidecars out of the total weak-line contribution.                  |
     // --------------------------------------------------------------------------------------------------------|
     if (vendor_partition) {
-        if (!isVendorO2AStrongCandidateFromSource(line)) return false;
+        if (!isVendorStrongCandidateFromSource(line)) return false;
         return findStrongLineMatch(strong_lines, line.center_wavelength_nm) != null;
     }
 
@@ -469,8 +469,8 @@ fn shouldExcludeWeakLine(
 }
 
 fn strongestWindowAnchorForSidecar(
-    window: []const readers.O2LineAssetRow,
-    strong_line: readers.O2StrongLineAssetRow,
+    window: []const readers.LineAssetRow,
+    strong_line: readers.StrongLineAssetRow,
 ) usize {
     // strongestWindowAnchorForSidecar ----------------------------------------------------------------------- |
     // Select the generic sidecar anchor: closest line center, then strongest line on an equal delta.          |
@@ -494,7 +494,7 @@ fn strongestWindowAnchorForSidecar(
     return best_index;
 }
 
-pub fn findStrongLineMatch(strong_lines: []const readers.O2StrongLineAssetRow, wavelength_nm: f64) ?usize {
+pub fn findStrongLineMatch(strong_lines: []const readers.StrongLineAssetRow, wavelength_nm: f64) ?usize {
     // findStrongLineMatch ----------------------------------------------------------------------------------- |
     // Return the closest LISA sidecar center within the tolerance rule.                                       |
     // --------------------------------------------------------------------------------------------------------|
@@ -510,8 +510,8 @@ pub fn findStrongLineMatch(strong_lines: []const readers.O2StrongLineAssetRow, w
     return best_index;
 }
 
-pub fn isVendorO2AStrongCandidateFromSource(line: readers.O2LineAssetRow) bool {
-    // isVendorO2AStrongCandidateFromSource ------------------------------------------------------------------ |
+pub fn isVendorStrongCandidateFromSource(line: readers.LineAssetRow) bool {
+    // isVendorStrongCandidateFromSource ------------------------------------------------------------------    |
     // Match support.zig: only source-marked O2 isotope-1 P-branch rows participate in vendor partition.       |
     // --------------------------------------------------------------------------------------------------------|
     return line.vendor_filter_metadata_from_source and
@@ -527,7 +527,7 @@ pub fn isVendorO2AStrongCandidateFromSource(line: readers.O2LineAssetRow) bool {
 
 pub fn weakLineContribution(
     wavelength_nm: f64,
-    line: readers.O2LineAssetRow,
+    line: readers.LineAssetRow,
     temperature_k: f64,
     pressure_atm: f64,
     cutoff_cm1: f64,
@@ -711,8 +711,8 @@ fn preparedInsideCutoff(
 }
 
 pub fn prepareStrongLineState(
-    strong_lines: []const readers.O2StrongLineAssetRow,
-    relaxation_matrix: readers.O2RelaxationMatrixAsset,
+    strong_lines: []const readers.StrongLineAssetRow,
+    relaxation_matrix: readers.RelaxationMatrixAsset,
     temperature_k: f64,
     pressure_atm: f64,
     stage_cost: ?CostTiming.Active,
@@ -751,8 +751,8 @@ pub fn prepareStrongLineState(
 fn fillStrongLineState(
     state: *StrongLinePreparedState,
     relaxation_weights: []f64,
-    strong_lines: []const readers.O2StrongLineAssetRow,
-    relaxation_matrix: readers.O2RelaxationMatrixAsset,
+    strong_lines: []const readers.StrongLineAssetRow,
+    relaxation_matrix: readers.RelaxationMatrixAsset,
     line_count: usize,
     safe_temperature: f64,
     temperature_ratio: f64,
@@ -946,7 +946,7 @@ fn setRelaxationWeight(
 }
 
 fn insideCutoff(
-    line: readers.O2LineAssetRow,
+    line: readers.LineAssetRow,
     wavelength_nm: f64,
     pressure_atm: f64,
     cutoff_cm1: f64,
@@ -965,7 +965,7 @@ fn insideCutoff(
     );
 }
 
-pub fn shiftedCenterWavenumberCm1(line: readers.O2LineAssetRow, pressure_atm: f64) f64 {
+pub fn shiftedCenterWavenumberCm1(line: readers.LineAssetRow, pressure_atm: f64) f64 {
     // shiftedCenterWavenumberCm1 ---------------------------------------------------------------------------- |
     // Apply the pressure-shifted line-center floor before cutoff checks and public row projection.            |
     // --------------------------------------------------------------------------------------------------------|
@@ -1029,7 +1029,7 @@ fn shiftedCenterInsideCutoff(
     return center_distance_cm1 <= cutoff_cm1 + vendor_cutoff_boundary_margin_cm1;
 }
 
-fn lowerBoundByCenterWavelength(lines: []const readers.O2LineAssetRow, wavelength_nm: f64) usize {
+fn lowerBoundByCenterWavelength(lines: []const readers.LineAssetRow, wavelength_nm: f64) usize {
     // lowerBoundByCenterWavelength -------------------------------------------------------------------------- |
     // Find the first sorted line row with center wavelength at or above the requested wavelength.             |
     // --------------------------------------------------------------------------------------------------------|
@@ -1193,7 +1193,7 @@ fn dopplerWidthCm1(temperature_k: f64, wavenumber_cm1: f64, molecular_weight_g_p
 }
 
 fn partitionRatioT0OverT(
-    line: readers.O2LineAssetRow,
+    line: readers.LineAssetRow,
     temperature_k: f64,
     stage_cost: ?CostTiming.Active,
 ) f64 {
@@ -1220,7 +1220,7 @@ fn partitionRatioT0OverT(
     return std.math.pow(f64, hitran_reference_temperature_k / safe_temperature, exponent);
 }
 
-fn molecularWeightForLine(line: readers.O2LineAssetRow) f64 {
+fn molecularWeightForLine(line: readers.LineAssetRow) f64 {
     // molecularWeightForLine -------------------------------------------------------------------------------- |
     // Return isotopologue molecular mass, falling back to the parent gas mass for unsupported codes.          |
     // --------------------------------------------------------------------------------------------------------|

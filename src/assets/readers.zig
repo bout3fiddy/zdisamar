@@ -5,7 +5,7 @@ const units = @import("../common/units.zig");
 
 const Allocator = std.mem.Allocator;
 
-// VendorO2ABranchMetadata ------------------------------------------------------------------------------------|
+// VendorBranchMetadata ---------------------------------------------------------------------------------------|
 // Optional O2 A branch metadata uses partition weak lines from LISA strong-line sidecars.                     |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -16,14 +16,14 @@ const Allocator = std.mem.Allocator;
 // [2..3] branch_ic2 : ?u8                                                                                     |
 // [4..5] rotational_nf : ?u8                                                                                  |
 // [6..6] from_source : bool                                                                                   |
-const VendorO2ABranchMetadata = struct {
+const VendorBranchMetadata = struct {
     branch_ic1: ?u8 = null,
     branch_ic2: ?u8 = null,
     rotational_nf: ?u8 = null,
     from_source: bool = false,
 
-    fn present(self: VendorO2ABranchMetadata) bool {
-        // VendorO2ABranchMetadata.present --------------------------------------------------------------------|
+    fn present(self: VendorBranchMetadata) bool {
+        // VendorBranchMetadata.present -----------------------------------------------------------------------|
         // True when all O2 A branch fields were recovered from the HITRAN row.                                |
         // ----------------------------------------------------------------------------------------------------|
         return self.branch_ic1 != null and self.branch_ic2 != null and self.rotational_nf != null;
@@ -66,7 +66,7 @@ pub const AtmosphereProfileRow = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// O2LineAssetRow ---------------------------------------------------------------------------------------------|
+// LineAssetRow -----------------------------------------------------------------------------------------------|
 // Parsed HITRAN line row fields needed by setup and O2 strong-line partitioning.                              |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -87,7 +87,7 @@ pub const AtmosphereProfileRow = struct {
 // [62..63] branch_ic2                    : ?u8                                                                |
 // [64..65] rotational_nf                 : ?u8                                                                |
 // [66..71] trailing padding              : 6 B                                                                |
-pub const O2LineAssetRow = struct {
+pub const LineAssetRow = struct {
     gas_index: u16,
     isotope_number: u8,
     vendor_filter_metadata_from_source: bool = false,
@@ -104,7 +104,7 @@ pub const O2LineAssetRow = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// O2StrongLineAssetRow ---------------------------------------------------------------------------------------|
+// StrongLineAssetRow -----------------------------------------------------------------------------------------|
 // Parsed LISA SDF strong-line sidecar row used by the O2 line-mixing route.                                   |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -124,7 +124,7 @@ pub const O2LineAssetRow = struct {
 // [80..87] pressure_shift_nm     : f64                                                                        |
 // [88..91] rotational_index_m1   : i32                                                                        |
 // [92..95] trailing padding      : 4 B                                                                        |
-pub const O2StrongLineAssetRow = struct {
+pub const StrongLineAssetRow = struct {
     center_wavenumber_cm1: f64,
     center_wavelength_nm: f64,
     population_t0: f64,
@@ -140,7 +140,7 @@ pub const O2StrongLineAssetRow = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// O2RelaxationMatrixAsset ------------------------------------------------------------------------------------|
+// RelaxationMatrixAsset --------------------------------------------------------------------------------------|
 // Parsed LISA RMF relaxation matrix used by the O2 line-mixing route.                                         |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -153,13 +153,13 @@ pub const O2StrongLineAssetRow = struct {
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   wt0 and bw own line_count * line_count f64 values and are released by deinit.                             |
-pub const O2RelaxationMatrixAsset = struct {
+pub const RelaxationMatrixAsset = struct {
     line_count: usize,
     wt0: []f64,
     bw: []f64,
 
-    pub fn deinit(self: *O2RelaxationMatrixAsset, allocator: Allocator) void {
-        // O2RelaxationMatrixAsset.deinit ---------------------------------------------------------------------|
+    pub fn deinit(self: *RelaxationMatrixAsset, allocator: Allocator) void {
+        // RelaxationMatrixAsset.deinit -----------------------------------------------------------------------|
         // Release parsed RMF matrices owned by this reader result.                                            |
         // ----------------------------------------------------------------------------------------------------|
         allocator.free(self.wt0);
@@ -167,15 +167,15 @@ pub const O2RelaxationMatrixAsset = struct {
         self.* = undefined;
     }
 
-    pub fn weightAt(self: O2RelaxationMatrixAsset, row: usize, column: usize) f64 {
-        // O2RelaxationMatrixAsset.weightAt -------------------------------------------------------------------|
+    pub fn weightAt(self: RelaxationMatrixAsset, row: usize, column: usize) f64 {
+        // RelaxationMatrixAsset.weightAt ---------------------------------------------------------------------|
         // Return the row-major W(T0) relaxation weight.                                                       |
         // ----------------------------------------------------------------------------------------------------|
         return self.wt0[row * self.line_count + column];
     }
 
-    pub fn temperatureExponentAt(self: O2RelaxationMatrixAsset, row: usize, column: usize) f64 {
-        // O2RelaxationMatrixAsset.temperatureExponentAt ------------------------------------------------------|
+    pub fn temperatureExponentAt(self: RelaxationMatrixAsset, row: usize, column: usize) f64 {
+        // RelaxationMatrixAsset.temperatureExponentAt --------------------------------------------------------|
         // Return the row-major BW temperature exponent.                                                       |
         // ----------------------------------------------------------------------------------------------------|
         return self.bw[row * self.line_count + column];
@@ -272,14 +272,14 @@ pub fn readAtmosphereProfile(allocator: Allocator, path: []const u8) ![]Atmosphe
     return rows.toOwnedSlice(allocator);
 }
 
-pub fn readO2LineList(allocator: Allocator, path: []const u8) ![]O2LineAssetRow {
-    // readO2LineList -----------------------------------------------------------------------------------------|
+pub fn readLineList(allocator: Allocator, path: []const u8) ![]LineAssetRow {
+    // readLineList -------------------------------------------------------------------------------------------|
     // Parse fixed-width HITRAN rows while preserving leading spaces for gas/isotope columns.                  |
     // --------------------------------------------------------------------------------------------------------|
     const bytes = try readSmallFile(allocator, path, 4 << 20);
     defer allocator.free(bytes);
 
-    var rows = std.ArrayList(O2LineAssetRow).empty;
+    var rows = std.ArrayList(LineAssetRow).empty;
     errdefer rows.deinit(allocator);
 
     var lines = std.mem.splitScalar(u8, bytes, '\n');
@@ -293,9 +293,9 @@ pub fn readO2LineList(allocator: Allocator, path: []const u8) ![]O2LineAssetRow 
         const center_wavenumber_cm1 = try parseFixedFloat(row[3..15]);
         const air_half_width_cm1 = try parseFixedFloat(row[35..40]);
         const pressure_shift_cm1 = try parseFixedFloat(row[59..67]);
-        const inline_metadata = try inlineVendorO2ABranchMetadata(row);
+        const inline_metadata = try inlineVendorBranchMetadata(row);
         const fallback_metadata = if (!inline_metadata.present())
-            try fallbackVendorO2ABranchMetadata(row, center_wavenumber_cm1)
+            try fallbackVendorBranchMetadata(row, center_wavenumber_cm1)
         else
             null;
         const vendor_metadata = fallback_metadata orelse inline_metadata;
@@ -321,8 +321,8 @@ pub fn readO2LineList(allocator: Allocator, path: []const u8) ![]O2LineAssetRow 
     return rows.toOwnedSlice(allocator);
 }
 
-pub fn readO2StrongLines(allocator: Allocator, path: []const u8) ![]O2StrongLineAssetRow {
-    // readO2StrongLines --------------------------------------------------------------------------------------|
+pub fn readStrongLines(allocator: Allocator, path: []const u8) ![]StrongLineAssetRow {
+    // readStrongLines ----------------------------------------------------------------------------------------|
     // Parse LISA SDF rows into O2 strong-line sidecar fields.                                                 |
     //                                                                                                         |
     //   The vendor HWT0 column is syntax-checked. The reference half-width is reconstructed from the LISA     |
@@ -331,7 +331,7 @@ pub fn readO2StrongLines(allocator: Allocator, path: []const u8) ![]O2StrongLine
     const bytes = try readSmallFile(allocator, path, 1 << 20);
     defer allocator.free(bytes);
 
-    var rows = std.ArrayList(O2StrongLineAssetRow).empty;
+    var rows = std.ArrayList(StrongLineAssetRow).empty;
     errdefer rows.deinit(allocator);
 
     var lines = std.mem.splitScalar(u8, bytes, '\n');
@@ -369,8 +369,8 @@ pub fn readO2StrongLines(allocator: Allocator, path: []const u8) ![]O2StrongLine
     return rows.toOwnedSlice(allocator);
 }
 
-pub fn readO2RelaxationMatrix(allocator: Allocator, path: []const u8) !O2RelaxationMatrixAsset {
-    // readO2RelaxationMatrix ---------------------------------------------------------------------------------|
+pub fn readRelaxationMatrix(allocator: Allocator, path: []const u8) !RelaxationMatrixAsset {
+    // readRelaxationMatrix -----------------------------------------------------------------------------------|
     // Parse the LISA RMF sidecar into row-major W(T0) and BW matrices.                                        |
     //                                                                                                         |
     //   LoadedAsset.toSpectroscopyRelaxationMatrix. The row count must form a square dense matrix.            |
@@ -556,8 +556,8 @@ fn parseOptionalFixedInt(comptime T: type, value: []const u8) !?T {
     };
 }
 
-fn inlineVendorO2ABranchMetadata(line: []const u8) !VendorO2ABranchMetadata {
-    // inlineVendorO2ABranchMetadata --------------------------------------------------------------------------|
+fn inlineVendorBranchMetadata(line: []const u8) !VendorBranchMetadata {
+    // inlineVendorBranchMetadata -----------------------------------------------------------------------------|
     // Recover optional O2 A branch metadata from fixed HITRAN vendor columns when present.                    |
     // --------------------------------------------------------------------------------------------------------|
     if (line.len < 85) return .{};
@@ -573,8 +573,8 @@ fn inlineVendorO2ABranchMetadata(line: []const u8) !VendorO2ABranchMetadata {
     };
 }
 
-fn fallbackVendorO2ABranchMetadata(line: []const u8, center_wavenumber_cm1: f64) !?VendorO2ABranchMetadata {
-    // fallbackVendorO2ABranchMetadata ------------------------------------------------------------------------|
+fn fallbackVendorBranchMetadata(line: []const u8, center_wavenumber_cm1: f64) !?VendorBranchMetadata {
+    // fallbackVendorBranchMetadata ---------------------------------------------------------------------------|
     // Reconstruct O2 A P-branch metadata from trailing branch tokens when fixed fields are absent.            |
     // --------------------------------------------------------------------------------------------------------|
     if (center_wavenumber_cm1 < 12800.0 or center_wavenumber_cm1 > 13250.0) return null;

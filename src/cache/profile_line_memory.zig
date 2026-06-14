@@ -4,7 +4,7 @@ const readers = @import("../assets/readers.zig");
 const hashing = @import("../common/hashing.zig");
 const spline = @import("../common/math/spline.zig");
 const worker_partition = @import("../common/worker_partition.zig");
-const o2_case = @import("../input/o2_case.zig");
+const scene_input = @import("../input/scene.zig");
 const atmosphere_layers = @import("../setup/atmosphere_layers.zig");
 const line_tables = @import("../setup/line_tables.zig");
 const line_physics = @import("../spectrum/line_physics.zig");
@@ -200,40 +200,40 @@ pub const ProfileLineValues = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn buildO2ProfileLineValues(
+pub fn buildProfileLineValues(
     allocator: Allocator,
-    case: o2_case.O2Case,
+    scene: scene_input.Scene,
 ) !ProfileLineValues {
-    // buildO2ProfileLineValues -------------------------------------------------------------------------------|
+    // buildProfileLineValues ---------------------------------------------------------------------------------|
     // Build line values over the case's evenly spaced setup wavelengths.                                      |
     // --------------------------------------------------------------------------------------------------------|
-    const wavelength_count = case.spectral_grid.sample_count;
+    const wavelength_count = scene.spectral_grid.sample_count;
     const wavelengths_nm = try allocator.alloc(f64, wavelength_count);
     defer allocator.free(wavelengths_nm);
 
     const step_nm = if (wavelength_count > 1)
-        (case.spectral_grid.end_nm - case.spectral_grid.start_nm) / @as(f64, @floatFromInt(wavelength_count - 1))
+        (scene.spectral_grid.end_nm - scene.spectral_grid.start_nm) / @as(f64, @floatFromInt(wavelength_count - 1))
     else
         0.0;
 
     for (wavelengths_nm, 0..) |*wavelength_nm, wavelength_index| {
-        wavelength_nm.* = case.spectral_grid.start_nm + step_nm * @as(f64, @floatFromInt(wavelength_index));
+        wavelength_nm.* = scene.spectral_grid.start_nm + step_nm * @as(f64, @floatFromInt(wavelength_index));
     }
 
-    return buildO2ProfileLineValuesForWavelengths(allocator, case, wavelengths_nm);
+    return buildProfileLineValuesForWavelengths(allocator, scene, wavelengths_nm);
 }
 
-pub fn buildO2ProfileLineValuesForWavelengths(
+pub fn buildProfileLineValuesForWavelengths(
     allocator: Allocator,
-    case: o2_case.O2Case,
+    scene: scene_input.Scene,
     wavelengths_nm: []const f64,
 ) !ProfileLineValues {
-    // buildO2ProfileLineValuesForWavelengths -----------------------------------------------------------------|
+    // buildProfileLineValuesForWavelengths -------------------------------------------------------------------|
     // Build retained line values with the scalar weak-line cutoff fallback used by canonical setup tests.     |
     // --------------------------------------------------------------------------------------------------------|
-    return buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
+    return buildProfileLineValuesForWavelengthsWithCutoffGrid(
         allocator,
-        case,
+        scene,
         wavelengths_nm,
         &.{},
         true,
@@ -244,9 +244,9 @@ pub fn buildO2ProfileLineValuesForWavelengths(
     );
 }
 
-pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
+pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
     allocator: Allocator,
-    case: o2_case.O2Case,
+    scene: scene_input.Scene,
     wavelengths_nm: []const f64,
     cutoff_grid_wavelengths_nm: []const f64,
     build_layer_values: bool,
@@ -255,7 +255,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
     worker_count: usize,
     cost_timing_active: []const ?CostTiming.Active,
 ) !ProfileLineValues {
-    // buildO2ProfileLineValuesForWavelengthsWithCutoffGrid ---------------------------------------------------|
+    // buildProfileLineValuesForWavelengthsWithCutoffGrid -----------------------------------------------------|
     // Build retained line values over a caller-provided exact wavelength list.                                |
     //                                                                                                         |
     //   the exact radiance wavelengths selected by `spectrum/radiance_wavelengths.zig` instead of assuming    |
@@ -267,9 +267,9 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
     //   `build_layer_values` keeps the O2 A diagnostic layer rows for evidence paths. The public spectrum     |
     //   route uses only support_profile_values, so root skips preparing unused layer rows.                    |
     // --------------------------------------------------------------------------------------------------------|
-    var layers = try atmosphere_layers.build(allocator, case);
+    var layers = try atmosphere_layers.build(allocator, scene);
     defer layers.deinit(allocator);
-    var lines = try line_tables.build(allocator, case);
+    var lines = try line_tables.build(allocator, scene);
     defer lines.deinit(allocator);
 
     const wavelength_count = wavelengths_nm.len;
@@ -293,7 +293,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
     };
     const total_lines = try collectRuntimeLines(allocator, lines.rows, lines.isotopes_sim);
     defer allocator.free(total_lines);
-    var active_lines: []readers.O2LineAssetRow = &.{};
+    var active_lines: []readers.LineAssetRow = &.{};
     var weak_states: []WeakLinePreparedState = &.{};
     var total_weak_states: []WeakLinePreparedState = &.{};
     var strong_states: []StrongLinePreparedState = &.{};
@@ -411,7 +411,7 @@ pub fn buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
         .profile_node_count = profile_node_count,
         .support_profile_node_count = support_profile_node_count,
         .reuse_stamp = profileLineReuseStamp(
-            case.id,
+            scene.id,
             wavelengths_nm,
             build_layer_values,
             include_temperature_derivatives,
@@ -439,10 +439,10 @@ const ProfileLineBuildWorker = struct {
     support_profile_rows: []const readers.AtmosphereProfileRow,
     runtime: RuntimeControls,
     include_temperature_derivatives: bool,
-    active_lines: []const readers.O2LineAssetRow,
-    total_lines: []const readers.O2LineAssetRow,
-    strong_lines: []const readers.O2StrongLineAssetRow,
-    relaxation_matrix: readers.O2RelaxationMatrixAsset,
+    active_lines: []const readers.LineAssetRow,
+    total_lines: []const readers.LineAssetRow,
+    strong_lines: []const readers.StrongLineAssetRow,
+    relaxation_matrix: readers.RelaxationMatrixAsset,
     weak_states: []const WeakLinePreparedState,
     upper_weak_states: []const WeakLinePreparedState,
     lower_weak_states: []const WeakLinePreparedState,
@@ -472,9 +472,9 @@ const ProfileLineBuildWorker = struct {
 //   outputs    : optional weak-line and strong-line prepared states, indexed by profile node                  |
 //   scheduling : shared chunk queue, worker index                                                             |
 const ProfileLineStateWorker = struct {
-    lines: []const readers.O2LineAssetRow,
-    strong_lines: []const readers.O2StrongLineAssetRow,
-    relaxation_matrix: readers.O2RelaxationMatrixAsset,
+    lines: []const readers.LineAssetRow,
+    strong_lines: []const readers.StrongLineAssetRow,
+    relaxation_matrix: readers.RelaxationMatrixAsset,
     temperatures_k: []const f64,
     pressures_hpa: []const f64,
     temperature_offset_k: f64 = 0.0,
@@ -502,11 +502,11 @@ fn buildProfileLineValuesByWavelength(
     worker_count: usize,
     wavelengths_nm: []const f64,
     layers: atmosphere_layers.LayerGrid,
-    lines: line_tables.O2LineTable,
+    lines: line_tables.LineTable,
     runtime: RuntimeControls,
     include_temperature_derivatives: bool,
-    active_lines: []const readers.O2LineAssetRow,
-    total_lines: []const readers.O2LineAssetRow,
+    active_lines: []const readers.LineAssetRow,
+    total_lines: []const readers.LineAssetRow,
     weak_states: []const WeakLinePreparedState,
     upper_weak_states: []const WeakLinePreparedState,
     lower_weak_states: []const WeakLinePreparedState,
@@ -773,7 +773,7 @@ fn preferredProfileLineStateWorkerCount(profile_count: usize) usize {
 }
 
 pub fn profileLineReuseStamp(
-    case_id: []const u8,
+    scene_id: []const u8,
     wavelengths_nm: []const f64,
     build_layer_values: bool,
     include_temperature_derivatives: bool,
@@ -782,7 +782,7 @@ pub fn profileLineReuseStamp(
     // Include exact wavelength bits, layer-row presence, and derivative-row presence in the retained stamp.   |
     // --------------------------------------------------------------------------------------------------------|
     var hasher = std.hash.Wyhash.init(0);
-    hasher.update(case_id);
+    hasher.update(scene_id);
     hasher.update(std.mem.sliceAsBytes(wavelengths_nm));
     const layer_byte = [_]u8{if (build_layer_values) 1 else 0};
     hasher.update(&layer_byte);
@@ -922,7 +922,7 @@ const WeakLinePreparedLineState = line_physics.WeakLinePreparedLineState;
 const WeakLinePreparedState = line_physics.WeakLinePreparedState;
 // ------------------------------------------------------------------------------------------------------------|
 
-fn thresholdStrength(lines: []const readers.O2LineAssetRow, scale: f64) f64 {
+fn thresholdStrength(lines: []const readers.LineAssetRow, scale: f64) f64 {
     // thresholdStrength --------------------------------------------------------------------------------------|
     // Convert the relative weak-line threshold control into an absolute line-strength floor.                  |
     // --------------------------------------------------------------------------------------------------------|
@@ -935,10 +935,10 @@ fn thresholdStrength(lines: []const readers.O2LineAssetRow, scale: f64) f64 {
 
 fn collectActiveLines(
     allocator: Allocator,
-    lines: []const readers.O2LineAssetRow,
+    lines: []const readers.LineAssetRow,
     active_isotopes: []const u8,
     line_strength_threshold: f64,
-) ![]readers.O2LineAssetRow {
+) ![]readers.LineAssetRow {
     // collectActiveLines -------------------------------------------------------------------------------------|
     // Copy weak-line rows that participate in setup evaluation, sorted for local window scans.                |
     // --------------------------------------------------------------------------------------------------------|
@@ -947,7 +947,7 @@ fn collectActiveLines(
         if (activeLine(line, active_isotopes, line_strength_threshold)) active_count += 1;
     }
 
-    const active_lines = try allocator.alloc(readers.O2LineAssetRow, active_count);
+    const active_lines = try allocator.alloc(readers.LineAssetRow, active_count);
     errdefer allocator.free(active_lines);
 
     var active_index: usize = 0;
@@ -957,15 +957,15 @@ fn collectActiveLines(
         active_index += 1;
     }
 
-    std.mem.sort(readers.O2LineAssetRow, active_lines, {}, lessByCenterWavelength);
+    std.mem.sort(readers.LineAssetRow, active_lines, {}, lessByCenterWavelength);
     return active_lines;
 }
 
 fn collectRuntimeLines(
     allocator: Allocator,
-    lines: []const readers.O2LineAssetRow,
+    lines: []const readers.LineAssetRow,
     active_isotopes: []const u8,
-) ![]readers.O2LineAssetRow {
+) ![]readers.LineAssetRow {
     // collectRuntimeLines ------------------------------------------------------------------------------------|
     // Copy O2 rows that participate in total-sigma evaluation, without applying the weak-line threshold.      |
     // --------------------------------------------------------------------------------------------------------|
@@ -974,7 +974,7 @@ fn collectRuntimeLines(
         if (runtimeLine(line, active_isotopes)) active_count += 1;
     }
 
-    const active_lines = try allocator.alloc(readers.O2LineAssetRow, active_count);
+    const active_lines = try allocator.alloc(readers.LineAssetRow, active_count);
     errdefer allocator.free(active_lines);
 
     var active_index: usize = 0;
@@ -984,11 +984,11 @@ fn collectRuntimeLines(
         active_index += 1;
     }
 
-    std.mem.sort(readers.O2LineAssetRow, active_lines, {}, lessByCenterWavelength);
+    std.mem.sort(readers.LineAssetRow, active_lines, {}, lessByCenterWavelength);
     return active_lines;
 }
 
-fn lessByCenterWavelength(_: void, lhs: readers.O2LineAssetRow, rhs: readers.O2LineAssetRow) bool {
+fn lessByCenterWavelength(_: void, lhs: readers.LineAssetRow, rhs: readers.LineAssetRow) bool {
     // lessByCenterWavelength ---------------------------------------------------------------------------------|
     // Order line rows by center wavelength so binary searches can isolate a local HITRAN cutoff window.       |
     // --------------------------------------------------------------------------------------------------------|
@@ -997,7 +997,7 @@ fn lessByCenterWavelength(_: void, lhs: readers.O2LineAssetRow, rhs: readers.O2L
 
 fn prepareLayerWeakLineStates(
     allocator: Allocator,
-    lines: []const readers.O2LineAssetRow,
+    lines: []const readers.LineAssetRow,
     temperatures_k: []const f64,
     pressures_hpa: []const f64,
     temperature_offset_k: f64,
@@ -1019,7 +1019,7 @@ fn prepareLayerWeakLineStates(
 
 fn prepareProfileWeakLineStates(
     allocator: Allocator,
-    lines: []const readers.O2LineAssetRow,
+    lines: []const readers.LineAssetRow,
     profile_rows: []const readers.AtmosphereProfileRow,
     cost_timing_active: []const ?CostTiming.Active,
 ) ![]WeakLinePreparedState {
@@ -1047,7 +1047,7 @@ fn prepareProfileWeakLineStates(
 
 fn prepareWeakLineStatesForRows(
     allocator: Allocator,
-    lines: []const readers.O2LineAssetRow,
+    lines: []const readers.LineAssetRow,
     temperatures_k: []const f64,
     pressures_hpa: []const f64,
     temperature_offset_k: f64,
@@ -1094,8 +1094,8 @@ fn prepareWeakLineStatesForRows(
 
 fn prepareLayerStrongLineStates(
     allocator: Allocator,
-    strong_lines: []const readers.O2StrongLineAssetRow,
-    relaxation_matrix: readers.O2RelaxationMatrixAsset,
+    strong_lines: []const readers.StrongLineAssetRow,
+    relaxation_matrix: readers.RelaxationMatrixAsset,
     temperatures_k: []const f64,
     pressures_hpa: []const f64,
     cost_timing_active: []const ?CostTiming.Active,
@@ -1123,8 +1123,8 @@ fn prepareLayerStrongLineStates(
 
 fn prepareProfileStrongLineStates(
     allocator: Allocator,
-    strong_lines: []const readers.O2StrongLineAssetRow,
-    relaxation_matrix: readers.O2RelaxationMatrixAsset,
+    strong_lines: []const readers.StrongLineAssetRow,
+    relaxation_matrix: readers.RelaxationMatrixAsset,
     profile_rows: []const readers.AtmosphereProfileRow,
     cost_timing_active: []const ?CostTiming.Active,
 ) ![]StrongLinePreparedState {
@@ -1151,9 +1151,9 @@ fn prepareProfileStrongLineStates(
 }
 
 fn fillProfileLineStates(
-    lines: []const readers.O2LineAssetRow,
-    strong_lines: []const readers.O2StrongLineAssetRow,
-    relaxation_matrix: readers.O2RelaxationMatrixAsset,
+    lines: []const readers.LineAssetRow,
+    strong_lines: []const readers.StrongLineAssetRow,
+    relaxation_matrix: readers.RelaxationMatrixAsset,
     temperatures_k: []const f64,
     pressures_hpa: []const f64,
     temperature_offset_k: f64,
@@ -1270,7 +1270,7 @@ fn deinitWeakLineStates(allocator: Allocator, states: []WeakLinePreparedState) v
     allocator.free(states);
 }
 
-fn emptyRelaxationMatrix() readers.O2RelaxationMatrixAsset {
+fn emptyRelaxationMatrix() readers.RelaxationMatrixAsset {
     // emptyRelaxationMatrix ----------------------------------------------------------------------------------|
     // Provide an unused, well-formed relaxation-matrix view for weak-only profile-line state workers.         |
     // --------------------------------------------------------------------------------------------------------|
@@ -1278,7 +1278,7 @@ fn emptyRelaxationMatrix() readers.O2RelaxationMatrixAsset {
 }
 
 fn activeLine(
-    line: readers.O2LineAssetRow,
+    line: readers.LineAssetRow,
     active_isotopes: []const u8,
     line_strength_threshold: f64,
 ) bool {
@@ -1298,7 +1298,7 @@ fn activeLine(
     return false;
 }
 
-fn runtimeLine(line: readers.O2LineAssetRow, active_isotopes: []const u8) bool {
+fn runtimeLine(line: readers.LineAssetRow, active_isotopes: []const u8) bool {
     // runtimeLine --------------------------------------------------------------------------------------------|
     // Apply the total-sigma gas/isotope controls without the weak-line threshold filter.                      |
     // --------------------------------------------------------------------------------------------------------|

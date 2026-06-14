@@ -191,7 +191,7 @@ const expected_budget_rows = [_]RowEvidence{
 };
 
 test "atmospheric budget rows match O2 A public Python evidence at probe wavelengths" {
-    var prepared = try internal.public.prepareO2A(allocator, internal.input.defaults.referenceCase());
+    var prepared = try internal.public.prepare(allocator, internal.input.defaults.referenceScene());
     defer prepared.deinit(allocator);
 
     const wavelengths_nm = [_]f64{ 758.0, 760.0, 765.0, 767.0, 776.0 };

@@ -4,7 +4,7 @@ const internal = @import("internal");
 const curved_sun_path = internal.optics.curved_sun_path;
 const defaults = internal.input.defaults;
 const layer_depths = internal.optics.layer_depths;
-const setup = internal.setup.o2_run_tables;
+const setup = internal.setup.run_tables;
 
 const allocator = std.testing.allocator;
 
@@ -131,7 +131,7 @@ const curved_samples = [_]CurvedSampleEvidence{
 };
 
 test "curved sun-path samples reuse active support rows in evidence order" {
-    var tables = try setup.buildO2RunTables(allocator, defaults.referenceCase());
+    var tables = try setup.buildRunTables(allocator, defaults.referenceScene());
     defer tables.deinit(allocator);
 
     const line_sigma = try allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);

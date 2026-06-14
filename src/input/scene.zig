@@ -1,7 +1,7 @@
 const std = @import("std");
 const transport_controls = @import("../rtm/controls.zig");
 
-// o2_case.zig ----------------------------------------------------------------------------------------------- |
+// case.zig -----------------------------------------------------------------------------------------------    |
 // Typed O2 A product-case controls consumed by setup tables and forward runs.                                 |
 //                                                                                                             |
 // runtime boundary                                                                                            |
@@ -270,7 +270,7 @@ pub const RtmControls = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// O2Case -----------------------------------------------------------------------------------------------------|
+// Scene ------------------------------------------------------------------------------------------------------|
 // Borrowed O2 A setup row.                                                                                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -290,7 +290,7 @@ pub const RtmControls = struct {
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   id, asset strings, isotope/interval/wavelength slices are borrowed; table builders own loaded rows.       |
-pub const O2Case = struct {
+pub const Scene = struct {
     id: []const u8,
     spectral_grid: SpectralGrid,
     surface_albedo: f64,

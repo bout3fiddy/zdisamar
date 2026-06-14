@@ -34,7 +34,7 @@ is what makes the hot path readable and property-testable.
 This is enforced by `scripts/linting/check-explicit-dataflow-signatures.py`,
 which scans signatures and type declarations in those folders.
 
-- Banned in signatures and as type names: `Scene`, `PreparedOpticalState`,
+- Banned in signatures and as type names: `Case`, `PreparedOpticalState`,
   `ProductStorage`, `Context`, `Workspace`, `Request`, `Cache`, `ComputeCache`,
   `Storage`, and any identifier ending in `Request` or `Workspace`. A
   god-object parameter hides what the function actually touches.

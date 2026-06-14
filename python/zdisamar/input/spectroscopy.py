@@ -13,7 +13,7 @@ def _asset_or_none(asset: ReferenceAsset | None) -> dict[str, str] | None:
 
 
 @dataclass
-class O2LineByLine:
+class LineByLine:
     """Line-list and line-mixing inputs for O2 absorption."""
 
     line_list_asset: ReferenceAsset

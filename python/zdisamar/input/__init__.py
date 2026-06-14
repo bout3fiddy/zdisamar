@@ -6,7 +6,7 @@ from .atmosphere import Atmosphere, VerticalInterval
 from .geometry import Geometry, Surface
 from .instrument import InstrumentResponse, SpectralGrid
 from .radiative_transfer import RadiativeTransferControls, RadiativeTransferPerformanceThresholds
-from .spectroscopy import O2LineByLine, OxygenCollisionInducedAbsorption
+from .spectroscopy import LineByLine, OxygenCollisionInducedAbsorption
 from .wavelength_band import (
     FastModeAdaptiveReferenceGrid,
     FastModeFastStageSampling,
@@ -16,8 +16,8 @@ from .wavelength_band import (
     FastModeOptimisation,
     FastModeRadiativeTransfer,
     FastModeWavelengthWindow,
-    O2AInput,
-    O2AOptimisation,
+    Optimisation,
+    Scene,
 )
 
 __all__ = [
@@ -35,9 +35,9 @@ __all__ = [
     "FastModeWavelengthWindow",
     "Geometry",
     "InstrumentResponse",
-    "O2AInput",
-    "O2AOptimisation",
-    "O2LineByLine",
+    "Scene",
+    "Optimisation",
+    "LineByLine",
     "OxygenCollisionInducedAbsorption",
     "RadiativeTransferControls",
     "RadiativeTransferPerformanceThresholds",

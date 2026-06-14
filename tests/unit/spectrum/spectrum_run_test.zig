@@ -27,9 +27,9 @@ test "preferred radiance worker count keeps small batches single-threaded" {
 
 test "radianceAtWavelength wires optics direct transport and radiance scaling" {
     const allocator = std.testing.allocator;
-    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
+    var tables = try internal.setup.run_tables.buildRunTables(
         allocator,
-        internal.input.defaults.referenceCase(),
+        internal.input.defaults.referenceScene(),
     );
     defer tables.deinit(allocator);
 
@@ -57,15 +57,15 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
     defer allocator.free(curved_level_altitudes);
 
     const wavelength_nm = 760.0;
-    var case = internal.input.defaults.referenceCase();
-    case.spectral_grid = .{
+    var scene = internal.input.defaults.referenceScene();
+    scene.spectral_grid = .{
         .start_nm = wavelength_nm,
         .end_nm = wavelength_nm,
         .sample_count = 1,
     };
-    var profile_lines = try internal.cache.profile_line_memory.buildO2ProfileLineValues(
+    var profile_lines = try internal.cache.profile_line_memory.buildProfileLineValues(
         allocator,
-        case,
+        scene,
     );
     defer profile_lines.deinit(allocator);
 
@@ -159,9 +159,9 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
 
 test "radianceAtWavelength checks caller-owned row shapes" {
     const allocator = std.testing.allocator;
-    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
+    var tables = try internal.setup.run_tables.buildRunTables(
         allocator,
-        internal.input.defaults.referenceCase(),
+        internal.input.defaults.referenceScene(),
     );
     defer tables.deinit(allocator);
 
@@ -170,15 +170,15 @@ test "radianceAtWavelength checks caller-owned row shapes" {
     const line_sigma = try allocator.alloc(f64, support_count);
     defer allocator.free(line_sigma);
     @memset(line_sigma, 0.0);
-    var case = internal.input.defaults.referenceCase();
-    case.spectral_grid = .{
+    var scene = internal.input.defaults.referenceScene();
+    scene.spectral_grid = .{
         .start_nm = 760.0,
         .end_nm = 760.0,
         .sample_count = 1,
     };
-    var profile_lines = try internal.cache.profile_line_memory.buildO2ProfileLineValues(
+    var profile_lines = try internal.cache.profile_line_memory.buildProfileLineValues(
         allocator,
-        case,
+        scene,
     );
     defer profile_lines.deinit(allocator);
     const support = try allocator.alloc(layer_depths.SupportOptics, support_count);
@@ -225,17 +225,17 @@ test "radianceAtWavelength checks caller-owned row shapes" {
 
 test "radianceAtWavelength matches canonical transport probes" {
     const allocator = std.testing.allocator;
-    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
+    var tables = try internal.setup.run_tables.buildRunTables(
         allocator,
-        internal.input.defaults.referenceCase(),
+        internal.input.defaults.referenceScene(),
     );
     defer tables.deinit(allocator);
 
     const support_count = tables.layers.support_mid_altitudes_km.len;
     const layer_count = tables.layers.layer_pressures_hpa.len;
-    var profile_lines = try internal.cache.profile_line_memory.buildO2ProfileLineValuesForWavelengths(
+    var profile_lines = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengths(
         allocator,
-        internal.input.defaults.referenceCase(),
+        internal.input.defaults.referenceScene(),
         transport_probe_wavelengths_nm[0..],
     );
     defer profile_lines.deinit(allocator);
@@ -258,14 +258,14 @@ test "radianceAtWavelength matches canonical transport probes" {
     var memory = internal.cache.transport_worker_memory.TransportWorkerMemory{};
     defer memory.deinit(allocator);
 
-    const case = internal.input.defaults.referenceCase();
-    const solar_sin = @sin(std.math.degreesToRadians(case.geometry.solar_zenith_deg));
-    const view_sin = @sin(std.math.degreesToRadians(case.geometry.viewing_zenith_deg));
+    const scene = internal.input.defaults.referenceScene();
+    const solar_sin = @sin(std.math.degreesToRadians(scene.geometry.solar_zenith_deg));
+    const view_sin = @sin(std.math.degreesToRadians(scene.geometry.viewing_zenith_deg));
     const angles = solve.ViewAngles{
         .solar_mu = @sqrt(@max(1.0 - solar_sin * solar_sin, 0.0)),
         .view_mu = @sqrt(@max(1.0 - view_sin * view_sin, 0.0)),
 
-        .relative_azimuth_rad = std.math.degreesToRadians(@mod(180.0 - case.geometry.relative_azimuth_deg, 360.0)),
+        .relative_azimuth_rad = std.math.degreesToRadians(@mod(180.0 - scene.geometry.relative_azimuth_deg, 360.0)),
     };
     const solve_config = controls.SolveConfig{
         .derivative_mode = .semi_analytical,
@@ -273,9 +273,9 @@ test "radianceAtWavelength matches canonical transport probes" {
             jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa),
         .controls = .{
             .scattering = .multiple,
-            .n_streams = @intCast(case.rtm.stream_count),
+            .n_streams = @intCast(scene.rtm.stream_count),
             .performance_thresholds = controls.PerformanceThresholds.o2a_default,
-            .use_spherical_correction = case.geometry.pseudo_spherical,
+            .use_spherical_correction = scene.geometry.pseudo_spherical,
             .integrate_source_function = true,
             .renorm_phase_function = true,
         },
@@ -283,7 +283,7 @@ test "radianceAtWavelength matches canonical transport probes" {
     try memory.ensureCapacity(
         allocator,
         layer_count + 1,
-        case.rtm.stream_count,
+        scene.rtm.stream_count,
         40,
         40,
         true,
@@ -349,7 +349,7 @@ test "radianceAtWavelength matches canonical transport probes" {
     }
 }
 
-test "runO2ASpectrum matches canonical full spectrum" {
+test "runForwardSpectrum matches canonical full spectrum" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
     if (!std.process.hasEnvVarConstant("ZDISAMAR_RUN_FULL_SPECTRUM_CANONICAL")) return error.SkipZigTest;
 
@@ -367,16 +367,16 @@ test "runO2ASpectrum matches canonical full spectrum" {
     defer baseline.deinit();
     const expected = baseline.value.spectrum.one_shot;
 
-    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
+    var tables = try internal.setup.run_tables.buildRunTables(
         allocator,
-        internal.input.defaults.referenceCase(),
+        internal.input.defaults.referenceScene(),
     );
     defer tables.deinit(allocator);
 
-    const case = internal.input.defaults.referenceCase();
-    var owned_sampling = try sampling_table.buildO2SpectrumSamplingTable(
+    const scene = internal.input.defaults.referenceScene();
+    var owned_sampling = try sampling_table.buildSpectrumSamplingTable(
         allocator,
-        case,
+        scene,
         tables.instrument,
         tables.lines,
     );
@@ -393,9 +393,9 @@ test "runO2ASpectrum matches canonical full spectrum" {
     }
 
     var profile_lines =
-        try internal.cache.profile_line_memory.buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
+        try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengthsWithCutoffGrid(
             allocator,
-            case,
+            scene,
             exact_wavelengths_nm,
             exact_wavelengths_nm,
             true,
@@ -446,13 +446,13 @@ test "runO2ASpectrum matches canonical full spectrum" {
     var solar_memory = internal.cache.solar_irradiance_memory.SolarIrradianceMemory.init(allocator);
     defer solar_memory.deinit();
 
-    const solar_sin = @sin(std.math.degreesToRadians(case.geometry.solar_zenith_deg));
-    const view_sin = @sin(std.math.degreesToRadians(case.geometry.viewing_zenith_deg));
+    const solar_sin = @sin(std.math.degreesToRadians(scene.geometry.solar_zenith_deg));
+    const view_sin = @sin(std.math.degreesToRadians(scene.geometry.viewing_zenith_deg));
     const angles = solve.ViewAngles{
         .solar_mu = @sqrt(@max(1.0 - solar_sin * solar_sin, 0.0)),
         .view_mu = @sqrt(@max(1.0 - view_sin * view_sin, 0.0)),
 
-        .relative_azimuth_rad = std.math.degreesToRadians(@mod(180.0 - case.geometry.relative_azimuth_deg, 360.0)),
+        .relative_azimuth_rad = std.math.degreesToRadians(@mod(180.0 - scene.geometry.relative_azimuth_deg, 360.0)),
     };
     const solve_config = controls.SolveConfig{
         .derivative_mode = .semi_analytical,
@@ -460,9 +460,9 @@ test "runO2ASpectrum matches canonical full spectrum" {
             jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa),
         .controls = .{
             .scattering = .multiple,
-            .n_streams = @intCast(case.rtm.stream_count),
+            .n_streams = @intCast(scene.rtm.stream_count),
             .performance_thresholds = controls.PerformanceThresholds.o2a_default,
-            .use_spherical_correction = case.geometry.pseudo_spherical,
+            .use_spherical_correction = scene.geometry.pseudo_spherical,
             .integrate_source_function = true,
             .renorm_phase_function = true,
         },
@@ -474,14 +474,14 @@ test "runO2ASpectrum matches canonical full spectrum" {
         support_count,
         layer_count,
         layer_count + 1,
-        case.rtm.stream_count,
+        scene.rtm.stream_count,
         40,
         40,
         true,
     );
     defer transport_workers.deinit(allocator);
 
-    const summary = try spectrum_run.runO2ASpectrum(
+    const summary = try spectrum_run.runForwardSpectrum(
         table,
         wavelengths.view(),
         angles,
@@ -564,11 +564,11 @@ test "runO2ASpectrum matches canonical full spectrum" {
     }
 }
 
-test "runO2ASpectrum assembles direct-route product reflectance across workers" {
+test "runForwardSpectrum assembles direct-route product reflectance across workers" {
     const allocator = std.testing.allocator;
-    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
+    var tables = try internal.setup.run_tables.buildRunTables(
         allocator,
-        internal.input.defaults.referenceCase(),
+        internal.input.defaults.referenceScene(),
     );
     defer tables.deinit(allocator);
 
@@ -593,10 +593,10 @@ test "runO2ASpectrum assembles direct-route product reflectance across workers" 
     defer wavelengths.deinit(allocator);
 
     const exact_wavelengths_nm = [_]f64{ 758.0, 760.0 };
-    const case = internal.input.defaults.referenceCase();
-    var profile_lines = try internal.cache.profile_line_memory.buildO2ProfileLineValuesForWavelengths(
+    const scene = internal.input.defaults.referenceScene();
+    var profile_lines = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengths(
         allocator,
-        case,
+        scene,
         exact_wavelengths_nm[0..],
     );
     defer profile_lines.deinit(allocator);
@@ -641,7 +641,7 @@ test "runO2ASpectrum assembles direct-route product reflectance across workers" 
         .controls = .{ .scattering = .none, .integrate_source_function = false },
     };
 
-    const summary = try spectrum_run.runO2ASpectrum(
+    const summary = try spectrum_run.runForwardSpectrum(
         table,
         wavelengths.view(),
         angles,

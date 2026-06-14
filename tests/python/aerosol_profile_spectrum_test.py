@@ -11,9 +11,9 @@ from zdisamar.inverse_method import optimal_estimation
 
 def main() -> None:
 
-    case = rtm.o2a_reference_case()
-    assert len(case.aerosol.profile) == 1
-    assert b'"profile"' not in case.to_json_bytes()
+    scene = rtm.reference_scene()
+    assert len(scene.aerosol.profile) == 1
+    assert b'"profile"' not in scene.to_json_bytes()
 
     one_layer = rtm.AerosolProfileLayer(
         top_pressure_hpa=430.0,
@@ -23,21 +23,21 @@ def main() -> None:
         asymmetry_factor=0.72,
         angstrom_exponent=0.4,
     )
-    one_layer_case = deepcopy(case)
-    one_layer_case.set_aerosol_profile((one_layer,))
-    layer_view_case = deepcopy(case)
-    layer_view_case.aerosol_optical_depth_550_nm = one_layer.optical_depth
-    layer_view_case.aerosol.single_scatter_albedo = one_layer.single_scatter_albedo
-    layer_view_case.aerosol.asymmetry_factor = one_layer.asymmetry_factor
-    layer_view_case.aerosol.angstrom_exponent = one_layer.angstrom_exponent
-    layer_view_case.aerosol_layer.thickness_hpa = (
+    one_layer_scene = deepcopy(scene)
+    one_layer_scene.set_aerosol_profile((one_layer,))
+    layer_view_scene = deepcopy(scene)
+    layer_view_scene.aerosol_optical_depth_550_nm = one_layer.optical_depth
+    layer_view_scene.aerosol.single_scatter_albedo = one_layer.single_scatter_albedo
+    layer_view_scene.aerosol.asymmetry_factor = one_layer.asymmetry_factor
+    layer_view_scene.aerosol.angstrom_exponent = one_layer.angstrom_exponent
+    layer_view_scene.aerosol_layer.thickness_hpa = (
         one_layer.bottom_pressure_hpa - one_layer.top_pressure_hpa
     )
-    layer_view_case.aerosol_layer.mid_pressure_hpa = 0.5 * (
+    layer_view_scene.aerosol_layer.mid_pressure_hpa = 0.5 * (
         one_layer.top_pressure_hpa + one_layer.bottom_pressure_hpa
     )
-    assert b'"profile"' not in one_layer_case.to_json_bytes()
-    assert one_layer_case.to_json_bytes() == layer_view_case.to_json_bytes()
+    assert b'"profile"' not in one_layer_scene.to_json_bytes()
+    assert one_layer_scene.to_json_bytes() == layer_view_scene.to_json_bytes()
 
     profile = (
         rtm.AerosolProfileLayer(
@@ -58,12 +58,12 @@ def main() -> None:
         ),
     )
 
-    profile_case = deepcopy(case)
-    profile_case.set_aerosol_profile(profile)
-    assert b'"profile"' in profile_case.to_json_bytes()
+    profile_scene = deepcopy(scene)
+    profile_scene.set_aerosol_profile(profile)
+    assert b'"profile"' in profile_scene.to_json_bytes()
 
-    partially_off_grid_case = deepcopy(case)
-    partially_off_grid_case.set_aerosol_profile(
+    partially_off_grid_scene = deepcopy(scene)
+    partially_off_grid_scene.set_aerosol_profile(
         (
             rtm.AerosolProfileLayer(
                 top_pressure_hpa=1000.0,
@@ -77,10 +77,10 @@ def main() -> None:
             ),
         )
     )
-    expect_spectrum_rejected(partially_off_grid_case)
+    expect_spectrum_rejected(partially_off_grid_scene)
 
-    spectral_merge_case = deepcopy(case)
-    spectral_merge_case.set_aerosol_profile(
+    spectral_merge_scene = deepcopy(scene)
+    spectral_merge_scene.set_aerosol_profile(
         (
             rtm.AerosolProfileLayer(
                 top_pressure_hpa=430.0,
@@ -96,11 +96,11 @@ def main() -> None:
             ),
         )
     )
-    expect_spectrum_rejected(spectral_merge_case)
+    expect_spectrum_rejected(spectral_merge_scene)
 
-    baseline = rtm.spectrum(case)
-    one_layer_spectrum = rtm.spectrum(one_layer_case)
-    layer_view_spectrum = rtm.spectrum(layer_view_case)
+    baseline = rtm.spectrum(scene)
+    one_layer_spectrum = rtm.spectrum(one_layer_scene)
+    layer_view_spectrum = rtm.spectrum(layer_view_scene)
     one_layer_delta = max(
         abs(a - b)
         for a, b in zip(
@@ -111,19 +111,19 @@ def main() -> None:
     )
     assert one_layer_delta < 1.0e-12
 
-    with rtm.SessionCache(profile_case) as cache:
+    with rtm.SessionCache(profile_scene) as cache:
         profiled = cache.spectrum()
         expect_profile_jacobian_rejected(cache)
 
         with patch.object(cache, "load", wraps=cache.load) as load_mock:
-            cached_profiled = cache.spectrum(profile_case)
+            cached_profiled = cache.spectrum(profile_scene)
 
     assert len(profiled.wavelength_nm) == len(baseline.wavelength_nm)
     assert len(profiled.reflectance) == len(baseline.reflectance)
     assert len(cached_profiled.reflectance) == len(profiled.reflectance)
     assert load_mock.call_count == 0
     assert all(math.isfinite(value) for value in profiled.reflectance)
-    expect_profile_oe_correction_rejected(profile_case, profiled)
+    expect_profile_oe_correction_rejected(profile_scene, profiled)
     assert not hasattr(cache, "aerosol_profile_spectrum")
     assert not hasattr(rtm, "aerosol_profile_spectrum")
     max_delta = max(
@@ -133,7 +133,7 @@ def main() -> None:
 
     try:
         optimal_estimation.retrieve(
-            case=profile_case,
+            scene=profile_scene,
             measurement=optimal_estimation.Measurement((760.0,), (0.2,), signal_to_noise=100.0),
             state_vector=optimal_estimation.StateVector(
                 [
@@ -153,10 +153,10 @@ def main() -> None:
     print("aerosol_profile_spectrum=ok")
 
 
-def expect_spectrum_rejected(case) -> None:
+def expect_spectrum_rejected(scene) -> None:
 
     try:
-        rtm.spectrum(case)
+        rtm.spectrum(scene)
     except RuntimeError as error:
         assert "InvalidRequest" in str(error)
     else:
@@ -173,7 +173,7 @@ def expect_profile_jacobian_rejected(cache: rtm.SessionCache) -> None:
         raise AssertionError("multi-layer aerosol profile Jacobian was accepted")
 
 
-def expect_profile_oe_correction_rejected(case, spectrum) -> None:
+def expect_profile_oe_correction_rejected(scene, spectrum) -> None:
 
     measurement = optimal_estimation.Measurement(
         spectrum.wavelength_nm[:2],
@@ -182,7 +182,7 @@ def expect_profile_oe_correction_rejected(case, spectrum) -> None:
     )
 
     with RtmHandle() as handle:
-        handle.load_o2a_case(case)
+        handle.load_scene(scene)
 
         try:
             handle.optimal_estimation_correction(

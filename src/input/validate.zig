@@ -1,54 +1,54 @@
 const std = @import("std");
 
 const errors = @import("../common/errors.zig");
-const o2_case = @import("o2_case.zig");
+const scene_input = @import("scene.zig");
 
 const profile_pressure_tolerance_hpa: f64 = 1.0e-9;
 const profile_spectral_tolerance: f64 = 1.0e-12;
 
-pub fn o2Case(case: o2_case.O2Case) !void {
-    // o2Case -------------------------------------------------------------------------------------------------|
+pub fn sceneControls(scene: scene_input.Scene) !void {
+    // case ---------------------------------------------------------------------------------------------------|
     // Validate every control O2 A consumes so unsupported or malformed setup input cannot pass inertly.       |
     // --------------------------------------------------------------------------------------------------------|
-    if (case.spectral_grid.sample_count < 2) return errors.Error.InvalidControl;
-    if (case.spectral_grid.end_nm <= case.spectral_grid.start_nm) return errors.Error.InvalidControl;
-    if (case.surface_albedo < 0.0 or case.surface_albedo > 1.0) return errors.Error.InvalidControl;
-    try measuredWavelengths(case.spectral_grid, case.observation.measured_wavelengths_nm);
+    if (scene.spectral_grid.sample_count < 2) return errors.Error.InvalidControl;
+    if (scene.spectral_grid.end_nm <= scene.spectral_grid.start_nm) return errors.Error.InvalidControl;
+    if (scene.surface_albedo < 0.0 or scene.surface_albedo > 1.0) return errors.Error.InvalidControl;
+    try measuredWavelengths(scene.spectral_grid, scene.observation.measured_wavelengths_nm);
 
-    if (case.atmosphere.layer_count == 0) return errors.Error.InvalidControl;
-    if (case.atmosphere.sublayer_divisions == 0) return errors.Error.InvalidControl;
-    if (case.atmosphere.intervals.len != case.atmosphere.layer_count) return errors.Error.InvalidControl;
-    if (case.atmosphere.fit_interval_index_1based == 0) return errors.Error.InvalidControl;
-    if (case.atmosphere.fit_interval_index_1based > case.atmosphere.intervals.len) {
+    if (scene.atmosphere.layer_count == 0) return errors.Error.InvalidControl;
+    if (scene.atmosphere.sublayer_divisions == 0) return errors.Error.InvalidControl;
+    if (scene.atmosphere.intervals.len != scene.atmosphere.layer_count) return errors.Error.InvalidControl;
+    if (scene.atmosphere.fit_interval_index_1based == 0) return errors.Error.InvalidControl;
+    if (scene.atmosphere.fit_interval_index_1based > scene.atmosphere.intervals.len) {
         return errors.Error.InvalidControl;
     }
 
-    for (case.atmosphere.intervals, 0..) |interval, index| {
+    for (scene.atmosphere.intervals, 0..) |interval, index| {
         if (interval.index_1based != index + 1) return errors.Error.InvalidControl;
         if (interval.altitude_divisions == 0) return errors.Error.InvalidControl;
         if (interval.bottom_pressure_hpa <= interval.top_pressure_hpa) return errors.Error.InvalidControl;
     }
 
-    if (case.aerosol.optical_depth < 0.0) return errors.Error.InvalidControl;
-    if (case.aerosol.single_scatter_albedo < 0.0 or case.aerosol.single_scatter_albedo > 1.0) {
+    if (scene.aerosol.optical_depth < 0.0) return errors.Error.InvalidControl;
+    if (scene.aerosol.single_scatter_albedo < 0.0 or scene.aerosol.single_scatter_albedo > 1.0) {
         return errors.Error.InvalidControl;
     }
-    try aerosolProfile(case.aerosol.profile, case.atmosphere.intervals);
+    try aerosolProfile(scene.aerosol.profile, scene.atmosphere.intervals);
 
-    if (case.observation.instrument_line_fwhm_nm <= 0.0) return errors.Error.InvalidControl;
-    if (case.observation.high_resolution_step_nm <= 0.0) return errors.Error.InvalidControl;
+    if (scene.observation.instrument_line_fwhm_nm <= 0.0) return errors.Error.InvalidControl;
+    if (scene.observation.high_resolution_step_nm <= 0.0) return errors.Error.InvalidControl;
 
-    if (case.line_gas.isotopes_sim.len == 0) return errors.Error.InvalidControl;
-    if (case.line_gas.threshold_line_sim <= 0.0) return errors.Error.InvalidControl;
-    if (case.line_gas.cutoff_sim_cm1 <= 0.0) return errors.Error.InvalidControl;
+    if (scene.line_gas.isotopes_sim.len == 0) return errors.Error.InvalidControl;
+    if (scene.line_gas.threshold_line_sim <= 0.0) return errors.Error.InvalidControl;
+    if (scene.line_gas.cutoff_sim_cm1 <= 0.0) return errors.Error.InvalidControl;
 
-    if (!case.cia.enabled) return errors.Error.InvalidControl;
-    if (case.rtm.stream_count == 0) return errors.Error.InvalidControl;
-    case.rtm.performance_thresholds.validate() catch return errors.Error.InvalidControl;
+    if (!scene.cia.enabled) return errors.Error.InvalidControl;
+    if (scene.rtm.stream_count == 0) return errors.Error.InvalidControl;
+    scene.rtm.performance_thresholds.validate() catch return errors.Error.InvalidControl;
 }
 
 fn measuredWavelengths(
-    grid: o2_case.SpectralGrid,
+    grid: scene_input.SpectralGrid,
     wavelengths_nm: []const f64,
 ) !void {
     // measuredWavelengths ----------------------------------------------------------------------------------- |
@@ -82,8 +82,8 @@ fn measuredWavelengths(
 }
 
 fn aerosolProfile(
-    profile: []const o2_case.AerosolProfileLayer,
-    intervals: []const o2_case.VerticalInterval,
+    profile: []const scene_input.AerosolProfileLayer,
+    intervals: []const scene_input.VerticalInterval,
 ) !void {
     // aerosolProfile -----------------------------------------------------------------------------------------|
     // Validate explicit aerosol profile rows against the pressure route consumed by setup tables.             |
@@ -105,7 +105,7 @@ fn aerosolProfile(
     }
 }
 
-fn aerosolProfileLayer(layer: o2_case.AerosolProfileLayer) !void {
+fn aerosolProfileLayer(layer: scene_input.AerosolProfileLayer) !void {
     // aerosolProfileLayer ------------------------------------------------------------------------------------|
     // Enforce physical bounds for one explicit aerosol profile layer.                                         |
     // --------------------------------------------------------------------------------------------------------|
@@ -144,8 +144,8 @@ fn aerosolProfileLayer(layer: o2_case.AerosolProfileLayer) !void {
 }
 
 fn profileLayerCoveredByIntervals(
-    layer: o2_case.AerosolProfileLayer,
-    intervals: []const o2_case.VerticalInterval,
+    layer: scene_input.AerosolProfileLayer,
+    intervals: []const scene_input.VerticalInterval,
 ) bool {
     // profileLayerCoveredByIntervals -------------------------------------------------------------------------|
     // Check that the public profile pressure span is covered by configured atmosphere interval bounds.        |
@@ -163,8 +163,8 @@ fn profileLayerCoveredByIntervals(
 }
 
 fn profileLayersOverlap(
-    left: o2_case.AerosolProfileLayer,
-    right: o2_case.AerosolProfileLayer,
+    left: scene_input.AerosolProfileLayer,
+    right: scene_input.AerosolProfileLayer,
 ) bool {
     // profileLayersOverlap -----------------------------------------------------------------------------------|
     // Return whether two profile pressure spans contribute to any common support row.                         |
@@ -174,8 +174,8 @@ fn profileLayersOverlap(
 }
 
 fn profileSpectralScalingMatches(
-    left: o2_case.AerosolProfileLayer,
-    right: o2_case.AerosolProfileLayer,
+    left: scene_input.AerosolProfileLayer,
+    right: scene_input.AerosolProfileLayer,
 ) bool {
     // profileSpectralScalingMatches --------------------------------------------------------------------------|
     // Keep overlapping profile rows on one wavelength-scaling law, matching the profile merge gate.           |

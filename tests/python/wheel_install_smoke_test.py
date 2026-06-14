@@ -47,18 +47,18 @@ def main() -> int:
             assert Path(library._name).name == library_filename()
             assert reference_data.path("cross_sections/o2o2_bira_o2a.dat").is_file()
 
-            reference_case = o2a.reference_case()
-            case_repr = repr(reference_case)
-            assert "O2AInput(" in case_repr
-            assert "spectral_grid=755-776 nm (701 samples)" in case_repr
-            assert "ReferenceAsset(" not in case_repr
+            reference_scene = o2a.reference_scene()
+            scene_repr = repr(reference_scene)
+            assert "Scene(" in scene_repr
+            assert "spectral_grid=755-776 nm (701 samples)" in scene_repr
+            assert "ReferenceAsset(" not in scene_repr
 
             # Linux wheel regression: this call crosses Python -> C -> Zig and
             # starts native worker threads. Without libc/pthread linkage in the
             # shared library, Linux can fail here even when the same code works
             # as a standalone Zig executable or on macOS.
             reference_spectrum_start_s = time.perf_counter()
-            reference_spectrum = rtm.spectrum(reference_case)
+            reference_spectrum = rtm.spectrum(reference_scene)
             reference_spectrum_s = time.perf_counter() - reference_spectrum_start_s
             print(
                 f"reference_spectrum_s={reference_spectrum_s:.6f} "
@@ -85,11 +85,11 @@ def main() -> int:
             assert "array(" not in spectrum_repr
             assert reference_spectrum.plot.reflectance() is not None
 
-            case = o2a.reference_case()
-            case.optimisation.fastmode.enabled = True
-            assert int(case.spectral_grid.sample_count) > 0
+            scene = o2a.reference_scene()
+            scene.optimisation.fastmode.enabled = True
+            assert int(scene.spectral_grid.sample_count) > 0
             wavelengths = [760.76]
-            budget = rtm.atmospheric_budget(case, wavelengths)
+            budget = rtm.atmospheric_budget(scene, wavelengths)
             assert budget.row_count > 0
             assert len(budget.column("wavelength_nm")) == budget.row_count
         finally:

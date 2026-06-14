@@ -15,8 +15,8 @@ from ..geometry import Geometry, Surface
 from ..instrument import InstrumentResponse, SpectralGrid
 from ..radiative_transfer import RadiativeTransferControls
 from ..shared import json_value, object_dict, to_float
-from ..spectroscopy import O2LineByLine, OxygenCollisionInducedAbsorption
-from .optimisation import O2AOptimisation
+from ..spectroscopy import LineByLine, OxygenCollisionInducedAbsorption
+from .optimisation import Optimisation
 
 
 def _object_dict(data: dict[str, object], key: str) -> dict[str, object]:
@@ -25,7 +25,7 @@ def _object_dict(data: dict[str, object], key: str) -> dict[str, object]:
 
 
 @dataclass
-class O2AInput(NotebookDisplay):
+class Scene(NotebookDisplay):
     """Complete O2 A wavelength-band case passed to the zdisamar RTM."""
 
     metadata: dict[str, object]
@@ -38,10 +38,10 @@ class O2AInput(NotebookDisplay):
     geometry: Geometry
     aerosol: Aerosol
     instrument_response: InstrumentResponse
-    o2_lines: O2LineByLine
+    o2_lines: LineByLine
     collision_induced_absorption: OxygenCollisionInducedAbsorption
     radiative_transfer: RadiativeTransferControls
-    optimisation: O2AOptimisation = field(default_factory=O2AOptimisation.defaults)
+    optimisation: Optimisation = field(default_factory=Optimisation.defaults)
 
     @property
     def aerosol_optical_depth_550_nm(self) -> float:
@@ -107,7 +107,7 @@ class O2AInput(NotebookDisplay):
             )
 
         return (
-            "O2AInput(\n"
+            "Scene(\n"
             f"  scene_id={self.scene_id!r},\n"
             "  spectral_grid="
             f"{self.spectral_grid.start_nm:g}-{self.spectral_grid.end_nm:g} nm "
@@ -157,14 +157,14 @@ class O2AInput(NotebookDisplay):
             geometry=Geometry.from_dict(object_dict(data["geometry"])),
             aerosol=Aerosol.from_dict(object_dict(data["aerosol"])),
             instrument_response=InstrumentResponse.from_dict(object_dict(data["observation"])),
-            o2_lines=O2LineByLine.from_dict(object_dict(data["o2"])),
+            o2_lines=LineByLine.from_dict(object_dict(data["o2"])),
             collision_induced_absorption=OxygenCollisionInducedAbsorption.from_dict(
                 object_dict(data["o2o2"])
             ),
             radiative_transfer=RadiativeTransferControls.from_dict(
                 object_dict(data["rtm_controls"])
             ),
-            optimisation=O2AOptimisation.from_dict(object_dict(data.get("optimisation", {}))),
+            optimisation=Optimisation.from_dict(object_dict(data.get("optimisation", {}))),
         )
 
     @classmethod
@@ -260,7 +260,7 @@ class O2AInput(NotebookDisplay):
         resolved = deepcopy(self)
 
         if resolved.optimisation.fastmode.enabled:
-            resolved.optimisation.fastmode.apply_to_case(resolved)
+            resolved.optimisation.fastmode.apply_to_scene(resolved)
             resolved.optimisation.fastmode.enabled = False
 
         return resolved
@@ -315,7 +315,7 @@ class O2AInput(NotebookDisplay):
 
 
 def apply_aerosol_layer_midpoint_and_thickness(
-    case: O2AInput,
+    scene: Scene,
     *,
     mid_pressure_hpa: float,
     thickness_hpa: float,
@@ -331,26 +331,26 @@ def apply_aerosol_layer_midpoint_and_thickness(
     if thickness_hpa <= 0.0:
         raise ValueError("aerosol layer pressure thickness must be positive")
 
-    case.aerosol.require_retrieval_compatible()
+    scene.aerosol.require_retrieval_compatible()
 
     top_pressure_hpa = mid_pressure_hpa - 0.5 * thickness_hpa
     bottom_pressure_hpa = mid_pressure_hpa + 0.5 * thickness_hpa
 
-    placement = case.aerosol.placement
+    placement = scene.aerosol.placement
 
     if placement.semantics != "explicit_interval_bounds":
         raise ValueError("aerosol pressure setters require explicit interval bounds placement")
 
-    if placement.interval_index_1based != case.atmosphere.fit_interval_index_1based:
+    if placement.interval_index_1based != scene.atmosphere.fit_interval_index_1based:
         raise ValueError("aerosol placement interval does not match atmosphere fit interval")
 
-    case.atmosphere.set_fit_interval_pressure_bounds(
+    scene.atmosphere.set_fit_interval_pressure_bounds(
         top_pressure_hpa=top_pressure_hpa,
         bottom_pressure_hpa=bottom_pressure_hpa,
     )
     placement.top_pressure_hpa = top_pressure_hpa
     placement.bottom_pressure_hpa = bottom_pressure_hpa
-    case.aerosol.replace_single_profile_layer(
+    scene.aerosol.replace_single_profile_layer(
         top_pressure_hpa=top_pressure_hpa,
         bottom_pressure_hpa=bottom_pressure_hpa,
     )
@@ -359,18 +359,18 @@ def apply_aerosol_layer_midpoint_and_thickness(
 class AerosolLayer:
     """Pressure-layer placement coupled to the atmosphere fit interval."""
 
-    __slots__ = ("case",)
+    __slots__ = ("scene",)
 
-    def __init__(self, case: O2AInput) -> None:
+    def __init__(self, scene: Scene) -> None:
 
-        self.case = case
+        self.scene = scene
 
     @property
     def mid_pressure_hpa(self) -> float:
         """Return the aerosol-layer midpoint pressure."""
 
-        self.case.aerosol.require_retrieval_compatible()
-        placement = self.case.aerosol.placement
+        self.scene.aerosol.require_retrieval_compatible()
+        placement = self.scene.aerosol.placement
 
         return 0.5 * (placement.top_pressure_hpa + placement.bottom_pressure_hpa)
 
@@ -378,7 +378,7 @@ class AerosolLayer:
     def mid_pressure_hpa(self, value: float) -> None:
 
         apply_aerosol_layer_midpoint_and_thickness(
-            self.case,
+            self.scene,
             mid_pressure_hpa=value,
             thickness_hpa=self.thickness_hpa,
         )
@@ -387,8 +387,8 @@ class AerosolLayer:
     def thickness_hpa(self) -> float:
         """Return the aerosol-layer pressure thickness."""
 
-        self.case.aerosol.require_retrieval_compatible()
-        placement = self.case.aerosol.placement
+        self.scene.aerosol.require_retrieval_compatible()
+        placement = self.scene.aerosol.placement
 
         return placement.bottom_pressure_hpa - placement.top_pressure_hpa
 
@@ -396,7 +396,7 @@ class AerosolLayer:
     def thickness_hpa(self, value: float) -> None:
 
         apply_aerosol_layer_midpoint_and_thickness(
-            self.case,
+            self.scene,
             mid_pressure_hpa=self.mid_pressure_hpa,
             thickness_hpa=value,
         )

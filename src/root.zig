@@ -6,14 +6,14 @@ const defaults = @import("input/defaults.zig");
 const input_json = @import("input/json.zig");
 const input_validate = @import("input/validate.zig");
 const jacobian_states = @import("rtm/jacobian_states.zig");
-const o2_case = @import("input/o2_case.zig");
-const o2_session_memory = @import("cache/o2_session_memory.zig");
+const scene_input = @import("input/scene.zig");
+const session_memory = @import("cache/session_memory.zig");
 const atmospheric_budget = @import("output/atmospheric_budget.zig");
 const instrument_response = @import("output/instrument_response.zig");
 const instrument_tables = @import("setup/instrument_tables.zig");
-const o2_line_contributions = @import("output/o2_line_contributions.zig");
-const o2_o2_cia = @import("output/o2_o2_cia.zig");
-const o2_spectrum = @import("output/spectrum.zig");
+const line_contributions = @import("output/line_contributions.zig");
+const cia_diagnostics = @import("output/cia_diagnostics.zig");
+const output_spectrum = @import("output/spectrum.zig");
 const retrieval = @import("retrieval/root.zig");
 const retrieval_algebra = @import("retrieval/algebra.zig");
 const radiance_results = @import("spectrum/radiance_results.zig");
@@ -23,7 +23,7 @@ const aerosol_tables = @import("setup/aerosol_tables.zig");
 const atmosphere_layers = @import("setup/atmosphere_layers.zig");
 const cia_table = @import("setup/cia_table.zig");
 const phase_table = @import("setup/phase_table.zig");
-const setup_tables = @import("setup/o2_run_tables.zig");
+const setup_tables = @import("setup/run_tables.zig");
 const line_tables = @import("setup/line_tables.zig");
 const solar_table = @import("setup/solar_table.zig");
 const profile_lines = @import("cache/profile_line_memory.zig");
@@ -38,7 +38,7 @@ const Allocator = std.mem.Allocator;
 // Public explicit row surface for the O2 A forward model.                                                     |
 //                                                                                                             |
 // public flow                                                                                                 |
-//   defaultO2Case -> prepareO2A -> warmO2ASessionMemory -> runO2AWithSessionMemory                            |
+//   defaultScene -> prepare -> warmSessionMemory -> runForwardWithSessionMemory                               |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   The root facade owns preparation/run composition only. Setup tables, session caches, spectrum workers,    |
@@ -46,21 +46,21 @@ const Allocator = std.mem.Allocator;
 //   `src/api/c.zig`; compute code receives typed rows and never sees a C context.                             |
 // ------------------------------------------------------------------------------------------------------------|
 
-pub const O2Case = o2_case.O2Case;
-pub const O2RunTables = setup_tables.O2RunTables;
+pub const Scene = scene_input.Scene;
+pub const RunTables = setup_tables.RunTables;
 pub const ProfileLineValues = profile_lines.ProfileLineValues;
-pub const O2SessionMemory = o2_session_memory.O2SessionMemory;
+pub const SessionMemory = session_memory.SessionMemory;
 pub const AtmosphericBudget = atmospheric_budget.AtmosphericBudget;
 pub const AtmosphericBudgetRow = atmospheric_budget.AtmosphericBudgetRow;
 pub const InstrumentResponse = instrument_response.InstrumentResponse;
 pub const InstrumentResponseRow = instrument_response.InstrumentResponseRow;
-pub const O2LineContributions = o2_line_contributions.O2LineContributions;
-pub const O2LineContributionRow = o2_line_contributions.O2LineContributionRow;
-pub const O2O2CIADiagnostics = o2_o2_cia.O2O2CIADiagnostics;
-pub const O2O2CIARow = o2_o2_cia.O2O2CIARow;
-pub const O2Spectrum = o2_spectrum.O2Spectrum;
-pub const O2SpectrumRunResult = o2_spectrum.O2SpectrumRunResult;
-pub const O2SpectrumRunSummary = o2_spectrum.O2SpectrumRunSummary;
+pub const LineContributions = line_contributions.LineContributions;
+pub const LineContributionRow = line_contributions.LineContributionRow;
+pub const CiaDiagnostics = cia_diagnostics.CiaDiagnostics;
+pub const CiaRow = cia_diagnostics.CiaRow;
+pub const Spectrum = output_spectrum.Spectrum;
+pub const SpectrumRunResult = output_spectrum.SpectrumRunResult;
+pub const SpectrumRunSummary = output_spectrum.SpectrumRunSummary;
 pub const optimal_estimation = retrieval;
 pub const RetrievalStateSpec = retrieval.StateSpec;
 pub const RetrievalPressureAltitudeProfile = retrieval.PressureAltitudeProfile;
@@ -71,33 +71,33 @@ pub const SolveConfig = controls.SolveConfig;
 pub const TransportControls = controls.TransportControls;
 pub const JacobianState = jacobian_states.State;
 pub const JacobianVector = jacobian_states.Vector;
-pub const ParsedO2CaseJson = input_json.ParsedO2CaseJson;
+pub const ParsedSceneJson = input_json.ParsedSceneJson;
 pub const jacobian_state_count = jacobian_states.state_count;
 
-pub const defaultO2Case = defaults.referenceCase;
-pub const parseO2CaseJson = input_json.parseO2CaseJson;
-pub const renderDefaultO2CaseJson = input_json.renderDefaultO2CaseJson;
-pub const buildO2RunTables = setup_tables.buildO2RunTables;
-pub const buildO2ProfileLineValues = profile_lines.buildO2ProfileLineValues;
+pub const defaultScene = defaults.referenceScene;
+pub const parseSceneJson = input_json.parseSceneJson;
+pub const renderDefaultSceneJson = input_json.renderDefaultSceneJson;
+pub const buildRunTables = setup_tables.buildRunTables;
+pub const buildProfileLineValues = profile_lines.buildProfileLineValues;
 
-// PreparedO2A ------------------------------------------------------------------------------------------------|
+// Prepared ---------------------------------------------------------------------------------------------------|
 // Public owner for parsed/default O2 A controls and setup tables.                                             |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 2728 B (2.664 KiB), align: 8                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [   0.. 703] case  : O2Case                                                                                 |
-// [ 704..2727] tables: O2RunTables                                                                            |
+// [   0.. 703] case  : Scene                                                                                  |
+// [ 704..2727] tables: RunTables                                                                              |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   case borrows control strings/slices. tables owns loaded physical setup arrays and scalar tables.          |
-pub const PreparedO2A = struct {
-    case: O2Case,
-    tables: O2RunTables,
+pub const Prepared = struct {
+    scene: Scene,
+    tables: RunTables,
 
-    pub fn deinit(self: *PreparedO2A, allocator: Allocator) void {
-        // PreparedO2A.deinit ---------------------------------------------------------------------------------|
+    pub fn deinit(self: *Prepared, allocator: Allocator) void {
+        // Prepared.deinit ------------------------------------------------------------------------------------|
         // Release setup tables; case strings and static/default slices are borrowed.                          |
         // ----------------------------------------------------------------------------------------------------|
         self.tables.deinit(allocator);
@@ -106,43 +106,43 @@ pub const PreparedO2A = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn initO2SessionMemory(allocator: Allocator) O2SessionMemory {
-    // initO2SessionMemory ------------------------------------------------------------------------------------|
+pub fn initSessionMemory(allocator: Allocator) SessionMemory {
+    // initSessionMemory --------------------------------------------------------------------------------------|
     // Create an empty reusable O2 A session cache.                                                            |
     // --------------------------------------------------------------------------------------------------------|
-    return O2SessionMemory.init(allocator);
+    return SessionMemory.init(allocator);
 }
 
-pub fn prepareO2A(allocator: Allocator, case: O2Case) !PreparedO2A {
-    // prepareO2A ---------------------------------------------------------------------------------------------|
+pub fn prepare(allocator: Allocator, scene: Scene) !Prepared {
+    // prepare ------------------------------------------------------------------------------------------------|
     // Build the O2 A setup tables retained across forward runs.                                               |
     // --------------------------------------------------------------------------------------------------------|
     return .{
-        .case = case,
-        .tables = try buildO2RunTables(allocator, case),
+        .scene = scene,
+        .tables = try buildRunTables(allocator, scene),
     };
 }
 
-pub fn warmO2ASessionMemory(
+pub fn warmSessionMemory(
     allocator: Allocator,
-    session: *O2SessionMemory,
-    prepared: *const PreparedO2A,
+    session: *SessionMemory,
+    prepared: *const Prepared,
     solve_config: SolveConfig,
 ) !void {
-    // warmO2ASessionMemory -----------------------------------------------------------------------------------|
+    // warmSessionMemory --------------------------------------------------------------------------------------|
     // Materialize reusable spectrum, radiance, profile-line, solar, and transport memory for one case.        |
     // --------------------------------------------------------------------------------------------------------|
     const prepared_solve_config = try controls.prepareSolveConfig(solve_config);
     _ = try prepareSessionRows(allocator, session, prepared, prepared_solve_config);
 }
 
-pub fn runO2AWithSessionMemory(
+pub fn runForwardWithSessionMemory(
     allocator: Allocator,
-    session: *O2SessionMemory,
-    prepared: *const PreparedO2A,
+    session: *SessionMemory,
+    prepared: *const Prepared,
     solve_config: SolveConfig,
-) !O2SpectrumRunResult {
-    // runO2AWithSessionMemory --------------------------------------------------------------------------------|
+) !SpectrumRunResult {
+    // runForwardWithSessionMemory ----------------------------------------------------------------------------|
     // Run the O2 A product-grid spectrum through caller-retained session memory and return owned arrays.      |
     //                                                                                                         |
     //   Root-level orchestration follows the integrated transport route in                                    |
@@ -157,7 +157,7 @@ pub fn runO2AWithSessionMemory(
     const worker_pool = session.worker_pool.poolForWorkerCount(allocator, worker_count);
     const transport_workers = session.transport_workers.workers[0..worker_count];
 
-    var result = O2SpectrumRunResult{
+    var result = SpectrumRunResult{
         .spectrum = .{
             .wavelength_nm = try allocator.alloc(f64, product_count),
             .radiance = &.{},
@@ -179,19 +179,19 @@ pub fn runO2AWithSessionMemory(
     const product_radiance = try allocator.alloc(radiance_results.RadianceResult, product_count);
     defer allocator.free(product_radiance);
 
-    // runO2A sampling policy ---------------------------------------------------------------------------------|
+    // runForward sampling policy -----------------------------------------------------------------------------|
     // Canonical expected values owned by this repository.                                                     |
     // product row using integrated radiance and integrated irradiance sampling. O2 A                          |
     // `evidence/python-reference-case-native.json` exposes no Python-native key for calibration arrays, slit  |
     // kernels, or per-channel integration overrides. Keep this policy fixed here;                             |
-    // user-configurable controls enter through O2Case JSON and `o2aSolveConfig`.                              |
+    // user-configurable controls enter through Scene JSON and `solveConfig`.                                  |
     // --------------------------------------------------------------------------------------------------------|
-    const sampling_policy = spectrum_run.O2ASamplingPolicy{};
-    const summary = try spectrum_run.runO2ASpectrum(
+    const sampling_policy = spectrum_run.SamplingPolicy{};
+    const summary = try spectrum_run.runForwardSpectrum(
         table,
         wavelengths,
-        viewAngles(prepared.case),
-        prepared.case.surface_albedo,
+        viewAngles(prepared.scene),
+        prepared.scene.surface_albedo,
         prepared.tables.layers,
         session.profile_lines,
         prepared.tables.cia,
@@ -228,32 +228,32 @@ pub fn runO2AWithSessionMemory(
     return result;
 }
 
-pub fn runO2A(allocator: Allocator, prepared: *const PreparedO2A, solve_config: SolveConfig) !O2SpectrumRunResult {
-    // runO2A -------------------------------------------------------------------------------------------------|
+pub fn runForward(allocator: Allocator, prepared: *const Prepared, solve_config: SolveConfig) !SpectrumRunResult {
+    // runForward ---------------------------------------------------------------------------------------------|
     // Run one O2 A spectrum with a short-lived session memory owner.                                          |
     // --------------------------------------------------------------------------------------------------------|
-    var session = initO2SessionMemory(allocator);
+    var session = initSessionMemory(allocator);
     defer session.deinit(allocator);
-    return runO2AWithSessionMemory(allocator, &session, prepared, solve_config);
+    return runForwardWithSessionMemory(allocator, &session, prepared, solve_config);
 }
 
-pub fn runO2AOptimalEstimation(
+pub fn runOptimalEstimation(
     allocator: Allocator,
-    session: *O2SessionMemory,
-    prepared: *const PreparedO2A,
+    session: *SessionMemory,
+    prepared: *const Prepared,
     measurement_wavelength_nm: []const f64,
     measurement_reflectance: []const f64,
     measurement_variance: []const f64,
     state_specs: []const retrieval.StateSpec,
     retrieval_controls: retrieval.Controls,
 ) !retrieval.Result {
-    // runO2AOptimalEstimation --------------------------------------------------------------------------------|
+    // runOptimalEstimation -----------------------------------------------------------------------------------|
     // Run one full-physics O2 A optimal-estimation solve through the explicit forward path.                   |
     //                                                                                                         |
     // steps                                                                                                   |
     //   1. copy measurement rows into dense retrieval SoA storage                                             |
     //   2. initialize the fixed two-state Rodgers vectors from StateSpec rows                                 |
-    //   3. per iteration: apply scalar retrieval state to an O2Case, refresh layer/aerosol rows, run          |
+    //   3. per iteration: apply scalar retrieval state to an Scene, refresh layer/aerosol rows, run           |
     //      spectrum plus reflectance Jacobians, stream the normal system, and solve the transformed update    |
     //   4. write history, posterior covariance, and averaging kernel into the retained Result owner           |
     //                                                                                                         |
@@ -285,15 +285,15 @@ pub fn runO2AOptimalEstimation(
     const state_space = try retrieval.initializeStateSpace(state_specs, &result);
     const state_count = state_specs.len;
     const has_pressure_state = retrievalStateActive(state_specs, .aerosol_layer_mid_pressure_hpa);
-    if (has_pressure_state and prepared.case.atmosphere.intervals.len == 0) return error.InvalidStateSpec;
+    if (has_pressure_state and prepared.scene.atmosphere.intervals.len == 0) return error.InvalidStateSpec;
 
-    const mutable_interval_count = if (has_pressure_state) prepared.case.atmosphere.intervals.len else 0;
-    const mutable_intervals = try allocator.alloc(o2_case.VerticalInterval, mutable_interval_count);
+    const mutable_interval_count = if (has_pressure_state) prepared.scene.atmosphere.intervals.len else 0;
+    const mutable_intervals = try allocator.alloc(scene_input.VerticalInterval, mutable_interval_count);
     defer allocator.free(mutable_intervals);
 
     var retrieval_layers = try atmosphere_layers.buildFromPreparedProfiles(
         allocator,
-        prepared.case,
+        prepared.scene,
         prepared.tables.layers.source_profile.rows,
         prepared.tables.layers.spectroscopy_profile.rows,
         prepared.tables.quadrature,
@@ -391,17 +391,17 @@ pub fn runO2AOptimalEstimation(
     return result;
 }
 
-pub fn runO2AOptimalEstimationCorrection(
+pub fn runOptimalEstimationCorrection(
     allocator: Allocator,
-    session: *O2SessionMemory,
-    prepared: *const PreparedO2A,
+    session: *SessionMemory,
+    prepared: *const Prepared,
     measurement_wavelength_nm: []const f64,
     measurement_reflectance: []const f64,
     measurement_variance: []const f64,
     state_specs: []const retrieval.StateSpec,
     retrieval_controls: retrieval.Controls,
 ) !retrieval.Result {
-    // runO2AOptimalEstimationCorrection --------------------------------------------------------------------- |
+    // runOptimalEstimationCorrection ---------------------------------------------------------------------    |
     // Apply one full-physics O2 A correction step to a prepared case already written at the fast-stage state. |
     //                                                                                                         |
     // contract                                                                                                |
@@ -430,15 +430,15 @@ pub fn runO2AOptimalEstimationCorrection(
     const state_space = try retrieval.initializeStateSpace(state_specs, &result);
     const state_count = state_specs.len;
     const has_pressure_state = retrievalStateActive(state_specs, .aerosol_layer_mid_pressure_hpa);
-    if (has_pressure_state and prepared.case.atmosphere.intervals.len == 0) return error.InvalidStateSpec;
+    if (has_pressure_state and prepared.scene.atmosphere.intervals.len == 0) return error.InvalidStateSpec;
 
-    const mutable_interval_count = if (has_pressure_state) prepared.case.atmosphere.intervals.len else 0;
-    const mutable_intervals = try allocator.alloc(o2_case.VerticalInterval, mutable_interval_count);
+    const mutable_interval_count = if (has_pressure_state) prepared.scene.atmosphere.intervals.len else 0;
+    const mutable_intervals = try allocator.alloc(scene_input.VerticalInterval, mutable_interval_count);
     defer allocator.free(mutable_intervals);
 
     var retrieval_layers = try atmosphere_layers.buildFromPreparedProfiles(
         allocator,
-        prepared.case,
+        prepared.scene,
         prepared.tables.layers.source_profile.rows,
         prepared.tables.layers.spectroscopy_profile.rows,
         prepared.tables.quadrature,
@@ -522,10 +522,10 @@ pub fn runO2AOptimalEstimationCorrection(
     return result;
 }
 
-pub fn runO2AOptimalEstimationBatch(
+pub fn runOptimalEstimationBatch(
     allocator: Allocator,
-    session: *O2SessionMemory,
-    prepared: *const PreparedO2A,
+    session: *SessionMemory,
+    prepared: *const Prepared,
     measurement_wavelength_nm: []const f64,
     measurement_reflectance: []const f64,
     measurement_variance: []const f64,
@@ -534,7 +534,7 @@ pub fn runO2AOptimalEstimationBatch(
     prior_states: []const f64,
     retrieval_controls: retrieval.Controls,
 ) !retrieval.BatchResult {
-    // runO2AOptimalEstimationBatch -------------------------------------------------------------------------- |
+    // runOptimalEstimationBatch --------------------------------------------------------------------------    |
     // Run a correctness-first full-physics OE batch over caller-provided start/prior rows.                    |
     //                                                                                                         |
     // boundary                                                                                                |
@@ -573,7 +573,7 @@ pub fn runO2AOptimalEstimationBatch(
             run_specs_buffer[state_index] = spec;
         }
 
-        var run = runO2AOptimalEstimation(
+        var run = runOptimalEstimation(
             allocator,
             session,
             prepared,
@@ -609,11 +609,11 @@ pub fn runO2AOptimalEstimationBatch(
     return result;
 }
 
-pub fn runO2AFastmodeOptimalEstimationBatch(
+pub fn runFastmodeOptimalEstimationBatch(
     allocator: Allocator,
-    fast_session: *O2SessionMemory,
-    correction_session: *O2SessionMemory,
-    fast_prepared: *const PreparedO2A,
+    fast_session: *SessionMemory,
+    correction_session: *SessionMemory,
+    fast_prepared: *const Prepared,
     fast_measurement_wavelength_nm: []const f64,
     fast_measurement_reflectance: []const f64,
     fast_measurement_variance: []const f64,
@@ -621,7 +621,7 @@ pub fn runO2AFastmodeOptimalEstimationBatch(
     initial_states: []const f64,
     prior_states: []const f64,
     fast_controls: retrieval.Controls,
-    correction_prepared: *const PreparedO2A,
+    correction_prepared: *const Prepared,
     correction_measurement_wavelength_nm: []const f64,
     correction_measurement_reflectance: []const f64,
     correction_measurement_variance: []const f64,
@@ -629,11 +629,11 @@ pub fn runO2AFastmodeOptimalEstimationBatch(
     correction_prior_states: []const f64,
     correction_controls: retrieval.Controls,
 ) !retrieval.FastmodeBatchResult {
-    // runO2AFastmodeOptimalEstimationBatch ------------------------------------------------------------------ |
+    // runFastmodeOptimalEstimationBatch ------------------------------------------------------------------    |
     // Run fast-stage starts, then run a full-physics correction batch seeded from the fast-stage states.      |
     //                                                                                                         |
     // boundary                                                                                                |
-    //   Python owns the fast and correction case construction. Zig receives two prepared O2 A cases, two      |
+    //   Python owns the fast and correction case construction. Zig receives two prepared O2 A scenes, two     |
     //   measurement grids, and config-driven controls; no wavelength counts are hardcoded here.               |
     //                                                                                                         |
     //   converged flags keep fast-stage convergence when the correction stage returns ok.                     |
@@ -644,7 +644,7 @@ pub fn runO2AFastmodeOptimalEstimationBatch(
 
     if (correction_prior_states.len != prior_states.len) return error.InvalidStateSpec;
 
-    var fast = try runO2AOptimalEstimationBatch(
+    var fast = try runOptimalEstimationBatch(
         allocator,
         fast_session,
         fast_prepared,
@@ -658,7 +658,7 @@ pub fn runO2AFastmodeOptimalEstimationBatch(
     );
     defer fast.deinit(allocator);
 
-    var correction = try runO2AOptimalEstimationBatch(
+    var correction = try runOptimalEstimationBatch(
         allocator,
         correction_session,
         correction_prepared,
@@ -762,43 +762,43 @@ pub fn runO2AFastmodeOptimalEstimationBatch(
 
 pub fn buildAtmosphericBudget(
     allocator: Allocator,
-    prepared: *const PreparedO2A,
+    prepared: *const Prepared,
     wavelengths_nm: []const f64,
 ) !AtmosphericBudget {
     // buildAtmosphericBudget ---------------------------------------------------------------------------------|
     // Build public atmospheric support-row diagnostic rows for the prepared O2 A case.                        |
     // --------------------------------------------------------------------------------------------------------|
-    return atmospheric_budget.build(allocator, prepared.case, &prepared.tables, wavelengths_nm);
+    return atmospheric_budget.build(allocator, prepared.scene, &prepared.tables, wavelengths_nm);
 }
 
-pub fn buildO2O2CIADiagnostics(
+pub fn buildCiaDiagnostics(
     allocator: Allocator,
-    prepared: *const PreparedO2A,
+    prepared: *const Prepared,
     wavelengths_nm: []const f64,
-) !O2O2CIADiagnostics {
-    // buildO2O2CIADiagnostics --------------------------------------------------------------------------------|
+) !CiaDiagnostics {
+    // buildCiaDiagnostics ------------------------------------------------------------------------------------|
     // Build public O2-O2 CIA diagnostic rows from atmospheric-budget support rows.                            |
     // --------------------------------------------------------------------------------------------------------|
     var budget = try buildAtmosphericBudget(allocator, prepared, wavelengths_nm);
     defer budget.deinit(allocator);
-    return o2_o2_cia.build(allocator, budget);
+    return cia_diagnostics.build(allocator, budget);
 }
 
-pub fn buildO2LineContributions(
+pub fn buildLineContributions(
     allocator: Allocator,
-    prepared: *const PreparedO2A,
+    prepared: *const Prepared,
     wavelengths_nm: []const f64,
     max_rows: usize,
-) !O2LineContributions {
-    // buildO2LineContributions -------------------------------------------------------------------------------|
+) !LineContributions {
+    // buildLineContributions ---------------------------------------------------------------------------------|
     // Build public O2 line-by-line diagnostic rows for caller-selected wavelengths.                           |
     // --------------------------------------------------------------------------------------------------------|
-    return o2_line_contributions.build(allocator, &prepared.tables, wavelengths_nm, max_rows);
+    return line_contributions.build(allocator, &prepared.tables, wavelengths_nm, max_rows);
 }
 
 pub fn buildInstrumentResponse(
     allocator: Allocator,
-    prepared: *const PreparedO2A,
+    prepared: *const Prepared,
     wavelengths_nm: []const f64,
     channel_mask: u32,
 ) !InstrumentResponse {
@@ -807,15 +807,15 @@ pub fn buildInstrumentResponse(
     // --------------------------------------------------------------------------------------------------------|
     return instrument_response.build(
         allocator,
-        prepared.case,
+        prepared.scene,
         &prepared.tables,
         wavelengths_nm,
         channel_mask,
     );
 }
 
-pub fn o2aSolveConfig(case: O2Case) SolveConfig {
-    // o2aSolveConfig -----------------------------------------------------------------------------------------|
+pub fn solveConfig(scene: Scene) SolveConfig {
+    // solveConfig --------------------------------------------------------------------------------------------|
     // Build the exercised O2 A transport controls used by integrated transport evidence.                      |
     // --------------------------------------------------------------------------------------------------------|
     return .{
@@ -824,9 +824,9 @@ pub fn o2aSolveConfig(case: O2Case) SolveConfig {
             jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa),
         .controls = .{
             .scattering = .multiple,
-            .n_streams = @intCast(case.rtm.stream_count),
-            .performance_thresholds = case.rtm.performance_thresholds,
-            .use_spherical_correction = case.geometry.pseudo_spherical,
+            .n_streams = @intCast(scene.rtm.stream_count),
+            .performance_thresholds = scene.rtm.performance_thresholds,
+            .use_spherical_correction = scene.geometry.pseudo_spherical,
             .integrate_source_function = true,
             .renorm_phase_function = true,
         },
@@ -853,14 +853,14 @@ fn validateRetrievalControls(retrieval_controls: retrieval.Controls) !void {
 
 fn evaluateRetrievalState(
     allocator: Allocator,
-    session: *O2SessionMemory,
-    prepared: *const PreparedO2A,
+    session: *SessionMemory,
+    prepared: *const Prepared,
     state_specs: []const retrieval.StateSpec,
     state: retrieval.StateVector,
     derivative_state_mask: jacobian_states.StateMask,
-    mutable_intervals: []o2_case.VerticalInterval,
+    mutable_intervals: []scene_input.VerticalInterval,
     retrieval_layers: *atmosphere_layers.LayerGrid,
-) !O2SpectrumRunResult {
+) !SpectrumRunResult {
     // evaluateRetrievalState -------------------------------------------------------------------------------- |
     // Apply one retrieval state vector, refresh state-dependent setup rows, and run spectrum reflectance.     |
     //                                                                                                         |
@@ -876,37 +876,37 @@ fn evaluateRetrievalState(
     //                                                                                                         |
     //   state-dependent scene/optical rows while invariant spectroscopy and instrument setup stay retained.   |
     // --------------------------------------------------------------------------------------------------------|
-    var case = prepared.case;
+    var scene = prepared.scene;
     if (mutable_intervals.len != 0) {
-        @memcpy(mutable_intervals, prepared.case.atmosphere.intervals);
-        case.atmosphere.intervals = mutable_intervals;
+        @memcpy(mutable_intervals, prepared.scene.atmosphere.intervals);
+        scene.atmosphere.intervals = mutable_intervals;
     }
-    try writeRetrievalStateToCase(&case, mutable_intervals, state_specs, state);
-    try input_validate.o2Case(case);
+    try writeRetrievalStateToScene(&scene, mutable_intervals, state_specs, state);
+    try input_validate.sceneControls(scene);
 
-    try atmosphere_layers.refillFromPreparedProfiles(retrieval_layers, case, prepared.tables.quadrature);
+    try atmosphere_layers.refillFromPreparedProfiles(retrieval_layers, scene, prepared.tables.quadrature);
 
-    var evaluation_prepared = PreparedO2A{
-        .case = case,
+    var evaluation_prepared = Prepared{
+        .scene = scene,
         .tables = prepared.tables,
     };
     evaluation_prepared.tables.layers = retrieval_layers.*;
-    evaluation_prepared.tables.aerosol = aerosol_tables.build(case);
+    evaluation_prepared.tables.aerosol = aerosol_tables.build(scene);
 
-    var solve_config = o2aSolveConfig(case);
+    var solve_config = solveConfig(scene);
     solve_config.derivative_mode = .semi_analytical;
     solve_config.derivative_state_mask = derivative_state_mask;
 
-    return runO2AWithSessionMemory(allocator, session, &evaluation_prepared, solve_config);
+    return runForwardWithSessionMemory(allocator, session, &evaluation_prepared, solve_config);
 }
 
-fn writeRetrievalStateToCase(
-    case: *O2Case,
-    mutable_intervals: []o2_case.VerticalInterval,
+fn writeRetrievalStateToScene(
+    scene: *Scene,
+    mutable_intervals: []scene_input.VerticalInterval,
     state_specs: []const retrieval.StateSpec,
     state: retrieval.StateVector,
 ) !void {
-    // writeRetrievalStateToCase ----------------------------------------------------------------------------- |
+    // writeRetrievalStateToScene -----------------------------------------------------------------------------|
     // Write active OE scalar values into the case copy used for this iteration.                               |
     //                                                                                                         |
     // pressure placement                                                                                      |
@@ -916,7 +916,7 @@ fn writeRetrievalStateToCase(
     for (state_specs, 0..) |spec, index| {
         const value = state[index];
         switch (spec.state) {
-            .aerosol_optical_depth => case.aerosol.optical_depth = value,
+            .aerosol_optical_depth => scene.aerosol.optical_depth = value,
             .aerosol_layer_mid_pressure_hpa => {
                 if (mutable_intervals.len == 0) return error.InvalidStateSpec;
 
@@ -925,9 +925,9 @@ fn writeRetrievalStateToCase(
                 const top_pressure = value - half_thickness;
                 const bottom_pressure = value + half_thickness;
 
-                case.aerosol.interval_index_1based = fit_interval_index;
-                case.aerosol.top_pressure_hpa = top_pressure;
-                case.aerosol.bottom_pressure_hpa = bottom_pressure;
+                scene.aerosol.interval_index_1based = fit_interval_index;
+                scene.aerosol.top_pressure_hpa = top_pressure;
+                scene.aerosol.bottom_pressure_hpa = bottom_pressure;
 
                 var updated = false;
                 for (mutable_intervals) |*interval| {
@@ -976,8 +976,8 @@ const PreparedSessionRows = struct {
 
 fn prepareSessionRows(
     allocator: Allocator,
-    session: *O2SessionMemory,
-    prepared: *const PreparedO2A,
+    session: *SessionMemory,
+    prepared: *const Prepared,
     prepared_solve_config: SolveConfig,
 ) !PreparedSessionRows {
     // prepareSessionRows -------------------------------------------------------------------------------------|
@@ -996,9 +996,9 @@ fn prepareSessionRows(
             );
         }
 
-        var owned_sampling = try sampling_table.buildO2SpectrumSamplingTable(
+        var owned_sampling = try sampling_table.buildSpectrumSamplingTable(
             allocator,
-            prepared.case,
+            prepared.scene,
             prepared.tables.instrument,
             prepared.tables.lines,
         );
@@ -1027,7 +1027,7 @@ fn prepareSessionRows(
     const build_layer_values = false;
     const needs_temperature_derivatives = false;
     const profile_stamp = profile_lines.profileLineReuseStamp(
-        prepared.case.id,
+        prepared.scene.id,
         exact_wavelengths,
         build_layer_values,
         needs_temperature_derivatives,
@@ -1075,9 +1075,9 @@ fn prepareSessionRows(
 
         session.profile_lines.deinit(allocator);
         session.profile_lines =
-            try profile_lines.buildO2ProfileLineValuesForWavelengthsWithCutoffGrid(
+            try profile_lines.buildProfileLineValuesForWavelengthsWithCutoffGrid(
                 allocator,
-                prepared.case,
+                prepared.scene,
                 exact_wavelengths,
                 exact_wavelengths,
                 build_layer_values,
@@ -1113,7 +1113,7 @@ fn radianceWavelengthListReuseStamp(wavelengths: radiance_wavelengths.RadianceWa
     return .{ .value = hasher.final() };
 }
 
-fn samplingTableReuseStamp(prepared: *const PreparedO2A) hashing.ReuseStamp {
+fn samplingTableReuseStamp(prepared: *const Prepared) hashing.ReuseStamp {
     // samplingTableReuseStamp ------------------------------------------------------------------------------- |
     // Identify the retained wavelength-sampling table before root decides whether to rebuild instrument       |
     // kernels.                                                                                                |
@@ -1123,15 +1123,15 @@ fn samplingTableReuseStamp(prepared: *const PreparedO2A) hashing.ReuseStamp {
     //   knobs, and the O2 line centers/strengths that split adaptive intervals.                               |
     // --------------------------------------------------------------------------------------------------------|
     var hasher = std.hash.Wyhash.init(0x4f32_4132_7761_7665);
-    hasher.update(prepared.case.id);
-    hashSpectralGrid(&hasher, prepared.case.spectral_grid);
-    hasher.update(std.mem.sliceAsBytes(prepared.case.observation.measured_wavelengths_nm));
+    hasher.update(prepared.scene.id);
+    hashSpectralGrid(&hasher, prepared.scene.spectral_grid);
+    hasher.update(std.mem.sliceAsBytes(prepared.scene.observation.measured_wavelengths_nm));
     hashInstrumentSamplingInputs(&hasher, prepared.tables.instrument);
     hashAdaptiveLineInputs(&hasher, prepared.tables.lines);
     return .{ .value = hasher.final() };
 }
 
-fn hashSpectralGrid(hasher: *std.hash.Wyhash, grid: o2_case.SpectralGrid) void {
+fn hashSpectralGrid(hasher: *std.hash.Wyhash, grid: scene_input.SpectralGrid) void {
     // hashSpectralGrid -------------------------------------------------------------------------------------- |
     // Hash the endpoint-inclusive product grid used by adaptive support-window construction.                  |
     // --------------------------------------------------------------------------------------------------------|
@@ -1153,7 +1153,7 @@ fn hashInstrumentSamplingInputs(hasher: *std.hash.Wyhash, instrument: instrument
     hashing.updateValue(hasher, instrument.strong_line_max_divisions);
 }
 
-fn hashAdaptiveLineInputs(hasher: *std.hash.Wyhash, lines: line_tables.O2LineTable) void {
+fn hashAdaptiveLineInputs(hasher: *std.hash.Wyhash, lines: line_tables.LineTable) void {
     // hashAdaptiveLineInputs -------------------------------------------------------------------------------- |
     // Hash the line-table fields read by `collectAdaptiveStrongLineCenters`.                                  |
     //                                                                                                         |
@@ -1170,7 +1170,7 @@ fn hashAdaptiveLineInputs(hasher: *std.hash.Wyhash, lines: line_tables.O2LineTab
 }
 
 fn radianceResultReuseStamp(
-    prepared: *const PreparedO2A,
+    prepared: *const Prepared,
     wavelengths_nm: []const f64,
     solve_config: SolveConfig,
     profile_stamp: hashing.ReuseStamp,
@@ -1184,16 +1184,16 @@ fn radianceResultReuseStamp(
     //   prefetch; product gather and reflectance assembly still run.                                          |
     // --------------------------------------------------------------------------------------------------------|
     var hasher = std.hash.Wyhash.init(0);
-    hasher.update(prepared.case.id);
+    hasher.update(prepared.scene.id);
     hasher.update(std.mem.sliceAsBytes(wavelengths_nm));
     hashing.updateValue(&hasher, profile_stamp.value);
 
-    const angles = viewAngles(prepared.case);
+    const angles = viewAngles(prepared.scene);
     for ([_]f64{
         angles.solar_mu,
         angles.view_mu,
         angles.relative_azimuth_rad,
-        prepared.case.surface_albedo,
+        prepared.scene.surface_albedo,
     }) |value| hashing.updateValue(&hasher, value);
     for ([_]usize{
         @intFromEnum(solve_config.derivative_mode),
@@ -1235,16 +1235,16 @@ fn updateHashThresholds(hasher: *std.hash.Wyhash, thresholds: controls.Performan
     }) |value| hashing.updateValue(hasher, value);
 }
 
-fn viewAngles(case: O2Case) solve.ViewAngles {
+fn viewAngles(scene: Scene) solve.ViewAngles {
     // viewAngles ---------------------------------------------------------------------------------------------|
     // Convert public geometry degrees into the forward-layer transport angle convention.                      |
     // --------------------------------------------------------------------------------------------------------|
-    const solar_sin = @sin(std.math.degreesToRadians(case.geometry.solar_zenith_deg));
-    const view_sin = @sin(std.math.degreesToRadians(case.geometry.viewing_zenith_deg));
+    const solar_sin = @sin(std.math.degreesToRadians(scene.geometry.solar_zenith_deg));
+    const view_sin = @sin(std.math.degreesToRadians(scene.geometry.viewing_zenith_deg));
     return .{
         .solar_mu = @sqrt(@max(1.0 - solar_sin * solar_sin, 0.0)),
         .view_mu = @sqrt(@max(1.0 - view_sin * view_sin, 0.0)),
 
-        .relative_azimuth_rad = std.math.degreesToRadians(@mod(180.0 - case.geometry.relative_azimuth_deg, 360.0)),
+        .relative_azimuth_rad = std.math.degreesToRadians(@mod(180.0 - scene.geometry.relative_azimuth_deg, 360.0)),
     };
 }

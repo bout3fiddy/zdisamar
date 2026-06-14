@@ -129,7 +129,7 @@ pub const FourierPlmBasis = struct {
         //   P_{l+1}^m = ((2l + 1) * mu * P_l^m - sqrt(l^2 - m^2) * P_{l-1}^m)                                 |
         //                 / sqrt((l + 1)^2 - m^2)                                                             |
         //                                                                                                     |
-        //   The m=0,1,2 seed cases and the m>=3 product follow the reference-normalized LABOS basis.          |
+        //   The m=0,1,2 seed scenes and the m>=3 product follow the reference-normalized LABOS basis.         |
         // ----------------------------------------------------------------------------------------------------|
         var result = FourierPlmBasis{
             .fourier_index = fourier_index,

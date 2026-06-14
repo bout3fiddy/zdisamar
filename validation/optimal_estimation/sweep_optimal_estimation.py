@@ -47,7 +47,7 @@ NATIVE_WORKER_LIMIT_ENV = "ZDISAMAR_WORKER_LIMIT"
 
 
 def retrieve_scene(
-    case: o2a.O2ACase,
+    case: o2a.Scene,
     truth: dict[str, float],
     initial: dict[str, float],
 ) -> tuple[Any, float, float]:
@@ -63,7 +63,7 @@ def retrieve_scene(
     with rtm.SessionCache(case) as cache:
         retrieval_start = time.perf_counter()
         result = o2a_oe.retrieve(
-            case=case,
+            scene=case,
             measurement=measurement,
             state_vector=state_vector,
             controls=oe_setup.retrieval_controls(),

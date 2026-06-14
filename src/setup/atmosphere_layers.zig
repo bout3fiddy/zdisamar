@@ -2,7 +2,7 @@ const std = @import("std");
 
 const readers = @import("../assets/readers.zig");
 const hashing = @import("../common/hashing.zig");
-const o2_case = @import("../input/o2_case.zig");
+const scene_input = @import("../input/scene.zig");
 const gauss_legendre = @import("../common/math/gauss_legendre.zig");
 const spline = @import("../common/math/spline.zig");
 
@@ -219,7 +219,7 @@ pub fn hashAll(hasher: *std.hash.Wyhash, layers: LayerGrid) void {
 }
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn buildLayerQuadrature(allocator: Allocator, case: o2_case.O2Case) !LayerQuadrature {
+pub fn buildLayerQuadrature(allocator: Allocator, scene: scene_input.Scene) !LayerQuadrature {
     // buildLayerQuadrature -----------------------------------------------------------------------------------|
     // Precompute canonical support and interval quadrature roots for one structural atmosphere shape.         |
     //                                                                                                         |
@@ -228,7 +228,7 @@ pub fn buildLayerQuadrature(allocator: Allocator, case: o2_case.O2Case) !LayerQu
     //   state updates change pressure bounds, so the canonical roots and weights remain valid across every    |
     //   OE iteration for the prepared case.                                                                   |
     // --------------------------------------------------------------------------------------------------------|
-    const support_order = @max(case.atmosphere.sublayer_divisions, @as(usize, 1));
+    const support_order = @max(scene.atmosphere.sublayer_divisions, @as(usize, 1));
     if (support_order > gauss_legendre.max_fixed_rule_order) return error.InvalidControl;
 
     var quadrature = LayerQuadrature{
@@ -249,11 +249,11 @@ pub fn buildLayerQuadrature(allocator: Allocator, case: o2_case.O2Case) !LayerQu
         quadrature.support_weights,
     );
 
-    for (case.atmosphere.intervals) |interval| {
+    for (scene.atmosphere.intervals) |interval| {
         if (interval.altitude_divisions > gauss_legendre.max_disamar_division_points) return error.InvalidControl;
     }
-    const distinct_interval_order_count = countDistinctIntervalOrders(case.atmosphere.intervals);
-    const total_interval_node_count = countDistinctIntervalNodes(case.atmosphere.intervals);
+    const distinct_interval_order_count = countDistinctIntervalOrders(scene.atmosphere.intervals);
+    const total_interval_node_count = countDistinctIntervalNodes(scene.atmosphere.intervals);
     quadrature.interval_orders = try allocator.alloc(u32, distinct_interval_order_count);
     errdefer allocator.free(quadrature.interval_orders);
     quadrature.interval_node_starts = try allocator.alloc(u32, distinct_interval_order_count + 1);
@@ -263,7 +263,7 @@ pub fn buildLayerQuadrature(allocator: Allocator, case: o2_case.O2Case) !LayerQu
 
     var order_cursor: usize = 0;
     var node_cursor: usize = 0;
-    for (case.atmosphere.intervals) |interval| {
+    for (scene.atmosphere.intervals) |interval| {
         const order = interval.altitude_divisions;
         if (order == 0 or intervalOrderAlreadyStored(quadrature.interval_orders[0..order_cursor], order)) continue;
 
@@ -285,30 +285,30 @@ pub fn buildLayerQuadrature(allocator: Allocator, case: o2_case.O2Case) !LayerQu
     return quadrature;
 }
 
-pub fn build(allocator: Allocator, case: o2_case.O2Case) !LayerGrid {
+pub fn build(allocator: Allocator, scene: scene_input.Scene) !LayerGrid {
     // build --------------------------------------------------------------------------------------------------|
     // Load and densify atmosphere profile rows, then compute DISAMAR layer/support placement.                 |
     // --------------------------------------------------------------------------------------------------------|
-    var quadrature = try buildLayerQuadrature(allocator, case);
+    var quadrature = try buildLayerQuadrature(allocator, scene);
     defer quadrature.deinit(allocator);
-    return buildWithQuadrature(allocator, case, quadrature);
+    return buildWithQuadrature(allocator, scene, quadrature);
 }
 
 pub fn buildWithQuadrature(
     allocator: Allocator,
-    case: o2_case.O2Case,
+    scene: scene_input.Scene,
     quadrature: LayerQuadrature,
 ) !LayerGrid {
     // buildWithQuadrature ------------------------------------------------------------------------------------|
     // Build profile rows, then compute layer/support placement from retained canonical quadrature.            |
     // --------------------------------------------------------------------------------------------------------|
-    const raw_profile_rows = try readers.readAtmosphereProfile(allocator, case.atmosphere.profile.path);
+    const raw_profile_rows = try readers.readAtmosphereProfile(allocator, scene.atmosphere.profile.path);
     defer allocator.free(raw_profile_rows);
 
     const dense_profile_rows = try densifyVendorPressureGrid(
         allocator,
         .{ .rows = raw_profile_rows },
-        case.atmosphere.surface_pressure_hpa,
+        scene.atmosphere.surface_pressure_hpa,
     );
     var dense_profile_owned = true;
     errdefer if (dense_profile_owned) allocator.free(dense_profile_rows);
@@ -321,12 +321,12 @@ pub fn buildWithQuadrature(
     );
 
     dense_profile_owned = false;
-    return buildWithOwnedProfiles(allocator, case, dense_profile_rows, spectroscopy_profile_rows, quadrature);
+    return buildWithOwnedProfiles(allocator, scene, dense_profile_rows, spectroscopy_profile_rows, quadrature);
 }
 
 pub fn buildFromPreparedProfiles(
     allocator: Allocator,
-    case: o2_case.O2Case,
+    scene: scene_input.Scene,
     source_profile_rows: []const readers.AtmosphereProfileRow,
     spectroscopy_profile_rows: []const readers.AtmosphereProfileRow,
     quadrature: LayerQuadrature,
@@ -336,7 +336,7 @@ pub fn buildFromPreparedProfiles(
     //                                                                                                         |
     // boundary                                                                                                |
     //   Retrieval pressure states move interval boundaries only. The densified climatology and spectroscopy   |
-    //   retrieval.zig` RetrievalPreparedCase profile_preparation reuse.                                       |
+    //   retrieval.zig` RetrievalPreparedScene profile_preparation reuse.                                      |
     //                                                                                                         |
     // ownership                                                                                               |
     //   The returned LayerGrid owns duplicated profile rows so ordinary LayerGrid.deinit remains correct.     |
@@ -353,7 +353,7 @@ pub fn buildFromPreparedProfiles(
     spectroscopy_profile_owned = false;
     return buildWithOwnedProfiles(
         allocator,
-        case,
+        scene,
         owned_source_profile_rows,
         owned_spectroscopy_profile_rows,
         quadrature,
@@ -362,7 +362,7 @@ pub fn buildFromPreparedProfiles(
 
 pub fn refillFromPreparedProfiles(
     grid: *LayerGrid,
-    case: o2_case.O2Case,
+    scene: scene_input.Scene,
     quadrature: LayerQuadrature,
 ) !void {
     // refillFromPreparedProfiles -----------------------------------------------------------------------------|
@@ -377,14 +377,14 @@ pub fn refillFromPreparedProfiles(
     //   reads  : case interval boundaries, retained canonical quadrature, and grid.source_profile rows        |
     //   writes : only computed layer/support slices inside grid                                               |
     // --------------------------------------------------------------------------------------------------------|
-    const shape = try layerGridShape(case, quadrature);
+    const shape = try layerGridShape(scene, quadrature);
     try requireGridShape(grid.*, shape);
-    try fillLayerGrid(grid, case, quadrature, shape.support_order);
+    try fillLayerGrid(grid, scene, quadrature, shape.support_order);
 }
 
 fn buildWithOwnedProfiles(
     allocator: Allocator,
-    case: o2_case.O2Case,
+    scene: scene_input.Scene,
     dense_profile_rows: []readers.AtmosphereProfileRow,
     spectroscopy_profile_rows: []readers.AtmosphereProfileRow,
     quadrature: LayerQuadrature,
@@ -397,7 +397,7 @@ fn buildWithOwnedProfiles(
     var spectroscopy_profile_owned = true;
     errdefer if (spectroscopy_profile_owned) allocator.free(spectroscopy_profile_rows);
 
-    const shape = try layerGridShape(case, quadrature);
+    const shape = try layerGridShape(scene, quadrature);
 
     var grid = try allocate(
         allocator,
@@ -410,7 +410,7 @@ fn buildWithOwnedProfiles(
     spectroscopy_profile_owned = false;
     errdefer grid.deinit(allocator);
 
-    try fillLayerGrid(&grid, case, quadrature, shape.support_order);
+    try fillLayerGrid(&grid, scene, quadrature, shape.support_order);
     return grid;
 }
 
@@ -420,16 +420,16 @@ const LayerGridShape = struct {
     support_order: usize,
 };
 
-fn layerGridShape(case: o2_case.O2Case, quadrature: LayerQuadrature) !LayerGridShape {
+fn layerGridShape(scene: scene_input.Scene, quadrature: LayerQuadrature) !LayerGridShape {
     // layerGridShape -----------------------------------------------------------------------------------------|
     // Compute the fixed storage shape for one atmosphere interval layout.                                     |
     // --------------------------------------------------------------------------------------------------------|
-    const support_order = @max(case.atmosphere.sublayer_divisions, @as(usize, 1));
+    const support_order = @max(scene.atmosphere.sublayer_divisions, @as(usize, 1));
     if (quadrature.support_order != support_order) return error.InvalidControl;
 
     var layer_count: usize = 0;
     var support_count: usize = 1;
-    for (case.atmosphere.intervals) |interval| {
+    for (scene.atmosphere.intervals) |interval| {
         const interval_layer_count = interval.altitude_divisions + 1;
         layer_count += interval_layer_count;
         support_count += interval_layer_count * (support_order + 1);
@@ -477,7 +477,7 @@ fn requireGridShape(grid: LayerGrid, shape: LayerGridShape) error{InvalidControl
 
 fn fillLayerGrid(
     grid: *LayerGrid,
-    case: o2_case.O2Case,
+    scene: scene_input.Scene,
     quadrature: LayerQuadrature,
     support_order: usize,
 ) !void {
@@ -485,11 +485,11 @@ fn fillLayerGrid(
     // Fill all computed layer/support rows from retained profile rows and canonical quadrature.               |
     // --------------------------------------------------------------------------------------------------------|
     const profile = ProfileView{ .rows = grid.source_profile.rows };
-    const intervals = case.atmosphere.intervals;
+    const intervals = scene.atmosphere.intervals;
     grid.interval_count = intervals.len;
-    grid.configured_layer_count = case.atmosphere.layer_count;
-    grid.sublayer_divisions = case.atmosphere.sublayer_divisions;
-    grid.surface_pressure_hpa = case.atmosphere.surface_pressure_hpa;
+    grid.configured_layer_count = scene.atmosphere.layer_count;
+    grid.sublayer_divisions = scene.atmosphere.sublayer_divisions;
+    grid.surface_pressure_hpa = scene.atmosphere.surface_pressure_hpa;
 
     const support_nodes = quadrature.support_nodes;
     const support_weights = quadrature.support_weights;
@@ -608,7 +608,7 @@ fn fillLayerGrid(
     std.debug.assert(support_cursor + 1 == grid.support_mid_altitudes_km.len);
 }
 
-fn countDistinctIntervalOrders(intervals: []const o2_case.VerticalInterval) usize {
+fn countDistinctIntervalOrders(intervals: []const scene_input.VerticalInterval) usize {
     // countDistinctIntervalOrders ----------------------------------------------------------------------------|
     // Count nonzero altitude-division orders that need one retained DISAMAR canonical node row.               |
     // --------------------------------------------------------------------------------------------------------|
@@ -626,7 +626,7 @@ fn countDistinctIntervalOrders(intervals: []const o2_case.VerticalInterval) usiz
     return count;
 }
 
-fn countDistinctIntervalNodes(intervals: []const o2_case.VerticalInterval) usize {
+fn countDistinctIntervalNodes(intervals: []const scene_input.VerticalInterval) usize {
     // countDistinctIntervalNodes -----------------------------------------------------------------------------|
     // Count the packed canonical node slots needed by the distinct interval orders.                           |
     // --------------------------------------------------------------------------------------------------------|
@@ -644,7 +644,7 @@ fn countDistinctIntervalNodes(intervals: []const o2_case.VerticalInterval) usize
     return count;
 }
 
-fn intervalOrderAlreadyPresent(intervals: []const o2_case.VerticalInterval, order: usize) bool {
+fn intervalOrderAlreadyPresent(intervals: []const scene_input.VerticalInterval, order: usize) bool {
     // intervalOrderAlreadyPresent ----------------------------------------------------------------------------|
     // Scan currently seen interval rows for a matching altitude-division order.                               |
     // --------------------------------------------------------------------------------------------------------|

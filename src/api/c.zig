@@ -12,7 +12,7 @@ const allocator = std.heap.smp_allocator;
 //                                                                                                             |
 // boundary                                                                                                    |
 //   Context owns prepared setup tables, reusable O2 session memory, returned spectrum handles, and error      |
-//   text. Compute receives only the public root inputs: PreparedO2A, O2SessionMemory, and SolveConfig.        |
+//   text. Compute receives only the public root inputs: Prepared, SessionMemory, and SolveConfig.             |
 //   JSON parsing, diagnostic tables, retrieval, and fastmode return typed failures until their O2 A/O2 A      |
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -338,12 +338,12 @@ pub const ZdsAtmosphericBudget = extern struct {
 // [ 8..15] total_row_count: usize                                                                             |
 // [16..16] truncated      : u8                                                                                |
 // [17..23] padding        : 7 B                                                                               |
-// [24..31] rows           : ?[*]const O2LineContributionRow                                                   |
+// [24..31] rows           : ?[*]const LineContributionRow                                                     |
 pub const ZdsO2LineContributions = extern struct {
     len: usize = 0,
     total_row_count: usize = 0,
     truncated: u8 = 0,
-    rows: ?[*]const zdisamar.O2LineContributionRow = null,
+    rows: ?[*]const zdisamar.LineContributionRow = null,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -371,10 +371,10 @@ pub const ZdsInstrumentResponse = extern struct {
 //                                                                                                             |
 // memory                                                                                                      |
 // [0.. 7] len : usize                                                                                         |
-// [8..15] rows: ?[*]const O2O2CIARow                                                                          |
+// [8..15] rows: ?[*]const CiaRow                                                                              |
 pub const ZdsO2O2CIADiagnostics = extern struct {
     len: usize = 0,
-    rows: ?[*]const zdisamar.O2O2CIARow = null,
+    rows: ?[*]const zdisamar.CiaRow = null,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -385,11 +385,11 @@ pub const ZdsO2O2CIADiagnostics = extern struct {
 // size: 176 B (0.172 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
-// [  0..151] native          : O2SpectrumRunResult                                                            |
+// [  0..151] native          : SpectrumRunResult                                                              |
 // [152..167] compact_jacobian: []f64                                                                          |
 // [168..175] state_count     : usize                                                                          |
 const CResult = struct {
-    native: zdisamar.O2SpectrumRunResult = .{},
+    native: zdisamar.SpectrumRunResult = .{},
     compact_jacobian: []f64 = &.{},
     state_count: usize = 0,
 
@@ -412,10 +412,10 @@ const CResult = struct {
 // optimized  : size 8312 B (8.117 KiB), align 8                                                               |
 //                                                                                                             |
 // memory                                                                                                      |
-// [   0..1751] parsed    : ?ParsedO2CaseJson                                                                  |
-// [1752..4487] prepared  : ?PreparedO2A                                                                       |
-// [4488..7959] session   : O2SessionMemory in Debug                                                           |
-// [4488..7951] session   : O2SessionMemory in optimized builds                                                |
+// [   0..1751] parsed    : ?ParsedSceneJson                                                                   |
+// [1752..4487] prepared  : ?Prepared                                                                          |
+// [4488..7959] session   : SessionMemory in Debug                                                             |
+// [4488..7951] session   : SessionMemory in optimized builds                                                  |
 // [7960..7983] results   : ArrayList(*CResult) in Debug                                                       |
 // [7952..7975] results   : ArrayList(*CResult) in optimized builds                                            |
 // [7984..8007] oe_results: ArrayList(*RetrievalResult) in Debug                                               |
@@ -432,9 +432,9 @@ const CResult = struct {
 // referenced storage                                                                                          |
 //   parsed owns JSON arena storage borrowed by prepared.case for zds_prepare_o2a_json.                        |
 pub const Context = struct {
-    parsed: ?zdisamar.ParsedO2CaseJson = null,
-    prepared: ?zdisamar.PreparedO2A = null,
-    session: zdisamar.O2SessionMemory,
+    parsed: ?zdisamar.ParsedSceneJson = null,
+    prepared: ?zdisamar.Prepared = null,
+    session: zdisamar.SessionMemory,
     results: std.ArrayList(*CResult) = .empty,
     oe_results: std.ArrayList(*zdisamar.RetrievalResult) = .empty,
     oe_batch_results: std.ArrayList(*zdisamar.RetrievalBatchResult) = .empty,
@@ -445,7 +445,7 @@ pub const Context = struct {
         // Context.init ---------------------------------------------------------------------------------------|
         // Create an empty API context with initialized session memory.                                        |
         // ----------------------------------------------------------------------------------------------------|
-        return .{ .session = zdisamar.initO2SessionMemory(allocator) };
+        return .{ .session = zdisamar.initSessionMemory(allocator) };
     }
 
     fn deinit(self: *Context) void {
@@ -548,7 +548,7 @@ pub export fn zds_prepare_default_o2a(ctx: ?*Context) c_int {
 
     resolved.clearPrepared();
 
-    resolved.prepared = zdisamar.prepareO2A(allocator, zdisamar.defaultO2Case()) catch |err| {
+    resolved.prepared = zdisamar.prepare(allocator, zdisamar.defaultScene()) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
@@ -573,13 +573,13 @@ pub export fn zds_prepare_o2a_json(ctx: ?*Context, json_ptr: ?[*]const u8, json_
     }
 
     const payload = json_ptr.?[0..json_len];
-    var parsed = zdisamar.parseO2CaseJson(allocator, payload) catch |err| {
+    var parsed = zdisamar.parseSceneJson(allocator, payload) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
     errdefer parsed.deinit();
 
-    var prepared = zdisamar.prepareO2A(allocator, parsed.case) catch |err| {
+    var prepared = zdisamar.prepare(allocator, parsed.scene) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
@@ -603,11 +603,11 @@ export fn zds_warm_o2a_session(ctx: ?*Context) c_int {
         return @intFromEnum(ZdsStatus.failure);
     });
 
-    var solve_config = zdisamar.o2aSolveConfig(prepared.case);
+    var solve_config = zdisamar.solveConfig(prepared.scene);
     solve_config.derivative_state_mask = 0;
     solve_config.derivative_mode = .none;
 
-    zdisamar.warmO2ASessionMemory(
+    zdisamar.warmSessionMemory(
         allocator,
         &resolved.session,
         prepared,
@@ -640,11 +640,11 @@ pub export fn zds_warm_o2a_optimal_estimation(
         return @intFromEnum(ZdsStatus.failure);
     };
 
-    var solve_config = zdisamar.o2aSolveConfig(prepared.case);
+    var solve_config = zdisamar.solveConfig(prepared.scene);
     solve_config.derivative_state_mask = selection.mask;
     solve_config.derivative_mode = .semi_analytical;
 
-    zdisamar.warmO2ASessionMemory(
+    zdisamar.warmSessionMemory(
         allocator,
         &resolved.session,
         prepared,
@@ -667,7 +667,7 @@ pub export fn zds_default_o2a_input_json(ctx: ?*Context, out: ?[*]u8, buffer_len
         return @intFromEnum(ZdsStatus.failure);
     };
 
-    const rendered = zdisamar.renderDefaultO2CaseJson(allocator) catch |err| {
+    const rendered = zdisamar.renderDefaultSceneJson(allocator) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
@@ -770,7 +770,7 @@ export fn zds_o2_line_contributions(
     // zds_o2_line_contributions ------------------------------------------------------------------------------|
     // Build O2 line-by-line diagnostic rows for caller-selected wavelengths.                                  |
     // --------------------------------------------------------------------------------------------------------|
-    return runWavelengthDiagnostic(.o2_line_contributions, ctx, wavelengths, wavelength_count, max_rows, out);
+    return runWavelengthDiagnostic(.line_contributions, ctx, wavelengths, wavelength_count, max_rows, out);
 }
 
 export fn zds_instrument_response_sampling(
@@ -795,7 +795,7 @@ export fn zds_o2_o2_cia_diagnostics(
     // zds_o2_o2_cia_diagnostics ------------------------------------------------------------------------------|
     // Build O2-O2 CIA diagnostic rows for caller-selected wavelengths.                                        |
     // --------------------------------------------------------------------------------------------------------|
-    return runWavelengthDiagnostic(.o2_o2_cia, ctx, wavelengths, wavelength_count, {}, out);
+    return runWavelengthDiagnostic(.cia_diagnostics, ctx, wavelengths, wavelength_count, {}, out);
 }
 
 // OptimalEstimationMeasurementSlices -------------------------------------------------------------------------|
@@ -951,7 +951,7 @@ pub export fn zds_run_o2a_optimal_estimation(
         return @intFromEnum(ZdsStatus.failure);
     };
     errdefer allocator.destroy(result);
-    result.* = zdisamar.runO2AOptimalEstimation(
+    result.* = zdisamar.runOptimalEstimation(
         allocator,
         &resolved.session,
         prepared,
@@ -1009,7 +1009,7 @@ pub export fn zds_run_o2a_optimal_estimation_correction(
         return @intFromEnum(ZdsStatus.failure);
     };
     errdefer allocator.destroy(result);
-    result.* = zdisamar.runO2AOptimalEstimationCorrection(
+    result.* = zdisamar.runOptimalEstimationCorrection(
         allocator,
         &resolved.session,
         prepared,
@@ -1067,7 +1067,7 @@ pub export fn zds_run_o2a_optimal_estimation_batch(
         return @intFromEnum(ZdsStatus.failure);
     };
     errdefer allocator.destroy(result);
-    result.* = zdisamar.runO2AOptimalEstimationBatch(
+    result.* = zdisamar.runOptimalEstimationBatch(
         allocator,
         &resolved.session,
         prepared,
@@ -1156,7 +1156,7 @@ pub export fn zds_run_o2a_fastmode_optimal_estimation_batch(
         return @intFromEnum(ZdsStatus.failure);
     };
     errdefer allocator.destroy(result);
-    result.* = zdisamar.runO2AFastmodeOptimalEstimationBatch(
+    result.* = zdisamar.runFastmodeOptimalEstimationBatch(
         allocator,
         &resolved.session,
         &correction.session,
@@ -1591,9 +1591,9 @@ fn optimalEstimationPressureProfile(
 
 const WavelengthDiagnostic = enum {
     atmospheric_budget,
-    o2_line_contributions,
+    line_contributions,
     instrument_response,
-    o2_o2_cia,
+    cia_diagnostics,
 };
 
 fn DiagnosticExtra(comptime diagnostic: WavelengthDiagnostic) type {
@@ -1601,8 +1601,8 @@ fn DiagnosticExtra(comptime diagnostic: WavelengthDiagnostic) type {
     // Compile each wavelength-diagnostic ABI wrapper with only the extra scalar it actually accepts.          |
     // --------------------------------------------------------------------------------------------------------|
     return switch (diagnostic) {
-        .atmospheric_budget, .o2_o2_cia => void,
-        .o2_line_contributions => usize,
+        .atmospheric_budget, .cia_diagnostics => void,
+        .line_contributions => usize,
         .instrument_response => u32,
     };
 }
@@ -1613,9 +1613,9 @@ fn DiagnosticOutput(comptime diagnostic: WavelengthDiagnostic) type {
     // --------------------------------------------------------------------------------------------------------|
     return switch (diagnostic) {
         .atmospheric_budget => ZdsAtmosphericBudget,
-        .o2_line_contributions => ZdsO2LineContributions,
+        .line_contributions => ZdsO2LineContributions,
         .instrument_response => ZdsInstrumentResponse,
-        .o2_o2_cia => ZdsO2O2CIADiagnostics,
+        .cia_diagnostics => ZdsO2O2CIADiagnostics,
     };
 }
 
@@ -1625,9 +1625,9 @@ fn DiagnosticResult(comptime diagnostic: WavelengthDiagnostic) type {
     // --------------------------------------------------------------------------------------------------------|
     return switch (diagnostic) {
         .atmospheric_budget => zdisamar.AtmosphericBudget,
-        .o2_line_contributions => zdisamar.O2LineContributions,
+        .line_contributions => zdisamar.LineContributions,
         .instrument_response => zdisamar.InstrumentResponse,
-        .o2_o2_cia => zdisamar.O2O2CIADiagnostics,
+        .cia_diagnostics => zdisamar.CiaDiagnostics,
     };
 }
 
@@ -1662,7 +1662,7 @@ fn runWavelengthDiagnostic(
         return @intFromEnum(ZdsStatus.failure);
     }
 
-    if (diagnostic == .o2_line_contributions and extra == 0) {
+    if (diagnostic == .line_contributions and extra == 0) {
         resolved.setError("invalid O2 line contribution row limit");
         return @intFromEnum(ZdsStatus.failure);
     }
@@ -1696,15 +1696,15 @@ fn nullDiagnosticOutputMessage(comptime diagnostic: WavelengthDiagnostic) []cons
     // --------------------------------------------------------------------------------------------------------|
     return switch (diagnostic) {
         .atmospheric_budget => "null atmospheric budget output",
-        .o2_line_contributions => "null O2 line contribution output",
+        .line_contributions => "null O2 line contribution output",
         .instrument_response => "null instrument response output",
-        .o2_o2_cia => "null O2-O2 CIA output",
+        .cia_diagnostics => "null O2-O2 CIA output",
     };
 }
 
 fn buildWavelengthDiagnostic(
     comptime diagnostic: WavelengthDiagnostic,
-    prepared: *const zdisamar.PreparedO2A,
+    prepared: *const zdisamar.Prepared,
     wavelengths_nm: []const f64,
     extra: DiagnosticExtra(diagnostic),
 ) !DiagnosticResult(diagnostic) {
@@ -1713,9 +1713,9 @@ fn buildWavelengthDiagnostic(
     // --------------------------------------------------------------------------------------------------------|
     return switch (diagnostic) {
         .atmospheric_budget => zdisamar.buildAtmosphericBudget(allocator, prepared, wavelengths_nm),
-        .o2_line_contributions => zdisamar.buildO2LineContributions(allocator, prepared, wavelengths_nm, extra),
+        .line_contributions => zdisamar.buildLineContributions(allocator, prepared, wavelengths_nm, extra),
         .instrument_response => zdisamar.buildInstrumentResponse(allocator, prepared, wavelengths_nm, extra),
-        .o2_o2_cia => zdisamar.buildO2O2CIADiagnostics(allocator, prepared, wavelengths_nm),
+        .cia_diagnostics => zdisamar.buildCiaDiagnostics(allocator, prepared, wavelengths_nm),
     };
 }
 
@@ -1732,19 +1732,19 @@ fn marshalWavelengthDiagnostic(
             .len = result.rows.len,
             .rows = diagnosticRowsPointer(zdisamar.AtmosphericBudgetRow, result.rows),
         },
-        .o2_line_contributions => output.* = .{
+        .line_contributions => output.* = .{
             .len = result.rows.len,
             .total_row_count = result.total_row_count,
             .truncated = @intFromBool(result.truncated),
-            .rows = diagnosticRowsPointer(zdisamar.O2LineContributionRow, result.rows),
+            .rows = diagnosticRowsPointer(zdisamar.LineContributionRow, result.rows),
         },
         .instrument_response => output.* = .{
             .len = result.rows.len,
             .rows = diagnosticRowsPointer(zdisamar.InstrumentResponseRow, result.rows),
         },
-        .o2_o2_cia => output.* = .{
+        .cia_diagnostics => output.* = .{
             .len = result.rows.len,
-            .rows = diagnosticRowsPointer(zdisamar.O2O2CIARow, result.rows),
+            .rows = diagnosticRowsPointer(zdisamar.CiaRow, result.rows),
         },
     }
 }
@@ -1784,7 +1784,7 @@ fn runSpectrum(
         return @intFromEnum(ZdsStatus.failure);
     };
 
-    var solve_config = zdisamar.o2aSolveConfig(prepared.case);
+    var solve_config = zdisamar.solveConfig(prepared.scene);
     solve_config.derivative_state_mask = selection.mask;
     solve_config.derivative_mode = if (wants_jacobian) .semi_analytical else .none;
 
@@ -1794,7 +1794,12 @@ fn runSpectrum(
     };
     result.* = .{};
     errdefer allocator.destroy(result);
-    result.native = zdisamar.runO2AWithSessionMemory(allocator, &resolved.session, prepared, solve_config) catch |err| {
+    result.native = zdisamar.runForwardWithSessionMemory(
+        allocator,
+        &resolved.session,
+        prepared,
+        solve_config,
+    ) catch |err| {
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
@@ -1805,7 +1810,7 @@ fn runSpectrum(
         result.compact_jacobian = compactRadianceJacobian(
             result.native.spectrum,
             selected_ids,
-            solarMu0(prepared.case),
+            solarMu0(prepared.scene),
         ) catch |err| {
             resolved.setError(@errorName(err));
             return @intFromEnum(ZdsStatus.failure);
@@ -1877,7 +1882,7 @@ fn jacobianSelection(
 }
 
 fn compactRadianceJacobian(
-    spectrum: zdisamar.O2Spectrum,
+    spectrum: zdisamar.Spectrum,
     state_ids: []const u8,
     solar_mu0: f64,
 ) ![]f64 {
@@ -1903,15 +1908,15 @@ fn compactRadianceJacobian(
     return compact;
 }
 
-fn solarMu0(case: zdisamar.O2Case) f64 {
+fn solarMu0(scene: zdisamar.Scene) f64 {
     // solarMu0 -----------------------------------------------------------------------------------------------|
     // Return cos(solar zenith) for the Python radiance-Jacobian ABI conversion.                               |
     // --------------------------------------------------------------------------------------------------------|
-    const solar_sin = @sin(std.math.degreesToRadians(case.geometry.solar_zenith_deg));
+    const solar_sin = @sin(std.math.degreesToRadians(scene.geometry.solar_zenith_deg));
     return @sqrt(@max(1.0 - solar_sin * solar_sin, 0.0));
 }
 
-fn spectrumReport(spectrum: zdisamar.O2Spectrum) ZdsDiagnosticReport {
+fn spectrumReport(spectrum: zdisamar.Spectrum) ZdsDiagnosticReport {
     // spectrumReport -----------------------------------------------------------------------------------------|
     // Reduce copied spectrum arrays into the scalar report expected by the Python output object.              |
     // --------------------------------------------------------------------------------------------------------|
@@ -2024,7 +2029,7 @@ fn rejectMultiLayerAerosolProfileRetrieval(ctx: ?*Context) ?c_int {
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
     const prepared = &(resolved.prepared orelse return null);
-    if (prepared.case.aerosol.profile.len <= 1) return null;
+    if (prepared.scene.aerosol.profile.len <= 1) return null;
 
     resolved.setError("multi-layer aerosol profiles are forward-simulation only");
     return @intFromEnum(ZdsStatus.failure);

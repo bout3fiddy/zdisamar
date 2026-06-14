@@ -1,7 +1,7 @@
 const std = @import("std");
 
-const o2_case = @import("../input/o2_case.zig");
-const o2_run_tables = @import("../setup/o2_run_tables.zig");
+const scene_input = @import("../input/scene.zig");
+const run_tables = @import("../setup/run_tables.zig");
 const sampling_table = @import("../spectrum/sampling_table.zig");
 const errors = @import("../common/errors.zig");
 
@@ -96,8 +96,8 @@ pub const InstrumentResponse = struct {
 
 pub fn build(
     allocator: Allocator,
-    case: o2_case.O2Case,
-    tables: *const o2_run_tables.O2RunTables,
+    scene: scene_input.Scene,
+    tables: *const run_tables.RunTables,
     nominal_wavelengths_nm: []const f64,
     channel_mask: u32,
 ) !InstrumentResponse {
@@ -110,9 +110,9 @@ pub fn build(
 
     if ((channel_mask & ~allowed_channel_mask) != 0) return errors.Error.InvalidControl;
 
-    var owned_sampling = try sampling_table.buildO2SpectrumSamplingTableForWavelengths(
+    var owned_sampling = try sampling_table.buildSpectrumSamplingTableForWavelengths(
         allocator,
-        case,
+        scene,
         tables.instrument,
         tables.lines,
         nominal_wavelengths_nm,
@@ -127,10 +127,10 @@ pub fn build(
     var row_index: usize = 0;
     for (table.rows) |row| {
         if ((channel_mask & channel_mask_radiance) != 0) {
-            row_index = writeChannelRows(case, tables, table, row, .radiance, rows, row_index);
+            row_index = writeChannelRows(scene, tables, table, row, .radiance, rows, row_index);
         }
         if ((channel_mask & channel_mask_irradiance) != 0) {
-            row_index = writeChannelRows(case, tables, table, row, .irradiance, rows, row_index);
+            row_index = writeChannelRows(scene, tables, table, row, .irradiance, rows, row_index);
         }
     }
     std.debug.assert(row_index == rows.len);
@@ -160,8 +160,8 @@ fn responseRowCount(table: sampling_table.SpectrumSamplingTable, channel_mask: u
 }
 
 fn writeChannelRows(
-    case: o2_case.O2Case,
-    tables: *const o2_run_tables.O2RunTables,
+    scene: scene_input.Scene,
+    tables: *const run_tables.RunTables,
     table: sampling_table.SpectrumSamplingTable,
     row: sampling_table.SpectrumSamplingRow,
     channel: Channel,
@@ -181,7 +181,7 @@ fn writeChannelRows(
         .radiance => 0,
         .irradiance => 1,
     };
-    const nominal_index = nearestNominalIndex(case, row.nominal_wavelength_nm);
+    const nominal_index = nearestNominalIndex(scene, row.nominal_wavelength_nm);
 
     var row_index = row_start;
     for (0..support_count) |sample_index| {
@@ -219,18 +219,18 @@ fn supportWidthNm(
     return kernel.offsetNm(storage, support_count - 1) - kernel.offsetNm(storage, 0);
 }
 
-fn nearestNominalIndex(case: o2_case.O2Case, nominal_wavelength_nm: f64) i32 {
+fn nearestNominalIndex(scene: scene_input.Scene, nominal_wavelength_nm: f64) i32 {
     // nearestNominalIndex ------------------------------------------------------------------------------------|
     // Round diagnostic wavelengths back to the product grid without changing the sampled kernel location.     |
     // --------------------------------------------------------------------------------------------------------|
-    const sample_count = case.spectral_grid.sample_count;
+    const sample_count = scene.spectral_grid.sample_count;
     if (sample_count <= 1) return 0;
 
-    const step_nm = (case.spectral_grid.end_nm - case.spectral_grid.start_nm) /
+    const step_nm = (scene.spectral_grid.end_nm - scene.spectral_grid.start_nm) /
         @as(f64, @floatFromInt(sample_count - 1));
     if (step_nm <= 0.0) return 0;
 
-    const raw = @round((nominal_wavelength_nm - case.spectral_grid.start_nm) / step_nm);
+    const raw = @round((nominal_wavelength_nm - scene.spectral_grid.start_nm) / step_nm);
     const clamped = std.math.clamp(raw, 0.0, @as(f64, @floatFromInt(sample_count - 1)));
     return @intFromFloat(clamped);
 }

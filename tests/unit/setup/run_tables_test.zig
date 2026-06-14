@@ -1,14 +1,14 @@
 const std = @import("std");
 const internal = @import("internal");
 
-test "O2RunTables match O2 A baseline table evidence" {
-    var tables = try internal.setup.o2_run_tables.buildO2RunTables(
+test "RunTables match O2 A baseline table evidence" {
+    var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
-        internal.input.defaults.referenceCase(),
+        internal.input.defaults.referenceScene(),
     );
     defer tables.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(usize, 2024), @sizeOf(internal.setup.o2_run_tables.O2RunTables));
+    try std.testing.expectEqual(@as(usize, 2024), @sizeOf(internal.setup.run_tables.RunTables));
     try std.testing.expectEqual(@as(usize, 88), @sizeOf(internal.setup.atmosphere_layers.LayerQuadrature));
 
     try std.testing.expectEqual(@as(usize, 45), tables.layers.layer_pressures_hpa.len);
@@ -77,11 +77,11 @@ test "LayerQuadrature rows match per-call quadrature builders" {
     const allocator = std.testing.allocator;
     const gauss_legendre = internal.common.math.gauss_legendre;
 
-    const case = internal.input.defaults.referenceCase();
-    var tables = try internal.setup.o2_run_tables.buildO2RunTables(allocator, case);
+    const scene = internal.input.defaults.referenceScene();
+    var tables = try internal.setup.run_tables.buildRunTables(allocator, scene);
     defer tables.deinit(allocator);
 
-    const support_order = @max(case.atmosphere.sublayer_divisions, @as(usize, 1));
+    const support_order = @max(scene.atmosphere.sublayer_divisions, @as(usize, 1));
     var expected_support_nodes = [_]f64{0.0} ** gauss_legendre.max_fixed_rule_order;
     var expected_support_weights = [_]f64{0.0} ** gauss_legendre.max_fixed_rule_order;
     try gauss_legendre.fillNodesAndWeights(
@@ -94,7 +94,7 @@ test "LayerQuadrature rows match per-call quadrature builders" {
     try expectEqualF64Slices(expected_support_nodes[0..support_order], tables.quadrature.support_nodes);
     try expectEqualF64Slices(expected_support_weights[0..support_order], tables.quadrature.support_weights);
 
-    for (case.atmosphere.intervals) |interval| {
+    for (scene.atmosphere.intervals) |interval| {
         const order = interval.altitude_divisions;
         if (order == 0) continue;
 
@@ -120,13 +120,13 @@ test "LayerGrid refill from prepared profiles matches fresh builds for pressure 
     const allocator = std.testing.allocator;
     const atmosphere_layers = internal.setup.atmosphere_layers;
 
-    const base_case = internal.input.defaults.referenceCase();
-    var base_tables = try internal.setup.o2_run_tables.buildO2RunTables(allocator, base_case);
+    const base_scene = internal.input.defaults.referenceScene();
+    var base_tables = try internal.setup.run_tables.buildRunTables(allocator, base_scene);
     defer base_tables.deinit(allocator);
 
     var retained = try atmosphere_layers.buildFromPreparedProfiles(
         allocator,
-        base_case,
+        base_scene,
         base_tables.layers.source_profile.rows,
         base_tables.layers.spectroscopy_profile.rows,
         base_tables.quadrature,
@@ -135,24 +135,27 @@ test "LayerGrid refill from prepared profiles matches fresh builds for pressure 
 
     const pressure_states_hpa = [_]f64{ 820.0, 870.0 };
     for (pressure_states_hpa) |mid_pressure_hpa| {
-        var case = base_case;
-        const intervals = try allocator.dupe(internal.input.o2_case.VerticalInterval, base_case.atmosphere.intervals);
+        var scene = base_scene;
+        const intervals = try allocator.dupe(
+            internal.input.scene_input.VerticalInterval,
+            base_scene.atmosphere.intervals,
+        );
         defer allocator.free(intervals);
-        case.atmosphere.intervals = intervals;
-        try moveAerosolLayerPressure(&case, intervals, mid_pressure_hpa);
+        scene.atmosphere.intervals = intervals;
+        try moveAerosolLayerPressure(&scene, intervals, mid_pressure_hpa);
 
-        var full = try atmosphere_layers.build(allocator, case);
+        var full = try atmosphere_layers.build(allocator, scene);
         defer full.deinit(allocator);
         var fresh = try atmosphere_layers.buildFromPreparedProfiles(
             allocator,
-            case,
+            scene,
             base_tables.layers.source_profile.rows,
             base_tables.layers.spectroscopy_profile.rows,
             base_tables.quadrature,
         );
         defer fresh.deinit(allocator);
 
-        try atmosphere_layers.refillFromPreparedProfiles(&retained, case, base_tables.quadrature);
+        try atmosphere_layers.refillFromPreparedProfiles(&retained, scene, base_tables.quadrature);
 
         try expectLayerGridEqual(full, fresh);
         try expectLayerGridEqual(fresh, retained);
@@ -160,9 +163,9 @@ test "LayerGrid refill from prepared profiles matches fresh builds for pressure 
 }
 
 fn findLineByWavenumber(
-    rows: []const internal.assets.readers.O2LineAssetRow,
+    rows: []const internal.assets.readers.LineAssetRow,
     center_wavenumber_cm1: f64,
-) ?internal.assets.readers.O2LineAssetRow {
+) ?internal.assets.readers.LineAssetRow {
     // findLineByWavenumber -----------------------------------------------------------------------------------|
     // Locate one parsed HITRAN line used as test-side evidence.                                               |
     // --------------------------------------------------------------------------------------------------------|
@@ -173,20 +176,20 @@ fn findLineByWavenumber(
 }
 
 fn moveAerosolLayerPressure(
-    case: *internal.input.o2_case.O2Case,
-    intervals: []internal.input.o2_case.VerticalInterval,
+    scene: *internal.input.scene_input.Scene,
+    intervals: []internal.input.scene_input.VerticalInterval,
     mid_pressure_hpa: f64,
 ) !void {
     // moveAerosolLayerPressure -------------------------------------------------------------------------------|
     // Apply the same pressure-placement update used by retrieval state evaluation for a setup refresh test.   |
     // --------------------------------------------------------------------------------------------------------|
-    const fit_interval_index = case.aerosol.interval_index_1based;
-    const half_thickness = 0.5 * (case.aerosol.bottom_pressure_hpa - case.aerosol.top_pressure_hpa);
+    const fit_interval_index = scene.aerosol.interval_index_1based;
+    const half_thickness = 0.5 * (scene.aerosol.bottom_pressure_hpa - scene.aerosol.top_pressure_hpa);
     const top_pressure_hpa = mid_pressure_hpa - half_thickness;
     const bottom_pressure_hpa = mid_pressure_hpa + half_thickness;
 
-    case.aerosol.top_pressure_hpa = top_pressure_hpa;
-    case.aerosol.bottom_pressure_hpa = bottom_pressure_hpa;
+    scene.aerosol.top_pressure_hpa = top_pressure_hpa;
+    scene.aerosol.bottom_pressure_hpa = bottom_pressure_hpa;
 
     var updated = false;
     for (intervals) |*interval| {

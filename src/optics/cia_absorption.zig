@@ -35,7 +35,7 @@ pub const CiaCoefficients = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 pub fn sigmaFromCoefficients(
-    table: cia_table.O2CiaTable,
+    table: cia_table.CiaTable,
     coefficients: CiaCoefficients,
     temperature_k: f64,
 ) f64 {

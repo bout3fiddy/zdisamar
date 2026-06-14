@@ -5,11 +5,11 @@ from .measurement import WavelengthGridMismatchError
 from .o2a import (
     attach_diagnosis,
     attach_final_evaluation,
-    case_for_state,
     evaluate_reflectance,
     evaluate_state,
     measurement_from_sun_normalized_radiance_noise,
     retrieve,
+    scene_for_state,
     simulate_measurement,
 )
 from .retrieval import (
@@ -47,7 +47,7 @@ __all__ = [
     "WavelengthGridMismatchError",
     "attach_diagnosis",
     "attach_final_evaluation",
-    "case_for_state",
+    "scene_for_state",
     "evaluate_reflectance",
     "evaluate_state",
     "measurement_from_sun_normalized_radiance_noise",

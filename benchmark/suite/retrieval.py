@@ -166,7 +166,7 @@ def run_once(
         setup_timing = elapsed_since(setup_start)
         retrieval_start = timing_start()
         result = band_retrieval.retrieve(
-            case=case,
+            scene=case,
             measurement=measurement,
             state_vector=state_vector,
             controls=setup.retrieval_controls(),

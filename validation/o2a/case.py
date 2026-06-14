@@ -21,7 +21,7 @@ def build_o2a_case(band, *, jacobian_reference_layer: bool = False):
     if jacobian_reference_layer:
         performance_thresholds.phase_function_truncation_threshold = 1.0e-6
 
-    return band.O2ACase(
+    return band.Scene(
         metadata={
             "id": "disamar_reference_o2a",
             "storage": "disamar-reference-o2a",
@@ -118,7 +118,7 @@ def build_o2a_case(band, *, jacobian_reference_layer: bool = False):
             },
             solar_reference_asset_id="raw_solar_reference",
         ),
-        o2_lines=band.O2LineByLine(
+        o2_lines=band.LineByLine(
             line_list_asset=asset(
                 band,
                 "o2_hitran",

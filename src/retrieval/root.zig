@@ -821,7 +821,7 @@ pub fn accumulateNormalSystem(
     //   b += sqrt(Sa) * Jt * Se^-1 * residual                                                                 |
     //                                                                                                         |
     // units                                                                                                   |
-    //   from `O2Spectrum`, so no radiance-to-reflectance scale is applied here. The pressure lane still       |
+    //   from `Spectrum`, so no radiance-to-reflectance scale is applied here. The pressure lane still         |
     //   follows the aerosol-layer pressure-shift projection through altitudeDerivativeAtPressure.             |
     // --------------------------------------------------------------------------------------------------------|
     if (evaluation.wavelength_nm.len != measurement.wavelength_nm.len or

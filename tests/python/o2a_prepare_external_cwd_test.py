@@ -12,18 +12,18 @@ def main() -> int:
 
         try:
             os.chdir(tmpdir)
-            case = o2a.reference_case()
-            assert "vendor/disamar-fortran" not in case.o2_lines.line_list_asset.path
+            scene = o2a.reference_scene()
+            assert "vendor/disamar-fortran" not in scene.o2_lines.line_list_asset.path
 
-            spectrum = rtm.spectrum(case)
-            assert len(spectrum.wavelength_nm) == int(case.spectral_grid.sample_count)
+            spectrum = rtm.spectrum(scene)
+            assert len(spectrum.wavelength_nm) == int(scene.spectral_grid.sample_count)
 
-            reference_spectrum = rtm.spectrum(o2a.reference_case())
-            assert len(reference_spectrum.wavelength_nm) == int(case.spectral_grid.sample_count)
+            reference_spectrum = rtm.spectrum(o2a.reference_scene())
+            assert len(reference_spectrum.wavelength_nm) == int(scene.spectral_grid.sample_count)
 
-            with rtm.SessionCache(case) as cache:
+            with rtm.SessionCache(scene) as cache:
                 cached_spectrum = cache.spectrum()
-                assert len(cached_spectrum.wavelength_nm) == int(case.spectral_grid.sample_count)
+                assert len(cached_spectrum.wavelength_nm) == int(scene.spectral_grid.sample_count)
         finally:
             os.chdir(old_cwd)
 

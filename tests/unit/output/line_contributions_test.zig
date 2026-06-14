@@ -1,24 +1,24 @@
 const std = @import("std");
 const internal = @import("internal");
 
-const o2_line_contributions = internal.output.o2_line_contributions;
+const line_contributions = internal.output.line_contributions;
 
 const allocator = std.testing.allocator;
 
 // RowEvidence ------------------------------------------------------------------------------------------------|
 // Test-local O2 line-contribution evidence from O2 A baseline artifact:                                       |
 // Canonical expected values owned by this repository.                                                         |
-// public-python-baseline.json .diagnostics.o2_line_contributions.rows.                                        |
+// public-python-baseline.json .diagnostics.line_contributions.rows.                                           |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 176 B (0.172 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0..  7] row_index: usize                                                                                 |
-// [  8..175] row      : O2LineContributionRow                                                                 |
+// [  8..175] row      : LineContributionRow                                                                   |
 const RowEvidence = struct {
     row_index: usize,
-    row: o2_line_contributions.O2LineContributionRow,
+    row: line_contributions.LineContributionRow,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -176,11 +176,11 @@ const expected_rows = [_]RowEvidence{
 };
 
 test "O2 line contributions match O2 A public Python evidence at probe wavelengths" {
-    var prepared = try internal.public.prepareO2A(allocator, internal.input.defaults.referenceCase());
+    var prepared = try internal.public.prepare(allocator, internal.input.defaults.referenceScene());
     defer prepared.deinit(allocator);
 
     const wavelengths_nm = [_]f64{ 758.0, 760.0, 765.0, 767.0, 776.0 };
-    var contributions = try internal.public.buildO2LineContributions(
+    var contributions = try internal.public.buildLineContributions(
         allocator,
         &prepared,
         wavelengths_nm[0..],
@@ -198,8 +198,8 @@ test "O2 line contributions match O2 A public Python evidence at probe wavelengt
 }
 
 fn expectRowEqual(
-    expected: o2_line_contributions.O2LineContributionRow,
-    actual: o2_line_contributions.O2LineContributionRow,
+    expected: line_contributions.LineContributionRow,
+    actual: line_contributions.LineContributionRow,
 ) !void {
     // expectRowEqual -----------------------------------------------------------------------------------------|
     // Compare one public O2 line-contribution row field-by-field so drift names the first bad column.         |

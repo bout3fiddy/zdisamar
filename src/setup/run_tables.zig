@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const validate = @import("../input/validate.zig");
-const o2_case = @import("../input/o2_case.zig");
+const scene_input = @import("../input/scene.zig");
 const aerosol_tables = @import("aerosol_tables.zig");
 const atmosphere_layers = @import("atmosphere_layers.zig");
 const cia_table = @import("cia_table.zig");
@@ -12,7 +12,7 @@ const solar_table = @import("solar_table.zig");
 
 const Allocator = std.mem.Allocator;
 
-// O2RunTables ------------------------------------------------------------------------------------------------|
+// RunTables --------------------------------------------------------------------------------------------------|
 // Package boundary for setup tables below radiance math.                                                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -21,8 +21,8 @@ const Allocator = std.mem.Allocator;
 // memory                                                                                                      |
 // [   0.. 399] layers    : LayerGrid                                                                          |
 // [ 400.. 487] quadrature: LayerQuadrature                                                                    |
-// [ 488.. 599] lines     : O2LineTable                                                                        |
-// [ 600.. 623] cia       : O2CiaTable                                                                         |
+// [ 488.. 599] lines     : LineTable                                                                          |
+// [ 600.. 623] cia       : CiaTable                                                                           |
 // [ 624.. 703] aerosol   : AerosolLayerTable                                                                  |
 // [ 704..1927] phase     : PhaseTable                                                                         |
 // [1928..1991] instrument: InstrumentTable                                                                    |
@@ -33,20 +33,20 @@ const Allocator = std.mem.Allocator;
 //   must receive the narrow table slices it needs rather than this full bundle.                               |
 //                                                                                                             |
 // ownership                                                                                                   |
-//   layers, quadrature, lines, cia, and solar own out-of-line arrays. Aerosol, phase, and instrument tables  |
+//   layers, quadrature, lines, cia, and solar own out-of-line arrays. Aerosol, phase, and instrument tables   |
 //   are inline scalar/control rows.                                                                           |
-pub const O2RunTables = struct {
+pub const RunTables = struct {
     layers: atmosphere_layers.LayerGrid,
     quadrature: atmosphere_layers.LayerQuadrature,
-    lines: line_tables.O2LineTable,
-    cia: cia_table.O2CiaTable,
+    lines: line_tables.LineTable,
+    cia: cia_table.CiaTable,
     aerosol: aerosol_tables.AerosolLayerTable,
     phase: phase_table.PhaseTable,
     instrument: instrument_tables.InstrumentTable,
     solar: solar_table.SolarTable,
 
-    pub fn deinit(self: *O2RunTables, allocator: Allocator) void {
-        // O2RunTables.deinit ---------------------------------------------------------------------------------|
+    pub fn deinit(self: *RunTables, allocator: Allocator) void {
+        // RunTables.deinit -----------------------------------------------------------------------------------|
         // Release owned child tables in reverse setup order.                                                  |
         // ----------------------------------------------------------------------------------------------------|
         self.solar.deinit(allocator);
@@ -59,21 +59,21 @@ pub const O2RunTables = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn buildO2RunTables(allocator: Allocator, case: o2_case.O2Case) !O2RunTables {
-    // buildO2RunTables ---------------------------------------------------------------------------------------|
+pub fn buildRunTables(allocator: Allocator, scene: scene_input.Scene) !RunTables {
+    // buildRunTables -----------------------------------------------------------------------------------------|
     // Validate the O2 A case and build every physical setup table.                                            |
     // --------------------------------------------------------------------------------------------------------|
-    try validate.o2Case(case);
+    try validate.sceneControls(scene);
 
-    var quadrature = try atmosphere_layers.buildLayerQuadrature(allocator, case);
+    var quadrature = try atmosphere_layers.buildLayerQuadrature(allocator, scene);
     errdefer quadrature.deinit(allocator);
-    var layers = try atmosphere_layers.buildWithQuadrature(allocator, case, quadrature);
+    var layers = try atmosphere_layers.buildWithQuadrature(allocator, scene, quadrature);
     errdefer layers.deinit(allocator);
-    var lines = try line_tables.build(allocator, case);
+    var lines = try line_tables.build(allocator, scene);
     errdefer lines.deinit(allocator);
-    var cia = try cia_table.build(allocator, case);
+    var cia = try cia_table.build(allocator, scene);
     errdefer cia.deinit(allocator);
-    var solar = try solar_table.build(allocator, case);
+    var solar = try solar_table.build(allocator, scene);
     errdefer solar.deinit(allocator);
 
     return .{
@@ -81,9 +81,9 @@ pub fn buildO2RunTables(allocator: Allocator, case: o2_case.O2Case) !O2RunTables
         .quadrature = quadrature,
         .lines = lines,
         .cia = cia,
-        .aerosol = aerosol_tables.build(case),
-        .phase = phase_table.build(case),
-        .instrument = instrument_tables.build(case),
+        .aerosol = aerosol_tables.build(scene),
+        .phase = phase_table.build(scene),
+        .instrument = instrument_tables.build(scene),
         .solar = solar,
     };
 }

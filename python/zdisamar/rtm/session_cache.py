@@ -4,14 +4,14 @@ from dataclasses import dataclass, field
 from typing import Self
 
 from ..bindings.handles import RtmHandle
-from ..input.wavelength_band.o2a import O2AInput
+from ..input.wavelength_band.o2a import Scene
 
 
 @dataclass(eq=False)
 class SessionCache:
     """Cache reusable RTM storage across repeated wavelength-band cases."""
 
-    case: O2AInput | None = None
+    scene: Scene | None = None
     _handle: RtmHandle = field(init=False, repr=False)
     _loaded: bool = field(default=False, init=False, repr=False)
     _oe_warm_state_names: tuple[str, ...] | None = field(default=None, init=False, repr=False)
@@ -19,17 +19,17 @@ class SessionCache:
     def __post_init__(self) -> None:
 
         self._handle = RtmHandle()
-        initial_case = self.case
-        self.case = None
+        initial_scene = self.scene
+        self.scene = None
 
-        if initial_case is not None:
-            self.load(initial_case, copy_case=False)
+        if initial_scene is not None:
+            self.load(initial_scene, copy_scene=False)
             self.warm()
 
-    def load(self, case: O2AInput, *, copy_case: bool = True) -> None:
+    def load(self, scene: Scene, *, copy_scene: bool = True) -> None:
         """Load a wavelength-band case into the cached RTM storage."""
 
-        self._handle.load_o2a_case(case, copy_case=copy_case)
+        self._handle.load_scene(scene, copy_scene=copy_scene)
         self._loaded = True
         self._oe_warm_state_names = None
 
@@ -53,30 +53,30 @@ class SessionCache:
         self._handle.warm_optimal_estimation_cache(state_names)
         self._oe_warm_state_names = state_names
 
-    def has_loaded_case(self, case: O2AInput) -> bool:
+    def has_loaded_scene(self, scene: Scene) -> bool:
         """Return whether this cache already owns the prepared native case."""
 
-        return self._loaded and self._handle.loaded_o2a_case_matches(case)
+        return self._loaded and self._handle.loaded_scene_matches(scene)
 
     def spectrum(
         self,
-        case: O2AInput | None = None,
+        scene: Scene | None = None,
         *,
         jacobian: bool = False,
         jacobian_state_names: tuple[str, ...] | None = None,
-        include_case: bool = False,
+        include_scene: bool = False,
     ):
         """Run the RTM using cached storage."""
 
-        if case is not None and (include_case or not self.has_loaded_case(case)):
-            self.load(case, copy_case=include_case)
+        if scene is not None and (include_scene or not self.has_loaded_scene(scene)):
+            self.load(scene, copy_scene=include_scene)
         elif not self._loaded:
             raise RuntimeError("SessionCache has no loaded wavelength-band case")
 
         return self._handle.spectrum(
             jacobian=jacobian,
             jacobian_state_names=jacobian_state_names,
-            include_case=include_case,
+            include_scene=include_scene,
         )
 
     def atmospheric_budget(self, wavelengths_nm):

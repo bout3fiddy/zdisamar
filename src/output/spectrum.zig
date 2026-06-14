@@ -9,11 +9,11 @@ const Allocator = std.mem.Allocator;
 // Public spectrum output owner for the explicit O2 A forward route.                                           |
 //                                                                                                             |
 // ownership boundary                                                                                          |
-//   O2Spectrum owns copied product-grid arrays returned across the root/API boundary. Session cache rows,     |
+//   Spectrum owns copied product-grid arrays returned across the root/API boundary. Session cache rows,       |
 //   setup tables, worker memory, and solar lookup memory remain outside this output object.                   |
 // ------------------------------------------------------------------------------------------------------------|
 
-// O2Spectrum -------------------------------------------------------------------------------------------------|
+// Spectrum ---------------------------------------------------------------------------------------------------|
 // Owned product-grid spectrum arrays returned by root run calls.                                              |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -28,15 +28,15 @@ const Allocator = std.mem.Allocator;
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Every slice owns one product-grid heap array and shares the same sample count.                            |
-pub const O2Spectrum = struct {
+pub const Spectrum = struct {
     wavelength_nm: []f64 = &.{},
     radiance: []f64 = &.{},
     irradiance: []f64 = &.{},
     reflectance: []f64 = &.{},
     jacobian: []jacobian_states.Vector = &.{},
 
-    pub fn deinit(self: *O2Spectrum, allocator: Allocator) void {
-        // O2Spectrum.deinit ----------------------------------------------------------------------------------|
+    pub fn deinit(self: *Spectrum, allocator: Allocator) void {
+        // Spectrum.deinit ------------------------------------------------------------------------------------|
         // Release product-grid output arrays.                                                                 |
         // ----------------------------------------------------------------------------------------------------|
         allocator.free(self.jacobian);
@@ -47,8 +47,8 @@ pub const O2Spectrum = struct {
         self.* = .{};
     }
 
-    pub fn sampleCount(self: O2Spectrum) usize {
-        // O2Spectrum.sampleCount -----------------------------------------------------------------------------|
+    pub fn sampleCount(self: Spectrum) usize {
+        // Spectrum.sampleCount -------------------------------------------------------------------------------|
         // Return the public product-grid length shared by every output array.                                 |
         // ----------------------------------------------------------------------------------------------------|
         return self.wavelength_nm.len;
@@ -56,7 +56,7 @@ pub const O2Spectrum = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// O2SpectrumRunSummary ---------------------------------------------------------------------------------------|
+// SpectrumRunSummary -----------------------------------------------------------------------------------------|
 // Scalar accounting emitted by the final radiance/irradiance-to-reflectance assembly.                         |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
@@ -64,26 +64,26 @@ pub const O2Spectrum = struct {
 //                                                                                                             |
 // memory                                                                                                      |
 // [ 0..71] reflectance_assembly : ReflectanceAssemblySummary                                                  |
-pub const O2SpectrumRunSummary = struct {
+pub const SpectrumRunSummary = struct {
     reflectance_assembly: instrument_average.ReflectanceAssemblySummary = .{},
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// O2SpectrumRunResult ----------------------------------------------------------------------------------------|
+// SpectrumRunResult ------------------------------------------------------------------------------------------|
 // Owned spectrum plus scalar summary returned from one public forward run.                                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 152 B (0.148 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
-// [  0.. 79] spectrum : O2Spectrum                                                                            |
-// [ 80..151] summary  : O2SpectrumRunSummary                                                                  |
-pub const O2SpectrumRunResult = struct {
-    spectrum: O2Spectrum = .{},
-    summary: O2SpectrumRunSummary = .{},
+// [  0.. 79] spectrum : Spectrum                                                                              |
+// [ 80..151] summary  : SpectrumRunSummary                                                                    |
+pub const SpectrumRunResult = struct {
+    spectrum: Spectrum = .{},
+    summary: SpectrumRunSummary = .{},
 
-    pub fn deinit(self: *O2SpectrumRunResult, allocator: Allocator) void {
-        // O2SpectrumRunResult.deinit -------------------------------------------------------------------------|
+    pub fn deinit(self: *SpectrumRunResult, allocator: Allocator) void {
+        // SpectrumRunResult.deinit ---------------------------------------------------------------------------|
         // Release the owned spectrum arrays; summary fields are scalar.                                       |
         // ----------------------------------------------------------------------------------------------------|
         self.spectrum.deinit(allocator);
@@ -93,7 +93,7 @@ pub const O2SpectrumRunResult = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 comptime {
-    std.debug.assert(@sizeOf(O2Spectrum) == 80);
-    std.debug.assert(@sizeOf(O2SpectrumRunSummary) == 72);
-    std.debug.assert(@sizeOf(O2SpectrumRunResult) == 152);
+    std.debug.assert(@sizeOf(Spectrum) == 80);
+    std.debug.assert(@sizeOf(SpectrumRunSummary) == 72);
+    std.debug.assert(@sizeOf(SpectrumRunResult) == 152);
 }
