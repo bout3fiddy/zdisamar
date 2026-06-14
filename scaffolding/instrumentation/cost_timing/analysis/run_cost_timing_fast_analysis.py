@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """Fast cost-timing analysis gate for the enabled O2 A forward smoke."""
 
-from __future__ import annotations
-
 import re
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-
 
 MAX_ELAPSED_SECONDS = 20.0
 EXPECTED_SAMPLES = 2
@@ -31,12 +28,18 @@ class Counter:
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("usage: run_cost_timing_fast_analysis.py <cost-timing-forward-smoke>", file=sys.stderr)
+        print(
+            "usage: run_cost_timing_fast_analysis.py <cost-timing-forward-smoke>",
+            file=sys.stderr,
+        )
         return 2
 
     executable = Path(sys.argv[1])
     if not executable.exists():
-        print(f"cost_timing_fast_analysis status=fail reason=missing_executable path={executable}", file=sys.stderr)
+        print(
+            f"cost_timing_fast_analysis status=fail reason=missing_executable path={executable}",
+            file=sys.stderr,
+        )
         return 2
 
     started = time.monotonic()
@@ -61,7 +64,10 @@ def main() -> int:
     row = first_cost_timing_row(output)
     if row is None:
         print(output, end="")
-        print("cost_timing_fast_analysis status=fail reason=missing_cost_timing_row", file=sys.stderr)
+        print(
+            "cost_timing_fast_analysis status=fail reason=missing_cost_timing_row",
+            file=sys.stderr,
+        )
         return 1
 
     counters = parse_counters(row)
@@ -153,21 +159,25 @@ def print_findings(counters: dict[str, Counter]) -> None:
         ratio = partition_count / profile_count
         print(
             "  action=cache_partition_ratios "
-            f"partition_interp.count={partition_count} profile_interp.count={profile_count} ratio={ratio:.1f} "
-            "candidate=cache Q(T0)/Q(T) by isotopologue and profile temperature during profile-line setup"
+            f"partition_interp.count={partition_count} "
+            f"profile_interp.count={profile_count} ratio={ratio:.1f} "
+            "candidate=cache Q(T0)/Q(T) by isotopologue and profile temperature "
+            "during profile-line setup"
         )
     if spectroscopy_count >= profile_count * 8:
         ratio = spectroscopy_count / profile_count
         print(
             "  action=separate_profile_line_cache_miss_cost "
-            f"spectroscopy_sigma.count={spectroscopy_count} profile_interp.count={profile_count} ratio={ratio:.1f} "
+            f"spectroscopy_sigma.count={spectroscopy_count} "
+            f"profile_interp.count={profile_count} ratio={ratio:.1f} "
             "candidate=measure cache-hit forward separately from profile-line cache rebuilds"
         )
     if optics_count == profile_count and quadrature_count == profile_count:
         print(
             "  action=keep_optics_reduction_on_watchlist "
             f"optics_assembly.count={optics_count} quadrature_build.count={quadrature_count} "
-            "candidate=after spectroscopy caching, check whether per-wavelength support-to-layer reduction is visible"
+            "candidate=after spectroscopy caching, check whether per-wavelength "
+            "support-to-layer reduction is visible"
         )
 
 

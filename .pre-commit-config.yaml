@@ -8,7 +8,6 @@ exclude: |
     zig-out/.*|
     \.zig-cache/.*|
     data/reference_data/.*|
-    docs/workpackages/.*|
     validation/(\.cache|function_diff|latest|runs|scratch|tmp|work)/.*
   )$
 

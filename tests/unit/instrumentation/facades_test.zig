@@ -2,7 +2,7 @@ const std = @import("std");
 const internal = @import("internal");
 
 test "instrumentation facades compile in disabled configuration" {
-    const zone = internal.instrumentation.trace.staticZone(@src(), "wp2.disabled");
+    const zone = internal.instrumentation.trace.staticZone(@src(), "instrumentation.disabled");
     zone.end();
 
     const context = internal.instrumentation.telemetry.currentContext();

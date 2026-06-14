@@ -1,60 +1,182 @@
 #!/usr/bin/env python3
 """Fail when counted src pub fns have no production caller and no reason."""
 
-from __future__ import annotations
-
 import re
 import subprocess
 import sys
 from pathlib import Path
 
-
 PUB_FN_RE = re.compile(r"^\s*pub\s+(?:inline\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b", re.M)
+
+HG_PHASE_STAGED_REASON = "staged HG phase lane; tests must cover it before first use"
+MATRIX_REFERENCE_REASON = "matrix reference form; tests assert equality with fused variants"
+MATRIX_KNOWN_PRODUCT_REASON = "matrix helper; production uses known-product kernels"
+MATRIX_CALLER_OWNED_REASON = "matrix helper; production uses caller-owned kernels"
 
 
 ALLOWLIST: dict[tuple[str, str], str] = {
-    ("src/common/math/gauss_legendre.zig", "fillDisamarDivPointsIntervalNodes"): "test oracle for canonical DISAMAR node split; production uses retained canonical rows plus scaleIntervalNodes",
-    ("src/common/worker_partition.zig", "preferredWorkerCountForCpuCount"): "worker-count oracle for preferredWorkerCount tests; production uses preferredWorkerCount",
-    ("src/input/hitran_partition_tables.zig", "partitionSampleMatchesEndpointSecant"): "test oracle for prepared HITRAN partition spline state; production uses ratioT0OverT",
-    ("src/root.zig", "runO2A"): "public Zig one-shot facade; C/Python uses runO2AWithSessionMemory through the context-owned session path",
-    ("src/setup/atmosphere_layers.zig", "intervalNodes"): "same-file production helper; buildWithQuadrature calls it while tests assert retained canonical row lookup",
-    ("src/setup/phase_table.zig", "zeroPhaseCoefficients"): "test oracle for phase coefficient storage; keep until HG phase lane is wired",
-    ("src/setup/phase_table.zig", "hgPhaseCoefficients"): "wp5-staged HG phase lane, uncalled and untested; WP5 must test before first use",
-    ("src/setup/phase_table.zig", "hgPhaseCoefficientsWithThreshold"): "wp5-staged HG phase lane, uncalled and untested; WP5 must test before first use",
-    ("src/setup/phase_table.zig", "maxPhaseCoefficientIndex"): "wp5-staged HG phase lane, uncalled and untested; WP5 must test before first use",
-    ("src/spectrum/instrument_average.zig", "applySlitConvolution"): "test oracle for slit-kernel normalization; production reaches it through postprocessSignal in the same file",
-    ("src/spectrum/sampling_table.zig", "summarize"): "test oracle for sampling-table shape until runner owns telemetry summary",
-    ("src/spectrum/spectrum_run.zig", "gatherProductRows"): "wired same-file stage helper; runO2ASpectrum calls it and tests assert the stage contract",
-    ("src/spectrum/spectrum_run.zig", "postprocessAndAssembleProductRows"): "wired same-file stage helper; runO2ASpectrum calls it and tests assert the stage contract",
-    ("src/rtm/gauss_angles.zig", "pairIndex"): "transport test oracle for paired Gaussian layout",
-    ("src/rtm/layer_reflect_transmit.zig", "renormalizeZeroFourierPhaseKernel"): "transport test oracle for old LABOS phase renormalization",
-    ("src/rtm/layer_reflect_transmit.zig", "classifyLayerDoubling"): "transport test oracle for old LABOS layer-doubling branch decisions",
-    ("src/rtm/layer_reflect_transmit.zig", "fillSingleScatterReflection"): "transport test oracle for old LABOS single-scatter reflection row",
-    ("src/rtm/layer_reflect_transmit.zig", "fillSingleScatterTransmission"): "transport test oracle for old LABOS single-scatter transmission row",
-    ("src/rtm/layer_reflect_transmit.zig", "gaussianBlockTrace"): "transport test oracle for old LABOS trace gate",
-    ("src/rtm/layer_reflect_transmit.zig", "squareAttenuation"): "transport test oracle for old LABOS layer-doubling primitive",
-    ("src/rtm/layer_reflect_transmit.zig", "doubleLayer"): "transport test oracle for old LABOS layer-doubling primitive",
-    ("src/rtm/matrix_12x10.zig", "smul"): "oracle: main matrix reference form; production uses fused *Into variants; tests assert equality",
-    ("src/rtm/matrix_12x10.zig", "smulInto"): "matrix oracle/helper; production uses narrower known-product Into kernels from layer_reflect_transmit",
-    ("src/rtm/matrix_12x10.zig", "smulIntoKnownTraces"): "matrix oracle/helper; production uses narrower known-product Into kernels from layer_reflect_transmit",
-    ("src/rtm/matrix_12x10.zig", "smulIntoKnownTracesIfNonzero"): "matrix oracle/helper; production uses narrower known-product Into kernels from layer_reflect_transmit",
-    ("src/rtm/matrix_12x10.zig", "qseries"): "oracle: main matrix reference form; production uses fused *Into variants; tests assert equality",
-    ("src/rtm/matrix_12x10.zig", "qseriesKnownNonzeroProduct"): "transport test oracle for q-series after retained product",
-    ("src/rtm/matrix_12x10.zig", "esmul"): "oracle: main matrix reference form; production uses fused *Into variants; tests assert equality",
-    ("src/rtm/matrix_12x10.zig", "semul"): "oracle: main matrix reference form; production uses fused *Into variants; tests assert equality",
-    ("src/rtm/matrix_12x10.zig", "matAdd"): "oracle: main matrix reference form; production uses fused *Into variants; tests assert equality",
-    ("src/rtm/matrix_12x10.zig", "matAddSemul3"): "matrix oracle/helper; production uses caller-owned Into kernels from layer_reflect_transmit",
-    ("src/rtm/matrix_12x10.zig", "smulAddSemul3"): "matrix oracle/helper; production uses caller-owned Into kernels from layer_reflect_transmit",
-    ("src/rtm/matrix_12x10.zig", "smulAddSemul3KnownRightTrace"): "matrix oracle/helper; production uses caller-owned Into kernels from layer_reflect_transmit",
-    ("src/rtm/matrix_12x10.zig", "semulAdd"): "matrix oracle/helper; production uses caller-owned Into kernels from layer_reflect_transmit",
-    ("src/rtm/matrix_12x10.zig", "matAddEsmul3"): "matrix oracle/helper; production uses caller-owned Into kernels from layer_reflect_transmit",
-    ("src/rtm/matrix_12x10.zig", "matAddEsmul"): "matrix oracle/helper; production uses caller-owned Into kernels from layer_reflect_transmit",
-    ("src/rtm/matrix_12x10.zig", "esmulSemul"): "matrix oracle/helper; production uses caller-owned Into kernels from layer_reflect_transmit",
-    ("src/rtm/matrix_12x10.zig", "esmulSemulAdd"): "matrix oracle/helper; production uses caller-owned Into kernels from layer_reflect_transmit",
+    (
+        "src/common/math/gauss_legendre.zig",
+        "fillDisamarDivPointsIntervalNodes",
+    ): "DISAMAR node split oracle; production uses retained rows plus scaleIntervalNodes",
+    (
+        "src/common/worker_partition.zig",
+        "preferredWorkerCountForCpuCount",
+    ): "worker-count test oracle; production uses preferredWorkerCount",
+    (
+        "src/input/hitran_partition_tables.zig",
+        "partitionSampleMatchesEndpointSecant",
+    ): "prepared partition spline oracle; production uses ratioT0OverT",
+    (
+        "src/root.zig",
+        "runO2A",
+    ): "public Zig one-shot facade; C/Python uses context-owned session path",
+    (
+        "src/setup/atmosphere_layers.zig",
+        "intervalNodes",
+    ): "same-file helper; tests assert retained canonical row lookup",
+    (
+        "src/setup/phase_table.zig",
+        "zeroPhaseCoefficients",
+    ): "phase coefficient storage oracle; keep until HG phase lane is wired",
+    (
+        "src/setup/phase_table.zig",
+        "hgPhaseCoefficients",
+    ): HG_PHASE_STAGED_REASON,
+    (
+        "src/setup/phase_table.zig",
+        "hgPhaseCoefficientsWithThreshold",
+    ): HG_PHASE_STAGED_REASON,
+    (
+        "src/setup/phase_table.zig",
+        "maxPhaseCoefficientIndex",
+    ): HG_PHASE_STAGED_REASON,
+    (
+        "src/spectrum/instrument_average.zig",
+        "applySlitConvolution",
+    ): "slit-kernel normalization oracle; same-file production path reaches it",
+    (
+        "src/spectrum/sampling_table.zig",
+        "summarize",
+    ): "sampling-table shape oracle until runner owns telemetry summary",
+    (
+        "src/spectrum/spectrum_run.zig",
+        "gatherProductRows",
+    ): "same-file stage helper; runO2ASpectrum calls it",
+    (
+        "src/spectrum/spectrum_run.zig",
+        "postprocessAndAssembleProductRows",
+    ): "same-file stage helper; runO2ASpectrum calls it",
+    ("src/rtm/gauss_angles.zig", "pairIndex"): "paired Gaussian layout oracle",
+    (
+        "src/rtm/layer_reflect_transmit.zig",
+        "renormalizeZeroFourierPhaseKernel",
+    ): "LABOS phase renormalization oracle",
+    (
+        "src/rtm/layer_reflect_transmit.zig",
+        "classifyLayerDoubling",
+    ): "LABOS layer-doubling branch oracle",
+    (
+        "src/rtm/layer_reflect_transmit.zig",
+        "fillSingleScatterReflection",
+    ): "LABOS single-scatter reflection oracle",
+    (
+        "src/rtm/layer_reflect_transmit.zig",
+        "fillSingleScatterTransmission",
+    ): "LABOS single-scatter transmission oracle",
+    (
+        "src/rtm/layer_reflect_transmit.zig",
+        "gaussianBlockTrace",
+    ): "LABOS trace-gate oracle",
+    (
+        "src/rtm/layer_reflect_transmit.zig",
+        "squareAttenuation",
+    ): "LABOS layer-doubling primitive oracle",
+    (
+        "src/rtm/layer_reflect_transmit.zig",
+        "doubleLayer",
+    ): "LABOS layer-doubling primitive oracle",
+    (
+        "src/rtm/matrix_12x10.zig",
+        "smul",
+    ): MATRIX_REFERENCE_REASON,
+    (
+        "src/rtm/matrix_12x10.zig",
+        "smulInto",
+    ): MATRIX_KNOWN_PRODUCT_REASON,
+    (
+        "src/rtm/matrix_12x10.zig",
+        "smulIntoKnownTraces",
+    ): MATRIX_KNOWN_PRODUCT_REASON,
+    (
+        "src/rtm/matrix_12x10.zig",
+        "smulIntoKnownTracesIfNonzero",
+    ): MATRIX_KNOWN_PRODUCT_REASON,
+    (
+        "src/rtm/matrix_12x10.zig",
+        "qseries",
+    ): MATRIX_REFERENCE_REASON,
+    (
+        "src/rtm/matrix_12x10.zig",
+        "qseriesKnownNonzeroProduct",
+    ): "q-series retained-product oracle",
+    (
+        "src/rtm/matrix_12x10.zig",
+        "esmul",
+    ): MATRIX_REFERENCE_REASON,
+    (
+        "src/rtm/matrix_12x10.zig",
+        "semul",
+    ): MATRIX_REFERENCE_REASON,
+    (
+        "src/rtm/matrix_12x10.zig",
+        "matAdd",
+    ): MATRIX_REFERENCE_REASON,
+    (
+        "src/rtm/matrix_12x10.zig",
+        "matAddSemul3",
+    ): MATRIX_CALLER_OWNED_REASON,
+    (
+        "src/rtm/matrix_12x10.zig",
+        "smulAddSemul3",
+    ): MATRIX_CALLER_OWNED_REASON,
+    (
+        "src/rtm/matrix_12x10.zig",
+        "smulAddSemul3KnownRightTrace",
+    ): MATRIX_CALLER_OWNED_REASON,
+    (
+        "src/rtm/matrix_12x10.zig",
+        "semulAdd",
+    ): MATRIX_CALLER_OWNED_REASON,
+    (
+        "src/rtm/matrix_12x10.zig",
+        "matAddEsmul3",
+    ): MATRIX_CALLER_OWNED_REASON,
+    (
+        "src/rtm/matrix_12x10.zig",
+        "matAddEsmul",
+    ): MATRIX_CALLER_OWNED_REASON,
+    (
+        "src/rtm/matrix_12x10.zig",
+        "esmulSemul",
+    ): MATRIX_CALLER_OWNED_REASON,
+    (
+        "src/rtm/matrix_12x10.zig",
+        "esmulSemulAdd",
+    ): MATRIX_CALLER_OWNED_REASON,
     ("src/rtm/phase_basis.zig", "minusParitySign"): "transport test oracle for old LABOS Z- parity",
-    ("src/rtm/reflectance.zig", "fourierWeight"): "transport test oracle for old Fourier accumulation weight",
-    ("src/rtm/reflectance.zig", "fourierTailBreak"): "transport test oracle for old Fourier tail stop rule",
-    ("src/retrieval/root.zig", "altitudeDerivativeAtPressure"): "wp5-staged pressure-profile hook; retrieval tests pin old finite-difference route before solver wiring",
+    (
+        "src/rtm/reflectance.zig",
+        "fourierWeight",
+    ): "transport test oracle for old Fourier accumulation weight",
+    (
+        "src/rtm/reflectance.zig",
+        "fourierTailBreak",
+    ): "transport test oracle for old Fourier tail stop rule",
+    (
+        "src/retrieval/root.zig",
+        "altitudeDerivativeAtPressure",
+    ): "staged pressure-profile hook; tests cover finite-difference route",
 }
 
 
@@ -75,9 +197,7 @@ def counted_src_file(path: str) -> bool:
         return False
     if path.startswith("src/validation/"):
         return False
-    if path == "src/internal.zig":
-        return False
-    return True
+    return path != "src/internal.zig"
 
 
 def search_src_file(path: str) -> bool:

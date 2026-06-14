@@ -130,13 +130,19 @@ def count_logical_sloc(path: Path) -> int:
     code = "\n".join(strip_comments_and_strings(path.read_text(encoding="utf-8").splitlines()))
     return (
         code.count(";")
-        + len(re.findall(r"\b(?:pub\s+)?(?:export\s+)?(?:inline\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*", code))
+        + len(
+            re.findall(
+                r"\b(?:pub\s+)?(?:export\s+)?(?:inline\s+)?fn\s+[A-Za-z_][A-Za-z0-9_]*", code
+            )
+        )
         + len(re.findall(r"\btest\s*(?:\"|\{)", code))
     )
 
 
 def strip_comments_and_strings(lines: Sequence[str]) -> list[str]:
-    return [strip_strings(strip_line_comment(line)) for line in lines if not multiline_string_line(line)]
+    return [
+        strip_strings(strip_line_comment(line)) for line in lines if not multiline_string_line(line)
+    ]
 
 
 def multiline_string_line(line: str) -> bool:

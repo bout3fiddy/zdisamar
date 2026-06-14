@@ -75,7 +75,6 @@ extend-exclude = [
     "out",
     "zig-out",
     ".zig-cache",
-    "docs/workpackages",
     "validation/.cache",
     "validation/function_diff",
     "validation/latest",

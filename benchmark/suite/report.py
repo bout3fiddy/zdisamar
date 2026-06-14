@@ -327,8 +327,7 @@ def total_wall_rows(
             {
                 "benchmark": "Forward, no session",
                 "total": (
-                    f"{forward['no_session']['timing_s']['median']:.3f}s "
-                    "per baseline run median"
+                    f"{forward['no_session']['timing_s']['median']:.3f}s per baseline run median"
                 ),
             },
             {

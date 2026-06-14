@@ -372,7 +372,7 @@ def assert_optimal_estimation_diagnosis_display() -> None:
         batch_workers=1,
     )
     assert len(pressure_basin_sweep.basins()) == 2
-    assert surface_basin_sweep.plot().to_dict()["endpoint_clusters"] == 2
+    assert pressure_basin_sweep.plot().to_dict()["endpoint_clusters"] == 2
 
     failed_outlier_sweep = RetrievalDiagnosis(
         state_names=("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa"),

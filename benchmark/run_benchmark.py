@@ -25,7 +25,7 @@ from suite.db import BenchmarkDb  # noqa: E402
 from suite.progress import Progress  # noqa: E402
 from suite.timing import elapsed_since, timing_start  # noqa: E402
 
-WP5_RETRIEVAL_ERRORS = (
+RETRIEVAL_UNSUPPORTED_ERRORS = (
     "UnsupportedOptimalEstimation",
     "UnsupportedOptimalEstimationCorrection",
     "UnsupportedOptimalEstimationBatch",
@@ -107,7 +107,7 @@ def run_retrieval_or_skip(
         retrieval_module.run(db, progress, run_id)
     except RuntimeError as exc:
         reason = str(exc)
-        if reason not in WP5_RETRIEVAL_ERRORS:
+        if reason not in RETRIEVAL_UNSUPPORTED_ERRORS:
             raise
 
         db.summary(
@@ -116,10 +116,10 @@ def run_retrieval_or_skip(
             {
                 "status": "skipped",
                 "reason": reason,
-                "owner": "WP5",
+                "owner": "retrieval",
             },
         )
-        progress.log("retrieval", f"skipped until WP5: {reason}")
+        progress.log("retrieval", f"skipped: {reason}")
 
 
 if __name__ == "__main__":

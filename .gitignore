@@ -39,15 +39,11 @@ disamar.imed
 disamar.out
 profile_errorCovariance.out
 
-# Local scratch specs and work packages
+# Local scratch specs
 tmp/
 scratch/
 specs/
 docs/specs/
-docs/workpackages/*
-!docs/workpackages/fp-03/
-!docs/workpackages/fp-03/**
-docs/workpackages/fp-03/.DS_Store
 
 # Disposable validation output. Tracked O2 A evidence lives directly in validation/.
 validation/.cache/

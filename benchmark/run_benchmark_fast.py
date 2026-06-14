@@ -30,7 +30,7 @@ from suite.db import BenchmarkDb  # noqa: E402
 from suite.progress import Progress  # noqa: E402
 from suite.timing import elapsed_since, timing_start  # noqa: E402
 
-WP5_RETRIEVAL_ERRORS = (
+RETRIEVAL_UNSUPPORTED_ERRORS = (
     "UnsupportedOptimalEstimation",
     "UnsupportedOptimalEstimationCorrection",
     "UnsupportedOptimalEstimationBatch",
@@ -107,16 +107,16 @@ def run_retrieval_or_skip(
         return retrieval_module.run(db, progress, run_id)
     except RuntimeError as exc:
         reason = str(exc)
-        if reason not in WP5_RETRIEVAL_ERRORS:
+        if reason not in RETRIEVAL_UNSUPPORTED_ERRORS:
             raise
 
         payload = {
             "status": "skipped",
             "reason": reason,
-            "owner": "WP5",
+            "owner": "retrieval",
         }
         db.summary(run_id, "retrieval_skipped", payload)
-        progress.log("retrieval", f"skipped until WP5: {reason}")
+        progress.log("retrieval", f"skipped: {reason}")
         return None
 
 
@@ -135,11 +135,11 @@ def build_fast_results(
     retrieval_cases: dict[str, Any] = {
         "oe_session": {
             "status": "skipped",
-            "reason": "WP5 retrieval path not run",
+            "reason": "retrieval path not run",
         },
         "oe_sweep": {
             "status": "skipped",
-            "reason": "WP5 retrieval path not run",
+            "reason": "retrieval path not run",
         },
     }
     if retrieval_result is not None:
@@ -152,9 +152,7 @@ def build_fast_results(
                 "median_retrieval_s": rounded(
                     retrieval_session["timing_s"]["retrieval_s"]["median"]
                 ),
-                "aod_abs_diff": retrieval_session["residuals"][
-                    "aerosol_optical_depth_abs_diff"
-                ],
+                "aod_abs_diff": retrieval_session["residuals"]["aerosol_optical_depth_abs_diff"],
             },
             "oe_sweep": {
                 "cases": list(OE_SWEEP_CASE_INDICES),

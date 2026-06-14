@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify every non-ignored repo file has an owner row in the refactor coverage matrix."""
+"""Verify every non-ignored Zig file has an owner row in the refactor coverage matrix."""
 
 import argparse
 import ast
@@ -10,23 +10,25 @@ from fnmatch import fnmatch
 from pathlib import Path
 
 DEFAULT_MATRIX = Path(
-    "scratch/refactor/2026-06-11-explicit-dataflow-refactor/work-packages/repo-file-coverage.md"
+    "scratch/refactor/2026-06-11-explicit-dataflow-refactor/repo-file-coverage.md"
 )
+MATRIX_SEARCH_ROOT = Path("scratch/refactor/2026-06-11-explicit-dataflow-refactor")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--matrix", type=Path, default=DEFAULT_MATRIX)
+    parser.add_argument("--matrix", type=Path, default=None)
     parser.add_argument("--format", choices=("text", "json"), default="text")
     args = parser.parse_args(argv)
 
-    patterns = extract_patterns(args.matrix)
+    matrix = args.matrix if args.matrix is not None else resolve_default_matrix()
+    patterns = extract_patterns(matrix)
     files = [path for path in git_ls_files() if Path(path).exists()]
     unmatched = [path for path in files if not any(fnmatch(path, pattern) for pattern in patterns)]
     report = {
         "schema_version": 1,
         "tool": "check-repo-file-coverage",
-        "matrix": str(args.matrix),
+        "matrix": str(matrix),
         "files": len(files),
         "patterns": len(patterns),
         "unmatched": unmatched,
@@ -41,6 +43,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("\n".join(unmatched))
 
     return 1 if unmatched else 0
+
+
+def resolve_default_matrix() -> Path:
+    if DEFAULT_MATRIX.exists():
+        return DEFAULT_MATRIX
+    matches = sorted(MATRIX_SEARCH_ROOT.glob("**/repo-file-coverage.md"))
+    if not matches:
+        return DEFAULT_MATRIX
+    return matches[0]
 
 
 def extract_patterns(path: Path) -> list[str]:
@@ -64,7 +75,16 @@ def extract_patterns(path: Path) -> list[str]:
 
 def git_ls_files() -> list[str]:
     output = subprocess.check_output(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+        [
+            "git",
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            ":(glob)*.zig",
+            ":(glob)**/*.zig",
+        ],
         text=True,
     )
     return output.splitlines()

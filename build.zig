@@ -108,7 +108,7 @@ fn addReferenceDataSync(b: *std.Build, sync_files: *std.Build.Step.UpdateSourceF
 
 pub fn build(b: *std.Build) void {
     // build ------------------------------------------------------------------------------------------------ |
-    // Define the explicit-dataflow library, unit-test roots, focused WP3 gates, and fast local checks.       |
+    // Define the explicit-dataflow library, unit-test roots, focused RTM gates, and fast local checks.       |
     // -------------------------------------------------------------------------------------------------------|
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -218,7 +218,7 @@ pub fn build(b: *std.Build) void {
         internal_module,
         disabled_instrumentation,
         "test-rtm",
-        "Run focused WP3 RTM tests",
+        "Run focused RTM tests",
         "tests/unit/rtm_root.zig",
     );
     const run_enabled_instrumentation_tests = addTestStep(

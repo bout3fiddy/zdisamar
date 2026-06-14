@@ -2,7 +2,7 @@ const std = @import("std");
 const internal = @import("internal");
 
 test "instrumentation facades compile when enabled by build options" {
-    const zone = internal.instrumentation.trace.staticZone(@src(), "wp2.enabled");
+    const zone = internal.instrumentation.trace.staticZone(@src(), "instrumentation.enabled");
     zone.end();
 
     const context = internal.instrumentation.telemetry.currentContext();
