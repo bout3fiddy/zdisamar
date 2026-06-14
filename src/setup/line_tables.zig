@@ -21,7 +21,7 @@ const Allocator = std.mem.Allocator;
 // [104..111] line_mixing_factor: f64                                                                          |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   rows, strong_lines, and relaxation_matrix own parsed asset rows. isotopes_sim borrows the case controls.  |
+//   rows, strong_lines, and relaxation_matrix own parsed asset rows. isotopes_sim borrows the scene controls. |
 pub const LineTable = struct {
     rows: []readers.LineAssetRow,
     strong_lines: []readers.StrongLineAssetRow,

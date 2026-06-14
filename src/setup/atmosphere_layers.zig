@@ -225,9 +225,9 @@ pub fn buildLayerQuadrature(allocator: Allocator, scene: scene_input.Scene) !Lay
     // Precompute canonical support and interval quadrature roots for one structural atmosphere shape.         |
     //                                                                                                         |
     // boundary                                                                                                |
-    //   Orders come only from case.atmosphere.sublayer_divisions and interval.altitude_divisions. Retrieval   |
+    //   Orders come only from scene.atmosphere.sublayer_divisions and interval.altitude_divisions. Retrieval  |
     //   state updates change pressure bounds, so the canonical roots and weights remain valid across every    |
-    //   OE iteration for the prepared case.                                                                   |
+    //   OE iteration for the prepared scene.                                                                  |
     // --------------------------------------------------------------------------------------------------------|
     const support_order = @max(scene.atmosphere.sublayer_divisions, @as(usize, 1));
     if (support_order > gauss_legendre.max_fixed_rule_order) return error.InvalidControl;
@@ -375,7 +375,7 @@ pub fn refillFromPreparedProfiles(
     //              allocation and overwrites every computed row slot.                                         |
     //                                                                                                         |
     // dataflow                                                                                                |
-    //   reads  : case interval boundaries, retained canonical quadrature, and grid.source_profile rows        |
+    //   reads  : scene interval boundaries, retained canonical quadrature, and grid.source_profile rows       |
     //   writes : only computed layer/support slices inside grid                                               |
     // --------------------------------------------------------------------------------------------------------|
     const shape = try layerGridShape(scene, quadrature);

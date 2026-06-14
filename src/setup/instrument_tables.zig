@@ -16,7 +16,7 @@ const scene_input = @import("../input/scene.zig");
 // [56..63] strong_line_max_divisions    : usize                                                               |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   name borrows the case control string.                                                                     |
+//   name borrows the scene control string.                                                                    |
 pub const InstrumentTable = struct {
     name: []const u8,
     line_fwhm_nm: f64,

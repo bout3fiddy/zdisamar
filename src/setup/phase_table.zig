@@ -10,7 +10,7 @@ pub const vendor_hg_truncation_threshold: f64 = 1.0e-8;
 // phase_table.zig --------------------------------------------------------------------------------------------|
 // Prepared aerosol phase-function coefficients consumed by LABOS phase-basis and layer builders.              |
 //                                                                                                             |
-//   fixed [151] coefficient storage, vendor max phase index 150, and case truncation threshold.               |
+//   fixed [151] coefficient storage, vendor max phase index 150, and scene truncation threshold.              |
 //                                                                                                             |
 // math                                                                                                        |
 //   coefficient[0] = 1                                                                                        |
@@ -22,7 +22,7 @@ pub const vendor_hg_truncation_threshold: f64 = 1.0e-8;
 // ------------------------------------------------------------------------------------------------------------|
 
 // PhaseTable -------------------------------------------------------------------------------------------------|
-// Prepared Henyey-Greenstein aerosol phase row for one setup case.                                            |
+// Prepared Henyey-Greenstein aerosol phase row for one setup scene.                                           |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 1224 B (1.195 KiB), align: 8 B                                                                        |
@@ -54,7 +54,7 @@ pub fn hashAll(hasher: *std.hash.Wyhash, table: PhaseTable) void {
 
 pub fn build(scene: scene_input.Scene) PhaseTable {
     // build --------------------------------------------------------------------------------------------------|
-    // Prepare the case aerosol HG phase row for later LABOS phase-kernel construction.                        |
+    // Prepare the scene aerosol HG phase row for later LABOS phase-kernel construction.                       |
     //                                                                                                         |
     //   profileEquivalentPhaseCoefficients: one equivalent HG g is weighted by midpoint-wavelength            |
     //   scattering optical depth.                                                                             |
