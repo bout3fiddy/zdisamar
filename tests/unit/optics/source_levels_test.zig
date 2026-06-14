@@ -289,6 +289,7 @@ const source_probe_levels = [_]SourceLevelEvidence{
 test "source levels reproduce shared RTM quadrature evidence rows" {
     var tables = try setup.buildRunTables(allocator, defaults.referenceScene());
     defer tables.deinit(allocator);
+    const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
     const line_sigma = try allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);
     defer allocator.free(line_sigma);
@@ -308,6 +309,7 @@ test "source levels reproduce shared RTM quadrature evidence rows" {
                 expected.wavelength_nm,
                 tables.layers,
                 line_sigma,
+                &collision_pair_profile,
                 tables.cia,
                 tables.aerosol,
                 support_rows,

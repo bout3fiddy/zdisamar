@@ -32,6 +32,7 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
         internal.input.defaults.referenceScene(),
     );
     defer tables.deinit(allocator);
+    const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
     const support_count = tables.layers.support_mid_altitudes_km.len;
     const layer_count = tables.layers.layer_pressures_hpa.len;
@@ -90,6 +91,7 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
         wavelength_nm,
         tables.layers,
         line_sigma,
+        &collision_pair_profile,
         tables.cia,
         tables.aerosol,
         expected_support,
@@ -119,6 +121,7 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
         angles,
         surface_albedo,
         tables.layers,
+        &collision_pair_profile,
         profile_lines,
         tables.cia,
         tables.aerosol,
@@ -164,6 +167,7 @@ test "radianceAtWavelength checks caller-owned row shapes" {
         internal.input.defaults.referenceScene(),
     );
     defer tables.deinit(allocator);
+    const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
     const support_count = tables.layers.support_mid_altitudes_km.len;
     const layer_count = tables.layers.layer_pressures_hpa.len;
@@ -203,6 +207,7 @@ test "radianceAtWavelength checks caller-owned row shapes" {
             .{ .solar_mu = 0.62, .view_mu = 0.48 },
             0.4,
             tables.layers,
+            &collision_pair_profile,
             profile_lines,
             tables.cia,
             tables.aerosol,
@@ -230,6 +235,7 @@ test "radianceAtWavelength matches canonical transport probes" {
         internal.input.defaults.referenceScene(),
     );
     defer tables.deinit(allocator);
+    const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
     const support_count = tables.layers.support_mid_altitudes_km.len;
     const layer_count = tables.layers.layer_pressures_hpa.len;
@@ -302,6 +308,7 @@ test "radianceAtWavelength matches canonical transport probes" {
             angles,
             expected.surface_albedo,
             tables.layers,
+            &collision_pair_profile,
             profile_lines,
             tables.cia,
             tables.aerosol,
@@ -576,6 +583,7 @@ test "runForwardSpectrum assembles direct-route product reflectance across worke
         internal.input.defaults.referenceScene(),
     );
     defer tables.deinit(allocator);
+    const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
     var sampling_rows = [_]sampling_table.SpectrumSamplingRow{
         .{
@@ -689,6 +697,7 @@ test "runForwardSpectrum assembles direct-route product reflectance across worke
             wavelength_nm,
             tables.layers,
             expected_line_sigma,
+            &collision_pair_profile,
             tables.cia,
             tables.aerosol,
             expected_support,

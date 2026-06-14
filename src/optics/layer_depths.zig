@@ -129,13 +129,13 @@ pub const LayerOptics = struct {
 //                                                                                                             |
 //   vertical setup profile. The O2 A diagnostic cross-section rows prove this cache is active for the O2 A    |
 //   reference case.                                                                                           |
-const CollisionPairProfile = struct {
+pub const CollisionPairProfile = struct {
     node_count: usize = 0,
     altitudes_km: [max_collision_pair_profile_rows]f64 = undefined,
     log_complex_vmr_fraction: [max_collision_pair_profile_rows]f64 = undefined,
     second: [max_collision_pair_profile_rows]f64 = undefined,
 
-    fn init(layer_grid: atmosphere_layers.LayerGrid) CollisionPairProfile {
+    pub fn init(layer_grid: atmosphere_layers.LayerGrid) CollisionPairProfile {
         // CollisionPairProfile.init ------------------------------------------------------------------------- |
         // Prepare endpoint-secant second derivatives for the spectroscopy-profile collision complex.          |
         // ----------------------------------------------------------------------------------------------------|
@@ -165,7 +165,7 @@ const CollisionPairProfile = struct {
     }
 
     fn pairDensityCm6(
-        self: CollisionPairProfile,
+        self: *const CollisionPairProfile,
         altitude_km: f64,
         air_number_density_cm3: f64,
         fallback_oxygen_number_density_cm3: f64,
@@ -201,6 +201,7 @@ pub fn fillSupportOpticsAtWavelength(
     wavelength_nm: f64,
     layer_grid: atmosphere_layers.LayerGrid,
     line_sigma_cm2_per_molecule: []const f64,
+    collision_pair_profile: *const CollisionPairProfile,
     cia: cia_table.CiaTable,
     aerosol: aerosol_tables.AerosolLayerTable,
     noalias out_support: []SupportOptics,
@@ -228,7 +229,6 @@ pub fn fillSupportOpticsAtWavelength(
 
     const rayleigh_sigma_cm2 = rayleigh.crossSectionCm2(wavelength_nm);
     const cia_coefficients = cia_absorption.interpolateCoefficients(cia.rows, wavelength_nm);
-    const collision_pair_profile = CollisionPairProfile.init(layer_grid);
     const aerosol_weight_sum_km = aerosolSupportWeightSumKm(layer_grid, aerosol);
     const aerosol_wavelength_scale = aerosolWavelengthScale(aerosol, wavelength_nm);
     const profile_aerosol_active = aerosol.profile.len != 0;
@@ -449,13 +449,12 @@ fn findSupportOwnerLayer(layer_grid: atmosphere_layers.LayerGrid, support_index:
     // findSupportOwnerLayer ----------------------------------------------------------------------------------|
     // Locate the setup layer whose support range owns this active support row. Boundary rows have zero path.  |
     // --------------------------------------------------------------------------------------------------------|
-    for (layer_grid.layer_support_starts, layer_grid.layer_support_counts, 0..) |
+    const support_count: usize = @intCast(layer_grid.layer_support_count);
+    for (layer_grid.layer_support_starts, 0..) |
         support_start_u32,
-        support_count_u32,
         layer_index,
     | {
         const support_start: usize = @intCast(support_start_u32);
-        const support_count: usize = @intCast(support_count_u32);
         const support_end = support_start + support_count;
         if (support_index <= support_start or support_index + 1 >= support_end) continue;
         return layer_index;
@@ -469,7 +468,7 @@ fn activeSupportWeightSumKm(layer_grid: atmosphere_layers.LayerGrid, layer_index
     // Sum non-boundary support weights for one setup layer.                                                   |
     // --------------------------------------------------------------------------------------------------------|
     const support_start: usize = @intCast(layer_grid.layer_support_starts[layer_index]);
-    const support_count: usize = @intCast(layer_grid.layer_support_counts[layer_index]);
+    const support_count: usize = @intCast(layer_grid.layer_support_count);
     if (support_count <= 2) return 0.0;
 
     var total_weight_km: f64 = 0.0;
@@ -531,7 +530,7 @@ pub fn reduceLayerOpticsFromSupportRows(
 
     for (out_layers, 0..) |*layer, layer_index| {
         const support_start: usize = @intCast(layer_grid.layer_support_starts[layer_index]);
-        const support_count: usize = @intCast(layer_grid.layer_support_counts[layer_index]);
+        const support_count: usize = @intCast(layer_grid.layer_support_count);
         if (support_start + support_count > support_rows.len) return error.InvalidShape;
 
         var reduced = LayerOptics{

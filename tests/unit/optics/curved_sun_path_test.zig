@@ -133,6 +133,7 @@ const curved_samples = [_]CurvedSampleEvidence{
 test "curved sun-path samples reuse active support rows in evidence order" {
     var tables = try setup.buildRunTables(allocator, defaults.referenceScene());
     defer tables.deinit(allocator);
+    const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
     const line_sigma = try allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);
     defer allocator.free(line_sigma);
@@ -163,6 +164,7 @@ test "curved sun-path samples reuse active support rows in evidence order" {
                 expected.wavelength_nm,
                 tables.layers,
                 line_sigma,
+                &collision_pair_profile,
                 tables.cia,
                 tables.aerosol,
                 support_rows,

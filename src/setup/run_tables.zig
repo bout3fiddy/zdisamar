@@ -16,17 +16,17 @@ const Allocator = std.mem.Allocator;
 // Package boundary for setup tables below radiance math.                                                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 2024 B (1.977 KiB), align: 8 B                                                                        |
+// size: 2016 B (1.969 KiB), align: 8 B                                                                        |
 //                                                                                                             |
 // memory                                                                                                      |
-// [   0.. 399] layers    : LayerGrid                                                                          |
-// [ 400.. 487] quadrature: LayerQuadrature                                                                    |
-// [ 488.. 599] lines     : LineTable                                                                          |
-// [ 600.. 623] cia       : CiaTable                                                                           |
-// [ 624.. 703] aerosol   : AerosolLayerTable                                                                  |
-// [ 704..1927] phase     : PhaseTable                                                                         |
-// [1928..1991] instrument: InstrumentTable                                                                    |
-// [1992..2023] solar     : SolarTable                                                                         |
+// [   0.. 391] layers    : LayerGrid                                                                          |
+// [ 392.. 479] quadrature: LayerQuadrature                                                                    |
+// [ 480.. 591] lines     : LineTable                                                                          |
+// [ 592.. 615] cia       : CiaTable                                                                           |
+// [ 616.. 695] aerosol   : AerosolLayerTable                                                                  |
+// [ 696..1919] phase     : PhaseTable                                                                         |
+// [1920..1983] instrument: InstrumentTable                                                                    |
+// [1984..2015] solar     : SolarTable                                                                         |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   This owner groups table families only for top-level setup/run functions. Later optics/transport code      |

@@ -147,6 +147,7 @@ const RadiancePrefetchWorker = struct {
     angles: solve.ViewAngles,
     surface_albedo: f64,
     layer_grid: atmosphere_layers.LayerGrid,
+    collision_pair_profile: *const layer_depths.CollisionPairProfile,
     profile_lines: profile_line_memory.ProfileLineValues,
     cia: cia_table.CiaTable,
     aerosol: aerosol_tables.AerosolLayerTable,
@@ -170,6 +171,7 @@ pub fn radianceAtWavelength(
     angles: solve.ViewAngles,
     surface_albedo: f64,
     layer_grid: atmosphere_layers.LayerGrid,
+    collision_pair_profile: *const layer_depths.CollisionPairProfile,
     profile_lines: profile_line_memory.ProfileLineValues,
     cia: cia_table.CiaTable,
     aerosol: aerosol_tables.AerosolLayerTable,
@@ -240,6 +242,7 @@ pub fn radianceAtWavelength(
             wavelength_nm,
             layer_grid,
             work_rows.line_sigma_cm2_per_molecule,
+            collision_pair_profile,
             cia,
             aerosol,
             work_rows.support,
@@ -396,6 +399,7 @@ fn prefetchRadianceRows(
         );
     }
 
+    const collision_pair_profile = layer_depths.CollisionPairProfile.init(layer_grid);
     var worker_storage: [worker_partition.max_workers]RadiancePrefetchWorker = undefined;
     for (0..worker_count) |worker_index| {
         const range = worker_partition.staticRange(wavelengths.wavelengths.len, worker_count, worker_index);
@@ -409,6 +413,7 @@ fn prefetchRadianceRows(
             .angles = angles,
             .surface_albedo = surface_albedo,
             .layer_grid = layer_grid,
+            .collision_pair_profile = &collision_pair_profile,
             .profile_lines = profile_lines,
             .cia = cia,
             .aerosol = aerosol,
@@ -516,6 +521,7 @@ fn radiancePrefetchWorkerMain(worker: *RadiancePrefetchWorker) void {
                 worker.angles,
                 worker.surface_albedo,
                 worker.layer_grid,
+                worker.collision_pair_profile,
                 worker.profile_lines,
                 worker.cia,
                 worker.aerosol,

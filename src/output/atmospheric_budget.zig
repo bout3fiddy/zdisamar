@@ -149,6 +149,7 @@ pub fn build(
     defer allocator.free(support_sigma);
     const support_optics = try allocator.alloc(layer_depths.SupportOptics, support_count);
     defer allocator.free(support_optics);
+    const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
     for (wavelengths_nm, 0..) |wavelength_nm, wavelength_index| {
         try profile_values.fillSupportLineSigmaAtWavelengthIndex(
@@ -161,6 +162,7 @@ pub fn build(
             wavelength_nm,
             tables.layers,
             support_sigma,
+            &collision_pair_profile,
             tables.cia,
             tables.aerosol,
             support_optics,
@@ -264,7 +266,7 @@ fn boundaryPressureHpa(layers: atmosphere_layers.LayerGrid, layer_index: usize, 
     // configured interval bounds even when the interpolated support pressure differs by a few bits.           |
     // --------------------------------------------------------------------------------------------------------|
     const layer_start: usize = @intCast(layers.layer_support_starts[layer_index]);
-    const layer_count: usize = @intCast(layers.layer_support_counts[layer_index]);
+    const layer_count: usize = @intCast(layers.layer_support_count);
     if (support_index == layer_start) return layers.layer_bottom_pressures_hpa[layer_index];
     if (support_index + 1 == layer_start + layer_count) return layers.layer_top_pressures_hpa[layer_index];
     return layers.support_pressures_hpa[support_index];
@@ -274,9 +276,9 @@ fn supportLayerIndex(layers: atmosphere_layers.LayerGrid, support_index: usize) 
     // supportLayerIndex --------------------------------------------------------------------------------------|
     // Find the layer whose support window owns a support row.                                                 |
     // --------------------------------------------------------------------------------------------------------|
-    for (layers.layer_support_starts, layers.layer_support_counts, 0..) |start_raw, count_raw, layer_index| {
+    const count: usize = @intCast(layers.layer_support_count);
+    for (layers.layer_support_starts, 0..) |start_raw, layer_index| {
         const start: usize = @intCast(start_raw);
-        const count: usize = @intCast(count_raw);
         if (support_index >= start and support_index < start + count) return layer_index;
     }
     return 0;

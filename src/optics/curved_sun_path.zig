@@ -61,11 +61,11 @@ pub fn fillCurvedSunPathSamples(
     }
 
     var sample_index: usize = 0;
+    const support_count: usize = @intCast(layer_grid.layer_support_count);
     for (0..layer_count) |layer_index| {
         level_sample_starts[layer_index] = sample_index;
 
         const support_start: usize = @intCast(layer_grid.layer_support_starts[layer_index]);
-        const support_count: usize = @intCast(layer_grid.layer_support_counts[layer_index]);
         if (support_start + support_count > support_rows.len) return error.InvalidShape;
         if (support_count <= 2) continue;
 
@@ -87,12 +87,9 @@ fn activeSupportSampleCount(layer_grid: atmosphere_layers.LayerGrid) usize {
     // activeSupportSampleCount -------------------------------------------------------------------------------|
     // Count active support rows after excluding lower and upper boundary rows from each layer span.           |
     // --------------------------------------------------------------------------------------------------------|
-    var count: usize = 0;
-    for (layer_grid.layer_support_counts) |support_count_u32| {
-        const support_count: usize = @intCast(support_count_u32);
-        if (support_count > 2) count += support_count - 2;
-    }
-    return count;
+    const support_count: usize = @intCast(layer_grid.layer_support_count);
+    if (support_count <= 2) return 0;
+    return layer_grid.layer_support_starts.len * (support_count - 2);
 }
 
 fn boundarySupportRowIndex(layer_grid: atmosphere_layers.LayerGrid, level_index: usize) usize {
@@ -102,7 +99,7 @@ fn boundarySupportRowIndex(layer_grid: atmosphere_layers.LayerGrid, level_index:
     if (level_index == layer_grid.layer_pressures_hpa.len) {
         const last_layer = level_index - 1;
         return @as(usize, @intCast(layer_grid.layer_support_starts[last_layer])) +
-            @as(usize, @intCast(layer_grid.layer_support_counts[last_layer])) -
+            @as(usize, @intCast(layer_grid.layer_support_count)) -
             1;
     }
 
