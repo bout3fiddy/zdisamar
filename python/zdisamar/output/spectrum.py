@@ -4,7 +4,6 @@ from array import array
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from ..display import NotebookDisplay
 from ..input.wavelength_band.o2a import Scene
 
 JACOBIAN_STATE_NAMES = (
@@ -42,7 +41,7 @@ class ReflectanceJacobian:
 
 
 @dataclass(frozen=True)
-class Spectrum(NotebookDisplay):
+class Spectrum:
     """Copied RTM spectrum arrays."""
 
     wavelength_nm: array

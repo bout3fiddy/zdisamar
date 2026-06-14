@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from numbers import Real
 from typing import Self
 
-from ...display import NotebookDisplay, PrettyMapping
+from ...display import PrettyMapping
 from .rtm_evaluation import RtmEvaluation
 from .state_vector import StateName
 
@@ -48,7 +48,7 @@ def measurement_values(
 
 
 @dataclass(frozen=True, init=False)
-class Measurement(NotebookDisplay):
+class Measurement:
     """Observed retrieval vector and per-sample reflectance signal-to-noise ratio.
 
     The first implementation uses reflectance as the retrieval quantity because
@@ -224,7 +224,7 @@ class FastCorrection:
 
 
 @dataclass(frozen=True)
-class Result(NotebookDisplay):
+class Result:
     """Final optimal estimation state plus diagnostics needed for retrieval experiments."""
 
     state_names: tuple[StateName, ...]

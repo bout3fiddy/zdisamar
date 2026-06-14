@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Self
 
-from ...display import NotebookDisplay
 from ..aerosol import Aerosol, AerosolProfileLayer, coerce_profile_layers
 from ..assets import ReferenceAssets
 from ..atmosphere import Atmosphere
@@ -25,7 +24,7 @@ def _object_dict(data: dict[str, object], key: str) -> dict[str, object]:
 
 
 @dataclass
-class Scene(NotebookDisplay):
+class Scene:
     """Complete O2 A wavelength-band case passed to the zdisamar RTM."""
 
     metadata: dict[str, object]
