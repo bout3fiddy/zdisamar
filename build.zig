@@ -9,6 +9,7 @@ const InstrumentationModules = struct {
 
 fn addBuildOptions(
     b: *std.Build,
+    enable_ztracy: bool,
     enable_cost_timing: bool,
     enable_calculation_telemetry: bool,
     enable_perturbation_sensitivity: bool,
@@ -18,7 +19,7 @@ fn addBuildOptions(
     // -------------------------------------------------------------------------------------------------------|
     const options = b.addOptions();
     options.addOption(bool, "enable_test_support", false);
-    options.addOption(bool, "enable_ztracy", false);
+    options.addOption(bool, "enable_ztracy", enable_ztracy);
     options.addOption(bool, "enable_cost_timing", enable_cost_timing);
     options.addOption(bool, "enable_calculation_telemetry", enable_calculation_telemetry);
     options.addOption(bool, "enable_perturbation_sensitivity", enable_perturbation_sensitivity);
@@ -80,6 +81,30 @@ fn addTestStep(
     return run_tests;
 }
 
+fn addTraceExecutable(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    internal_module: *std.Build.Module,
+    name: []const u8,
+    root_source_file: []const u8,
+) *std.Build.Step.Compile {
+    // addTraceExecutable ----------------------------------------------------------------------------------- |
+    // Register a retained instrumentation CLI against the instrumentation-enabled internal module.            |
+    // -------------------------------------------------------------------------------------------------------|
+    return b.addExecutable(.{
+        .name = name,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(root_source_file),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "internal", .module = internal_module },
+            },
+        }),
+    });
+}
+
 fn addReferenceDataSync(b: *std.Build, sync_files: *std.Build.Step.UpdateSourceFiles) void {
     // addReferenceDataSync --------------------------------------------------------------------------------- |
     // Copy package reference-data assets into the ignored source-checkout resource tree used by Python.      |
@@ -113,9 +138,14 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const fast_test_optimize: std.builtin.OptimizeMode = .ReleaseFast;
+    const enable_ztracy = b.option(
+        bool,
+        "enable-ztracy",
+        "Enable ztracy zones in retained trace harnesses",
+    ) orelse false;
 
     const disabled_instrumentation = InstrumentationModules{
-        .build_options = addBuildOptions(b, false, false, false),
+        .build_options = addBuildOptions(b, false, false, false, false),
         .ztracy = b.createModule(.{
             .root_source_file = b.path("src/instrumentation/stubs/ztracy.zig"),
             .target = target,
@@ -133,8 +163,22 @@ pub fn build(b: *std.Build) void {
         }),
     };
     const enabled_instrumentation = InstrumentationModules{
-        .build_options = addBuildOptions(b, true, true, true),
+        .build_options = addBuildOptions(b, false, true, true, true),
         .ztracy = disabled_instrumentation.ztracy,
+        .calculation_telemetry_sink = disabled_instrumentation.calculation_telemetry_sink,
+        .perturbation_sensitivity_sink = disabled_instrumentation.perturbation_sensitivity_sink,
+    };
+    const ztracy_dependency = if (enable_ztracy) b.dependency("ztracy", .{
+        .target = target,
+        .optimize = optimize,
+        .enable_ztracy = true,
+    }) else null;
+    const trace_instrumentation = InstrumentationModules{
+        .build_options = addBuildOptions(b, enable_ztracy, false, false, false),
+        .ztracy = if (ztracy_dependency) |dependency|
+            dependency.module("root")
+        else
+            disabled_instrumentation.ztracy,
         .calculation_telemetry_sink = disabled_instrumentation.calculation_telemetry_sink,
         .perturbation_sensitivity_sink = disabled_instrumentation.perturbation_sensitivity_sink,
     };
@@ -198,6 +242,13 @@ pub fn build(b: *std.Build) void {
         target,
         optimize,
         enabled_instrumentation,
+        "src/internal.zig",
+    );
+    const trace_internal_module = addSourceModule(
+        b,
+        target,
+        optimize,
+        trace_instrumentation,
         "src/internal.zig",
     );
 
@@ -314,6 +365,29 @@ pub fn build(b: *std.Build) void {
         "cost-timing-fast-analysis",
         "Run fast cost-timing analysis gate for one enabled O2 A forward",
     ).dependOn(&run_cost_timing_fast_analysis.step);
+    const labos_bottleneck_trace = addTraceExecutable(
+        b,
+        target,
+        optimize,
+        trace_internal_module,
+        "labos-bottleneck-trace",
+        "scaffolding/instrumentation/trace/zig/labos_bottleneck_trace_cli.zig",
+    );
+    if (ztracy_dependency) |dependency| {
+        const tracy = dependency.artifact("tracy");
+        labos_bottleneck_trace.root_module.linkLibrary(tracy);
+    }
+    const install_labos_bottleneck_trace = b.addInstallArtifact(labos_bottleneck_trace, .{});
+    b.step(
+        "labos-bottleneck-trace-bin",
+        "Build retained LABOS bottleneck trace harness",
+    ).dependOn(&install_labos_bottleneck_trace.step);
+    const run_labos_bottleneck_trace = b.addRunArtifact(labos_bottleneck_trace);
+    if (b.args) |args| run_labos_bottleneck_trace.addArgs(args);
+    b.step(
+        "labos-bottleneck-trace",
+        "Run retained LABOS bottleneck trace harness",
+    ).dependOn(&run_labos_bottleneck_trace.step);
 
     const no_inline_src_tests_cmd = b.addSystemCommand(&.{"scripts/check-no-inline-src-tests.sh"});
     const fmt_check_cmd = b.addFmt(.{
@@ -327,6 +401,8 @@ pub fn build(b: *std.Build) void {
         b.fmt("python/zdisamar/bindings/{s}", .{c_api_lib.out_filename}),
     );
     addReferenceDataSync(b, sync_python_package_files);
+    const clear_reference_assets = b.addRemoveDirTree(b.path("python/zdisamar/reference_data/assets"));
+    sync_python_package_files.step.dependOn(&clear_reference_assets.step);
     const sync_python_package_step = b.step(
         "sync-python-package",
         "Build and sync native C API and reference data into the Python package",

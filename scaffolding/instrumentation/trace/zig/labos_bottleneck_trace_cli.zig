@@ -2,18 +2,10 @@ const std = @import("std");
 const internal = @import("internal");
 
 const CostTiming = internal.instrumentation.cost_timing;
-const InstrumentGrid = internal.spectrum;
-const o2a_reference = internal.o2a_reference;
-const RadiativeTransfer = struct {
-    const Jacobian = internal.rtm.jacobian_states;
-    const SolveConfig = internal.rtm.controls.SolveConfig;
-};
+const Jacobian = internal.rtm.jacobian_states;
 const Trace = internal.instrumentation.trace;
+const zdisamar = internal.public;
 
-// migration note: Zig 0.15.2 trace CLI -----------------------------------------------------------|
-// This retained trace harness intentionally uses the Zig 0.15.2 process, timer, and file APIs.    |
-// The abandoned 0.16 migration routed it through std.process.Init and std.Io runtime plumbing.    |
-// end migration note: Zig 0.15.2 trace CLI -------------------------------------------------------|
 const default_labos_trace_output_dir = "scaffolding/instrumentation/trace/evidence/labos-bottleneck";
 const default_jacobian_trace_output_dir = "scaffolding/instrumentation/trace/evidence/o2a-jacobian-trace";
 const default_cached_repeats: usize = 3;
@@ -30,39 +22,20 @@ const TraceCase = enum {
     }
 };
 
-// instrumentation: LABOS trace harness
-// captures: prepare/forward/copy wall time and optional ztracy zones
-// why: inspect forward-model phase shape at the retained session boundary.
-// layout(64-bit):
-//   size: 32 B, align: 8 B
-//   field storage:
-//     output_dir=16 B, cached_repeats=8 B, output_dir_set=1 B, derivative_sweep=1 B, jacobian=1 B,
-//     cost_timing=1 B, trace_case=1 B; padding: 3 B (24 bits)
-//   unused bits: 24 padding + 28 bool-storage slack = 52 bits
-//   out-of-line: output_dir carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 32 B (0.031 KiB); total also includes referenced storage above
 const Config = struct {
     output_dir: []const u8 = default_labos_trace_output_dir,
     cached_repeats: usize = default_cached_repeats,
     output_dir_set: bool = false,
     derivative_sweep: bool = false,
     jacobian: bool = false,
-    cost_timing: bool = true,
+    cost_timing: bool = false,
     trace_case: TraceCase = .default,
 };
 
-// layout(64-bit):
-//   size: 48 B, align: 8 B
-//   field storage: name=16 B, state_label=16 B, states=16 B; padding: 0 B (0 bits)
-//   unused bits: 0 padding + 0 bool-storage slack = 0 bits
-//   out-of-line: name, state_label, states carry references/descriptors; referenced storage is not included in size
-//   count: runtime/owner dependent; arrays, slices, and stack values determine live instances
-//   footprint: per instance = 48 B (0.047 KiB); total also includes referenced storage above
 const TraceVariant = struct {
     name: []const u8,
     state_label: []const u8,
-    states: []const RadiativeTransfer.Jacobian.State = &.{},
+    states: []const Jacobian.State = &.{},
 };
 
 const derivative_variants = [_]TraceVariant{
@@ -93,11 +66,32 @@ const benchmark_jacobian_variant = TraceVariant{
     .states = &.{ .aerosol_optical_depth, .aerosol_layer_mid_pressure_hpa },
 };
 
+const PreparedTraceCase = struct {
+    case: zdisamar.O2Case,
+    prepared: zdisamar.PreparedO2A,
+    session: zdisamar.O2SessionMemory,
+    solve_config: zdisamar.SolveConfig,
+
+    fn deinit(self: *PreparedTraceCase, allocator: std.mem.Allocator) void {
+        self.session.deinit(allocator);
+        self.prepared.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
+const ProductSummary = struct {
+    sample_count: usize,
+    wavelength_start_nm: f64,
+    wavelength_end_nm: f64,
+    mean_radiance: f64,
+    mean_irradiance: f64,
+    mean_reflectance: f64,
+};
+
 const ProductRunSummary = struct {
     forward_ns: u64,
     result_copy_ns: u64,
-    summary: InstrumentGrid.InstrumentGridSummary,
-    cost_timing: CostTiming.StageCost,
+    summary: ProductSummary,
 
     fn totalWithCopyNs(self: ProductRunSummary) u64 {
         return self.forward_ns + self.result_copy_ns;
@@ -112,16 +106,9 @@ pub fn main() !void {
 }
 
 fn mainInner() !void {
-
-    // instrumentation: trace frame
-    // captures: one harness run boundary
-    // why: align timeline messages with summary timing.
     const main_zone = Trace.staticZone(@src(), "trace_cli.main");
     defer main_zone.end();
 
-    // instrumentation: trace frame markers
-    // captures: start/end messages and frame boundaries
-    // why: make the CLI run easy to find in Tracy captures.
     Trace.message("zdisamar labos trace start");
     Trace.frameMark();
     defer Trace.frameMark();
@@ -140,22 +127,7 @@ fn mainInner() !void {
     try std.fs.cwd().makePath(config.output_dir);
 
     var prepare_timer = try std.time.Timer.start();
-    const input = switch (config.trace_case) {
-        .default => o2a_reference.defaultInput(),
-        .benchmark_jacobian => o2a_reference.benchmarkJacobianInput(),
-    };
-    var prepared_case = prepared_case: {
-
-        // instrumentation: trace zone
-        // captures: O2 A input preparation
-        // why: separate setup cost from RTM execution.
-        const zone = Trace.staticZone(@src(), "trace_cli.prepare_case");
-        defer zone.end();
-        break :prepared_case try o2a_reference.prepareResolvedVendorO2ACase(
-            allocator,
-            &input,
-        );
-    };
+    var prepared_case = try prepareTraceCase(allocator, config.trace_case);
     const prepare_ns = prepare_timer.read();
     defer prepared_case.deinit(allocator);
 
@@ -176,43 +148,60 @@ fn mainInner() !void {
     );
 }
 
+fn prepareTraceCase(allocator: std.mem.Allocator, trace_case: TraceCase) !PreparedTraceCase {
+    var case = zdisamar.defaultO2Case();
+    if (trace_case == .benchmark_jacobian) {
+        case.spectral_grid = .{
+            .start_nm = 758.0,
+            .end_nm = 759.0,
+            .sample_count = 101,
+        };
+    }
+
+    var prepared = try zdisamar.prepareO2A(allocator, case);
+    errdefer prepared.deinit(allocator);
+
+    return .{
+        .case = case,
+        .prepared = prepared,
+        .session = zdisamar.initO2SessionMemory(allocator),
+        .solve_config = forwardSolveConfig(case),
+    };
+}
+
+fn forwardSolveConfig(case: zdisamar.O2Case) zdisamar.SolveConfig {
+    var solve_config = zdisamar.o2aSolveConfig(case);
+    solve_config.derivative_mode = .none;
+    solve_config.derivative_state_mask = 0;
+    return solve_config;
+}
+
 fn runSingleTrace(
     allocator: std.mem.Allocator,
     output_dir: []const u8,
     prepare_ns: u64,
-    prepared_case: anytype,
+    prepared_case: *PreparedTraceCase,
     case_label: []const u8,
     include_jacobian: bool,
     cached_repeats: usize,
-    cost_timing_enabled: bool,
+    cost_timing_requested: bool,
 ) !void {
-
-    // instrumentation: trace zone
-    // captures: first-use and repeated cached forward product runs
-    // why: measure the retained LABOS bottleneck boundary and the session-cache boundary.
     const zone = Trace.staticZone(@src(), "trace_cli.single_trace");
     defer zone.end();
 
-    var storage: InstrumentGrid.ProductStorage = .{};
-    defer storage.deinit(allocator);
-
-    var rtm_config = prepared_case.rtm_config;
+    var solve_config = prepared_case.solve_config;
     var derivative_states: []const u8 = "none";
     if (include_jacobian) {
-        rtm_config = derivativeSolveConfig(prepared_case.rtm_config, benchmark_jacobian_variant);
+        solve_config = derivativeSolveConfig(prepared_case.solve_config, benchmark_jacobian_variant);
         derivative_states = benchmark_jacobian_variant.state_label;
     }
-    const output_states = if (include_jacobian) benchmark_jacobian_variant.states else &.{};
 
     const first_run = try runProductTrace(
         "trace_cli.simulate_product",
         allocator,
-        &storage,
-        &prepared_case.scene,
-        rtm_config,
+        &prepared_case.session,
         &prepared_case.prepared,
-        output_states,
-        cost_timing_enabled,
+        solve_config,
     );
 
     const cached_runs = try allocator.alloc(ProductRunSummary, cached_repeats);
@@ -221,12 +210,9 @@ fn runSingleTrace(
         cached_run.* = try runProductTrace(
             "trace_cli.simulate_product.cached",
             allocator,
-            &storage,
-            &prepared_case.scene,
-            rtm_config,
+            &prepared_case.session,
             &prepared_case.prepared,
-            output_states,
-            cost_timing_enabled,
+            solve_config,
         );
     }
 
@@ -237,7 +223,7 @@ fn runSingleTrace(
         cached_runs,
         case_label,
         derivative_states,
-        cost_timing_enabled,
+        cost_timing_requested and CostTiming.enabled,
     );
 
     std.debug.print(
@@ -254,54 +240,28 @@ fn runSingleTrace(
 fn runProductTrace(
     comptime zone_name: [*:0]const u8,
     allocator: std.mem.Allocator,
-    storage: *InstrumentGrid.ProductStorage,
-    scene: anytype,
-    rtm_config: RadiativeTransfer.SolveConfig,
-    prepared: anytype,
-    output_states: []const RadiativeTransfer.Jacobian.State,
-    cost_timing_enabled: bool,
+    session: *zdisamar.O2SessionMemory,
+    prepared: *const zdisamar.PreparedO2A,
+    solve_config: zdisamar.SolveConfig,
 ) !ProductRunSummary {
-
-    // instrumentation: trace phase clock
-    // captures: simulation phases plus owned-result copy for one product run
-    // why: match the session benchmark boundary while keeping the phase clock opt-in.
-    var cost_timing: CostTiming.StageCost = .{};
-    if (cost_timing_enabled) {
-        storage.setStageCost(&cost_timing);
-    }
-    defer storage.clearStageCost();
-
     var forward_timer = try std.time.Timer.start();
-    const product = product: {
-
-        // instrumentation: trace zone
-        // captures: one instrument-grid product simulation
-        // why: isolate RTM work from owned-output copy at the session boundary.
+    var result = result: {
         const simulate_zone = Trace.staticZone(@src(), zone_name);
         defer simulate_zone.end();
-        break :product try InstrumentGrid.simulateProductWithWorkspace(
+        break :result try zdisamar.runO2AWithSessionMemory(
             allocator,
-            storage,
-            scene,
-            rtm_config,
+            session,
             prepared,
+            solve_config,
         );
     };
     const forward_ns = forward_timer.read();
-
-    var copy_timer = try std.time.Timer.start();
-    var owned_product = if (output_states.len == 0)
-        try product.toOwned(allocator)
-    else
-        try product.toOwnedWithJacobianStates(allocator, output_states);
-    const result_copy_ns = copy_timer.read();
-    defer owned_product.deinit(allocator);
+    defer result.deinit(allocator);
 
     return .{
         .forward_ns = forward_ns,
-        .result_copy_ns = result_copy_ns,
-        .summary = product.summary,
-        .cost_timing = cost_timing,
+        .result_copy_ns = 0,
+        .summary = summarizeProduct(result),
     };
 }
 
@@ -309,12 +269,11 @@ fn runDerivativeSweep(
     allocator: std.mem.Allocator,
     output_dir: []const u8,
     prepare_ns: u64,
-    prepared_case: anytype,
+    prepared_case: *const PreparedTraceCase,
 ) !void {
+    const zone = Trace.staticZone(@src(), "trace_cli.derivative_sweep");
+    defer zone.end();
 
-    // instrumentation: trace sweep
-    // captures: forward and Jacobian rtm_config variants
-    // why: compare derivative-state cost at the same scene boundary.
     var summary_file = try openOutputFile(std.heap.page_allocator, output_dir, "summary.json");
     defer summary_file.close();
     var summary_writer = summary_file.writer(&.{});
@@ -335,32 +294,22 @@ fn runDerivativeSweep(
     );
 
     for (derivative_variants, 0..) |variant, variant_index| {
-        const rtm_config = derivativeSolveConfig(prepared_case.rtm_config, variant);
-        var storage: InstrumentGrid.ProductStorage = .{};
-        defer storage.deinit(allocator);
+        var session = zdisamar.initO2SessionMemory(allocator);
+        defer session.deinit(allocator);
 
-        var forward_timer = try std.time.Timer.start();
-        const product = try InstrumentGrid.simulateProductWithWorkspace(
+        const solve_config = derivativeSolveConfig(prepared_case.solve_config, variant);
+        const run = try runProductTrace(
+            "trace_cli.simulate_product.variant",
             allocator,
-            &storage,
-            &prepared_case.scene,
-            rtm_config,
+            &session,
             &prepared_case.prepared,
+            solve_config,
         );
-        const forward_ns = forward_timer.read();
-
-        var copy_timer = try std.time.Timer.start();
-        var owned_product = try product.toOwned(allocator);
-        const result_copy_ns = copy_timer.read();
-        defer owned_product.deinit(allocator);
-
         try writeVariantSummary(
             &summary_writer.interface,
             variant_index != 0,
             variant,
-            forward_ns,
-            result_copy_ns,
-            product.summary,
+            run,
         );
     }
 
@@ -378,10 +327,10 @@ fn runDerivativeSweep(
 }
 
 fn derivativeSolveConfig(
-    rtm_config: RadiativeTransfer.SolveConfig,
+    solve_config: zdisamar.SolveConfig,
     variant: TraceVariant,
-) RadiativeTransfer.SolveConfig {
-    var resolved = rtm_config;
+) zdisamar.SolveConfig {
+    var resolved = solve_config;
     if (variant.states.len == 0) {
         resolved.derivative_mode = .none;
         resolved.derivative_state_mask = 0;
@@ -389,9 +338,9 @@ fn derivativeSolveConfig(
     }
 
     resolved.derivative_mode = .semi_analytical;
-    var mask: RadiativeTransfer.Jacobian.StateMask = 0;
-    for (variant.states) |state| mask |= RadiativeTransfer.Jacobian.stateMask(state);
-    resolved.derivative_state_mask = RadiativeTransfer.Jacobian.sanitizedMask(mask);
+    var mask: Jacobian.StateMask = 0;
+    for (variant.states) |state| mask |= Jacobian.stateMask(state);
+    resolved.derivative_state_mask = Jacobian.sanitizedMask(mask);
     return resolved;
 }
 
@@ -457,16 +406,32 @@ fn parseArgs(args: []const []const u8) !Config {
     return config;
 }
 
+fn summarizeProduct(result: zdisamar.O2SpectrumRunResult) ProductSummary {
+    const spectrum = result.spectrum;
+    const assembly = result.summary.reflectance_assembly;
+    const sample_count = spectrum.sampleCount();
+    return .{
+        .sample_count = sample_count,
+        .wavelength_start_nm = if (sample_count == 0) 0.0 else spectrum.wavelength_nm[0],
+        .wavelength_end_nm = if (sample_count == 0) 0.0 else spectrum.wavelength_nm[sample_count - 1],
+        .mean_radiance = mean(assembly.radiance_sum, assembly.sample_count),
+        .mean_irradiance = mean(assembly.irradiance_sum, assembly.sample_count),
+        .mean_reflectance = mean(assembly.reflectance_sum, assembly.sample_count),
+    };
+}
+
+fn mean(sum: f64, count: usize) f64 {
+    if (count == 0) return 0.0;
+    return sum / @as(f64, @floatFromInt(count));
+}
+
 fn writeVariantSummary(
     writer: *std.Io.Writer,
     needs_comma: bool,
     variant: TraceVariant,
-    forward_ns: u64,
-    result_copy_ns: u64,
-    summary: InstrumentGrid.InstrumentGridSummary,
+    run: ProductRunSummary,
 ) !void {
     if (needs_comma) try writer.writeAll(",\n");
-    const total_with_copy_ns = forward_ns + result_copy_ns;
     try writer.print(
         \\    {{
         \\      "variant": "{s}",
@@ -488,18 +453,18 @@ fn writeVariantSummary(
         .{
             variant.name,
             variant.state_label,
-            forward_ns,
-            @as(f64, @floatFromInt(forward_ns)) / 1.0e9,
-            result_copy_ns,
-            @as(f64, @floatFromInt(result_copy_ns)) / 1.0e9,
-            total_with_copy_ns,
-            @as(f64, @floatFromInt(total_with_copy_ns)) / 1.0e9,
-            summary.sample_count,
-            summary.wavelength_start_nm,
-            summary.wavelength_end_nm,
-            summary.mean_radiance,
-            summary.mean_irradiance,
-            summary.mean_reflectance,
+            run.forward_ns,
+            @as(f64, @floatFromInt(run.forward_ns)) / 1.0e9,
+            run.result_copy_ns,
+            @as(f64, @floatFromInt(run.result_copy_ns)) / 1.0e9,
+            run.totalWithCopyNs(),
+            @as(f64, @floatFromInt(run.totalWithCopyNs())) / 1.0e9,
+            run.summary.sample_count,
+            run.summary.wavelength_start_nm,
+            run.summary.wavelength_end_nm,
+            run.summary.mean_radiance,
+            run.summary.mean_irradiance,
+            run.summary.mean_reflectance,
         },
     );
 }
@@ -620,8 +585,8 @@ fn writeProductRunSummary(
         \\    "wavelength_end_nm": {d:.8},
         \\    "mean_radiance": {e:.17},
         \\    "mean_irradiance": {e:.17},
-        \\    "mean_reflectance": {e:.17},
-        \\    "cost_timing_ns": {{
+        \\    "mean_reflectance": {e:.17}
+        \\  }}{s}
         \\
     ,
         .{
@@ -638,21 +603,8 @@ fn writeProductRunSummary(
             run.summary.mean_radiance,
             run.summary.mean_irradiance,
             run.summary.mean_reflectance,
+            if (needs_comma) "," else "",
         },
-    );
-    try writeStageCostCounters(writer, run.cost_timing);
-    try writer.writeAll(
-        \\    },
-        \\    "labos_cost_counts": {
-        \\
-    );
-    try writeStageCostCounts(writer, run.cost_timing);
-    try writer.print(
-        \\    }}
-        \\  }}{s}
-        \\
-    ,
-        .{if (needs_comma) "," else ""},
     );
 }
 
@@ -675,9 +627,8 @@ fn writeCachedRuns(
             \\      "result_copy_ns": {},
             \\      "result_copy_s": {d:.9},
             \\      "total_with_copy_ns": {},
-            \\      "total_with_copy_s": {d:.9},
-            \\      "cost_timing_ns": {{
-            \\
+            \\      "total_with_copy_s": {d:.9}
+            \\    }}
         ,
             .{
                 index + 1,
@@ -689,108 +640,10 @@ fn writeCachedRuns(
                 @as(f64, @floatFromInt(run.totalWithCopyNs())) / 1.0e9,
             },
         );
-        try writeStageCostCounters(writer, run.cost_timing);
-        try writer.writeAll(
-            \\      },
-            \\      "labos_cost_counts": {
-            \\
-        );
-        try writeStageCostCounts(writer, run.cost_timing);
-        try writer.writeAll(
-            \\      }
-            \\    }
-        );
     }
     try writer.writeAll(
         \\
         \\  ]
         \\
-    );
-}
-
-fn writeStageCostCounters(
-    writer: *std.Io.Writer,
-    labos_timing: CostTiming.StageCost,
-) !void {
-    try writeStageCostCounter(writer, "execute", labos_timing.execute, true);
-    try writeStageCostCounter(writer, "attenuation_fill", labos_timing.attenuation_fill, true);
-    try writeStageCostCounter(writer, "fourier_loop", labos_timing.fourier_loop, true);
-    try writeStageCostCounter(writer, "plm_basis", labos_timing.plm_basis, true);
-    try writeStageCostCounter(writer, "rt_layer_build", labos_timing.rt_layer_build, true);
-    try writeStageCostCounter(writer, "rt_layer_phase_matrix", labos_timing.rt_layer_phase_matrix, true);
-    try writeStageCostCounter(writer, "rt_layer_doubling", labos_timing.rt_layer_doubling, true);
-    try writeStageCostCounter(writer, "fixed_qseries_work", labos_timing.fixed_qseries_work, true);
-    try writeStageCostCounter(writer, "fixed_rd_update", labos_timing.fixed_rd_update, true);
-    try writeStageCostCounter(writer, "fixed_tu_update", labos_timing.fixed_tu_update, true);
-    try writeStageCostCounter(writer, "fixed_td_update", labos_timing.fixed_td_update, true);
-    try writeStageCostCounter(writer, "orders_total", labos_timing.orders_total, true);
-    try writeStageCostCounter(writer, "orders_initial_sources", labos_timing.orders_initial_sources, true);
-    try writeStageCostCounter(writer, "orders_initial_transport", labos_timing.orders_initial_transport, true);
-    try writeStageCostCounter(writer, "orders_local_down", labos_timing.orders_local_down, true);
-    try writeStageCostCounter(writer, "orders_local_up", labos_timing.orders_local_up, true);
-    try writeStageCostCounter(writer, "orders_transport", labos_timing.orders_transport, true);
-    try writeStageCostCounter(writer, "orders_accumulate", labos_timing.orders_accumulate, true);
-    try writeStageCostCounter(writer, "reflectance_integral", labos_timing.reflectance_integral, true);
-    try writeStageCostCounter(writer, "optics_assembly", labos_timing.optics_assembly, true);
-    try writeStageCostCounter(writer, "spectroscopy_sigma", labos_timing.spectroscopy_sigma, true);
-    try writeStageCostCounter(writer, "partition_interp", labos_timing.partition_interp, true);
-    try writeStageCostCounter(writer, "profile_interp", labos_timing.profile_interp, true);
-    try writeStageCostCounter(writer, "quadrature_build", labos_timing.quadrature_build, false);
-}
-
-fn writeStageCostCounts(
-    writer: *std.Io.Writer,
-    labos_timing: CostTiming.StageCost,
-) !void {
-    try writeStageCostCount(writer, "fixed_doubling_steps", labos_timing.fixed_doubling_steps, true);
-    try writeStageCostCount(writer, "fixed_qseries_skipped", labos_timing.fixed_qseries_skipped, true);
-    try writeStageCostCount(writer, "fixed_qseries_retained", labos_timing.fixed_qseries_retained, true);
-    try writeStageCostCount(writer, "fixed_rd_skipped", labos_timing.fixed_rd_skipped, true);
-    try writeStageCostCount(writer, "fixed_rd_retained", labos_timing.fixed_rd_retained, true);
-    try writeStageCostCount(writer, "fixed_tu_skipped", labos_timing.fixed_tu_skipped, true);
-    try writeStageCostCount(writer, "fixed_tu_retained", labos_timing.fixed_tu_retained, true);
-    try writeStageCostCount(writer, "fixed_td_skipped", labos_timing.fixed_td_skipped, true);
-    try writeStageCostCount(writer, "fixed_td_retained", labos_timing.fixed_td_retained, false);
-}
-
-fn writeStageCostCount(
-    writer: *std.Io.Writer,
-    name: []const u8,
-    counter: anytype,
-    needs_comma: bool,
-) !void {
-    try writer.print(
-        \\      "{s}": {}{s}
-        \\
-    ,
-        .{
-            name,
-            counter.count,
-            if (needs_comma) "," else "",
-        },
-    );
-}
-
-fn writeStageCostCounter(
-    writer: *std.Io.Writer,
-    name: []const u8,
-    counter: anytype,
-    needs_comma: bool,
-) !void {
-    const mean_ns = if (counter.count == 0)
-        0.0
-    else
-        @as(f64, @floatFromInt(counter.ns)) / @as(f64, @floatFromInt(counter.count));
-    try writer.print(
-        \\      "{s}": {{"ns": {}, "count": {}, "mean_ns": {d:.3}}}{s}
-        \\
-    ,
-        .{
-            name,
-            counter.ns,
-            counter.count,
-            mean_ns,
-            if (needs_comma) "," else "",
-        },
     );
 }
