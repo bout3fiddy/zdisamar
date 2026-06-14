@@ -75,8 +75,6 @@ def counted_src_file(path: str) -> bool:
         return False
     if path.startswith("src/validation/"):
         return False
-    if path == "src/input/o2a_reference/metrics.zig":
-        return False
     if path == "src/internal.zig":
         return False
     return True
