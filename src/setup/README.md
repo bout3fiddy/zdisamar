@@ -1,11 +1,11 @@
 # `setup/` — physics tables built from a scene
 
 This is the second stage of the forward pass. To compute a top-of-atmosphere
-reflectance the `rtm/` solve needs, for every layer and every wavelength: a
+reflectance `rtm/` needs, for every layer and every wavelength: a
 vertical grid to integrate over, gas absorption, scattering with a phase
 function, and the solar source. Most of those inputs depend on the scene but not
 on the wavelength, and not on the retrieval iteration. `setup/` computes them
-once, so the per-wavelength solve only does the wavelength-specific arithmetic.
+once, so the per-wavelength work only does the wavelength-specific arithmetic.
 `root.prepare` runs this stage once per scene and the tables are reused across
 every forward run.
 
@@ -26,7 +26,7 @@ every forward run.
 +----------------+----------------+----------------+----------------+
                                   |
                                   v
-          optics/ combines these per wavelength, rtm/ solves
+       optics/ combines these per wavelength, rtm/ does the radiative transfer
 ```
 
 ## Orchestrator (`run_tables.zig`)
@@ -40,7 +40,7 @@ it needs, not the whole bundle. `layers`, `quadrature`, `lines`, `cia`, and
 
 ## Vertical grid (`atmosphere_layers.zig`)
 
-This is the heaviest part of setup and the discretization the whole solve runs
+This is the heaviest part of setup and the discretization the whole model runs
 on. It starts from a coarse climatology profile (pressure, temperature, and
 altitude at a handful of vendor levels), densifies it with a spline, then divides
 the column the way the scene asks: each pressure interval is split into layers,

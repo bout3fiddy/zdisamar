@@ -2,8 +2,8 @@
 
 This is the third stage of the forward pass, and the first one that runs per
 wavelength. Setup built tables that are fixed for a scene. Optics evaluates them
-at one wavelength and turns them into the per-layer optical depths the `rtm/`
-solve reads: gas absorption, gas (Rayleigh) scattering, the O2-O2 continuum, and
+at one wavelength and turns them into the per-layer optical depths `rtm/`
+reads: gas absorption, gas (Rayleigh) scattering, the O2-O2 continuum, and
 aerosol. The forward model loops the dense radiance grid and calls this stage at
 every sample.
 
@@ -29,7 +29,7 @@ every sample.
                  (coarse, RTM layers)
                           |
                           v
-      source_levels + curved_sun_path  -->  rtm/ solve
+      source_levels + curved_sun_path  -->  rtm/ radiative transfer
 ```
 
 ## The core (`layer_depths.zig`)
@@ -45,8 +45,8 @@ then multiplies by the node path length to get optical depths. The result is one
 scatter albedo.
 
 `reduceLayerOpticsFromSupportRows` then sums the active support rows inside each
-layer into one `LayerOptics` row per RTM layer. That coarse row is what the
-transport solve reads.
+layer into one `LayerOptics` row per RTM layer. That coarse row is what `rtm/`
+reads.
 
 The O2 line cross-sections come in as an argument, already worked out in
 `cache/profile_line_memory.zig`, so the slow line-by-line summation happens once
@@ -68,7 +68,7 @@ cross-section from a temperature polynomial at each layer's temperature.
 
 ## Transport inputs (`source_levels.zig`, `curved_sun_path.zig`)
 
-Both read the filled optics rows and build inputs the `rtm/` needs before it
+Both read the filled optics rows and build inputs `rtm/` needs before it
 integrates the column.
 
 `source_levels.zig` builds the source-integration levels for the integrated
@@ -107,5 +107,5 @@ loop cheap.
 - `layer_depths.zig` — the core; read `fillSupportOpticsAtWavelength` and
   `reduceLayerOpticsFromSupportRows` first.
 - `rayleigh.zig` and `cia_absorption.zig` — the cross-section physics it calls.
-- the parent `src/README.md` for how these optical depths feed the `rtm/` solve
-  and how the reused line sigma reaches this stage.
+- the parent `src/README.md` for how these optical depths feed `rtm/` and how the
+  reused line sigma reaches this stage.
