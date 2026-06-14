@@ -255,6 +255,73 @@ test "ProfileLineValues preserve caller-provided exact wavelength order" {
     try std.testing.expectApproxEqRel(expected_sigma, support_sigma[support_index], 1.0e-12);
 }
 
+test "ProfileLineValues reuse stamp includes isotope and profile thermodynamics" {
+    const allocator = std.testing.allocator;
+    var scene = internal.input.defaults.referenceScene();
+    scene.spectral_grid.sample_count = profile_line_test_sample_count;
+
+    var tables = try internal.setup.run_tables.buildRunTables(allocator, scene);
+    defer tables.deinit(allocator);
+
+    const wavelengths_nm = [_]f64{760.0};
+    const baseline = internal.cache.profile_line_memory.profileLineReuseStamp(
+        scene.id,
+        tables.lines,
+        tables.layers,
+        wavelengths_nm[0..],
+        true,
+        true,
+    );
+
+    const isotope_two = [_]u8{2};
+    var isotope_scene = scene;
+    isotope_scene.line_gas.isotopes_sim = isotope_two[0..];
+    var isotope_tables = try internal.setup.run_tables.buildRunTables(allocator, isotope_scene);
+    defer isotope_tables.deinit(allocator);
+    const isotope_stamp = internal.cache.profile_line_memory.profileLineReuseStamp(
+        scene.id,
+        isotope_tables.lines,
+        isotope_tables.layers,
+        wavelengths_nm[0..],
+        true,
+        true,
+    );
+    try std.testing.expect(!baseline.eql(isotope_stamp));
+
+    tables.layers.spectroscopy_profile.rows[0].temperature_k += 0.01;
+    const profile_stamp = internal.cache.profile_line_memory.profileLineReuseStamp(
+        scene.id,
+        tables.lines,
+        tables.layers,
+        wavelengths_nm[0..],
+        true,
+        true,
+    );
+    try std.testing.expect(!baseline.eql(profile_stamp));
+}
+
+test "ProfileLineValues disable strong-line sidecars when isotope one is inactive" {
+    const isotope_two = [_]u8{2};
+    const wavelengths_nm = [_]f64{760.0};
+    var scene = internal.input.defaults.referenceScene();
+    scene.line_gas.isotopes_sim = isotope_two[0..];
+
+    var values = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengths(
+        std.testing.allocator,
+        scene,
+        wavelengths_nm[0..],
+    );
+    defer values.deinit(std.testing.allocator);
+
+    for (values.values) |value| {
+        try std.testing.expectEqual(@as(f64, 0.0), value.strong_line_sigma_cm2_per_molecule);
+        try std.testing.expectEqual(@as(f64, 0.0), value.line_mixing_sigma_cm2_per_molecule);
+    }
+    for (values.support_profile_values) |value| {
+        try std.testing.expectEqual(@as(f64, 0.0), value.line_mixing_sigma_cm2_per_molecule);
+    }
+}
+
 test "ProfileLineValues parallel wavelength build matches serial rows" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
 

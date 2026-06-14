@@ -1021,7 +1021,15 @@ pub fn validateStateSpecs(state_specs: []const StateSpec) Error!void {
     //                                                                                                         |
     // --------------------------------------------------------------------------------------------------------|
     if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
-    for (state_specs) |spec| try validateStateSpec(spec);
+
+    var seen = [_]bool{false} ** jacobian_states.state_count;
+    for (state_specs) |spec| {
+        const state_index = @intFromEnum(spec.state);
+        if (seen[state_index]) return error.InvalidStateSpec;
+
+        seen[state_index] = true;
+        try validateStateSpec(spec);
+    }
 }
 
 pub fn buildPressureProfile(
@@ -1080,7 +1088,8 @@ fn validateStateSpec(spec: StateSpec) Error!void {
 
     switch (spec.state) {
         .aerosol_layer_mid_pressure_hpa => {
-            if (spec.thickness_hpa <= 0.0 or
+            if (!std.math.isFinite(spec.thickness_hpa) or
+                spec.thickness_hpa <= 0.0 or
                 spec.interval_index_1based == 0 or
                 !spec.pressure_altitude_profile.hasSamples())
             {

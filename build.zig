@@ -90,7 +90,7 @@ fn addTraceExecutable(
     root_source_file: []const u8,
 ) *std.Build.Step.Compile {
     // addTraceExecutable ----------------------------------------------------------------------------------- |
-    // Register a retained instrumentation CLI against the instrumentation-enabled internal module.            |
+    // Register a retained instrumentation CLI against the instrumentation-enabled internal module.           |
     // -------------------------------------------------------------------------------------------------------|
     return b.addExecutable(.{
         .name = name,
@@ -103,32 +103,6 @@ fn addTraceExecutable(
             },
         }),
     });
-}
-
-fn addReferenceDataSync(b: *std.Build, sync_files: *std.Build.Step.UpdateSourceFiles) void {
-    // addReferenceDataSync --------------------------------------------------------------------------------- |
-    // Copy package reference-data assets into the ignored source-checkout resource tree used by Python.      |
-    // -------------------------------------------------------------------------------------------------------|
-    var data_dir = std.fs.cwd().openDir("data/reference_data", .{ .iterate = true }) catch |err| {
-        std.debug.panic("open data/reference_data: {s}", .{@errorName(err)});
-    };
-    defer data_dir.close();
-
-    var walker = data_dir.walk(b.allocator) catch |err| {
-        std.debug.panic("walk data/reference_data: {s}", .{@errorName(err)});
-    };
-    defer walker.deinit();
-
-    while (walker.next() catch |err| {
-        std.debug.panic("walk next data/reference_data: {s}", .{@errorName(err)});
-    }) |entry| {
-        if (entry.kind != .file) continue;
-
-        sync_files.addCopyFileToSource(
-            b.path(b.fmt("data/reference_data/{s}", .{entry.path})),
-            b.fmt("python/zdisamar/reference_data/assets/{s}", .{entry.path}),
-        );
-    }
 }
 
 pub fn build(b: *std.Build) void {
@@ -162,23 +136,35 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     };
+
     const enabled_instrumentation = InstrumentationModules{
         .build_options = addBuildOptions(b, false, true, true, true),
         .ztracy = disabled_instrumentation.ztracy,
         .calculation_telemetry_sink = disabled_instrumentation.calculation_telemetry_sink,
         .perturbation_sensitivity_sink = disabled_instrumentation.perturbation_sensitivity_sink,
     };
-    const ztracy_dependency = if (enable_ztracy) b.dependency("ztracy", .{
-        .target = target,
-        .optimize = optimize,
-        .enable_ztracy = true,
-    }) else null;
+
+    const ztracy_dependency = resolve_ztracy_dependency: {
+        if (!enable_ztracy) break :resolve_ztracy_dependency null;
+
+        break :resolve_ztracy_dependency b.dependency("ztracy", .{
+            .target = target,
+            .optimize = optimize,
+            .enable_ztracy = true,
+        });
+    };
+
+    const trace_ztracy_module = resolve_trace_ztracy_module: {
+        if (ztracy_dependency) |dependency| {
+            break :resolve_trace_ztracy_module dependency.module("root");
+        }
+
+        break :resolve_trace_ztracy_module disabled_instrumentation.ztracy;
+    };
+
     const trace_instrumentation = InstrumentationModules{
         .build_options = addBuildOptions(b, enable_ztracy, false, false, false),
-        .ztracy = if (ztracy_dependency) |dependency|
-            dependency.module("root")
-        else
-            disabled_instrumentation.ztracy,
+        .ztracy = trace_ztracy_module,
         .calculation_telemetry_sink = disabled_instrumentation.calculation_telemetry_sink,
         .perturbation_sensitivity_sink = disabled_instrumentation.perturbation_sensitivity_sink,
     };
@@ -206,6 +192,7 @@ pub fn build(b: *std.Build) void {
             },
         },
     });
+    c_api_module.link_libc = true;
     const c_api_lib = b.addLibrary(.{
         .linkage = .dynamic,
         .name = "zdisamar_c",
@@ -235,6 +222,7 @@ pub fn build(b: *std.Build) void {
             },
         },
     });
+    fast_c_api_module.link_libc = true;
 
     const internal_module = addSourceModule(b, target, optimize, disabled_instrumentation, "src/internal.zig");
     const enabled_internal_module = addSourceModule(
@@ -395,19 +383,20 @@ pub fn build(b: *std.Build) void {
         .paths = &.{ "build.zig", "src", "tests" },
     });
 
-    const sync_python_package_files = b.addUpdateSourceFiles();
-    sync_python_package_files.addCopyFileToSource(
-        c_api_lib.getEmittedBin(),
-        b.fmt("python/zdisamar/bindings/{s}", .{c_api_lib.out_filename}),
-    );
-    addReferenceDataSync(b, sync_python_package_files);
-    const clear_reference_assets = b.addRemoveDirTree(b.path("python/zdisamar/reference_data/assets"));
-    sync_python_package_files.step.dependOn(&clear_reference_assets.step);
+    const sync_python_package_cmd = b.addSystemCommand(&.{
+        "uv",
+        "run",
+        "--no-project",
+        "python",
+        "scripts/sync-python-package.py",
+        "--binding",
+    });
+    sync_python_package_cmd.addArtifactArg(c_api_lib);
     const sync_python_package_step = b.step(
         "sync-python-package",
         "Build and sync native C API and reference data into the Python package",
     );
-    sync_python_package_step.dependOn(&sync_python_package_files.step);
+    sync_python_package_step.dependOn(&sync_python_package_cmd.step);
 
     const check_step = b.step("check", "Run fast local verification");
     check_step.dependOn(&fmt_check_cmd.step);

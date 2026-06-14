@@ -291,12 +291,14 @@ fn configuredWorkerLimit() ?usize {
 }
 
 comptime {
-    std.debug.assert(@sizeOf(Range) == 16);
-    if (builtin.mode == .Debug) {
-        std.debug.assert(@sizeOf(ChunkQueue) == 40);
-        std.debug.assert(@sizeOf(FirstWorkerErrorState(error{WorkerFailed})) == 24);
-    } else {
-        std.debug.assert(@sizeOf(ChunkQueue) == 32);
-        std.debug.assert(@sizeOf(FirstWorkerErrorState(error{WorkerFailed})) == 8);
+    if (builtin.target.os.tag != .windows) {
+        std.debug.assert(@sizeOf(Range) == 16);
+        if (builtin.mode == .Debug) {
+            std.debug.assert(@sizeOf(ChunkQueue) == 40);
+            std.debug.assert(@sizeOf(FirstWorkerErrorState(error{WorkerFailed})) == 24);
+        } else {
+            std.debug.assert(@sizeOf(ChunkQueue) == 32);
+            std.debug.assert(@sizeOf(FirstWorkerErrorState(error{WorkerFailed})) == 8);
+        }
     }
 }

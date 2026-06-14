@@ -1,7 +1,9 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const zdisamar = @import("zdisamar");
 
 const allocator = std.heap.smp_allocator;
+pub const links_libc = builtin.link_libc;
 
 // c.zig ------------------------------------------------------------------------------------------------------|
 // C ABI boundary for Python bindings and external callers.                                                    |
@@ -1374,7 +1376,7 @@ fn optimalEstimationBatchRequestView(
     }
 
     const batch_worker_count = resolved_request.batch_worker_count;
-    if (batch_worker_count == 0) {
+    if (batch_worker_count != 1) {
         resolved.setError("invalid optimal-estimation batch_worker_count");
         return error.InvalidStateSpec;
     }
@@ -1910,10 +1912,20 @@ fn compactRadianceJacobian(
 
 fn solarMu0(scene: zdisamar.Scene) f64 {
     // solarMu0 -----------------------------------------------------------------------------------------------|
-    // Return cos(solar zenith) for the Python radiance-Jacobian ABI conversion.                               |
+    // Return the transport solar direction cosine for Python radiance-Jacobian ABI conversion.                |
     // --------------------------------------------------------------------------------------------------------|
-    const solar_sin = @sin(std.math.degreesToRadians(scene.geometry.solar_zenith_deg));
-    return @sqrt(@max(1.0 - solar_sin * solar_sin, 0.0));
+    return solarMu0FromZenithDegrees(scene.geometry.solar_zenith_deg);
+}
+
+pub fn solarMu0FromZenithDegrees(solar_zenith_deg: f64) f64 {
+    // solarMu0FromZenithDegrees ------------------------------------------------------------------------------|
+    // Match root transport's grazing-angle floor before converting reflectance Jacobians back to radiance.    |
+    // --------------------------------------------------------------------------------------------------------|
+    const solar_sin = @sin(std.math.degreesToRadians(solar_zenith_deg));
+    return @max(
+        @sqrt(@max(1.0 - solar_sin * solar_sin, 0.0)),
+        zdisamar.geometry_direction_cosine_floor,
+    );
 }
 
 fn spectrumReport(spectrum: zdisamar.Spectrum) ZdsDiagnosticReport {

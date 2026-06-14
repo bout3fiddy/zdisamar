@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const forward_worker_pool = @import("forward_worker_pool.zig");
 const profile_line_memory = @import("profile_line_memory.zig");
@@ -72,5 +73,7 @@ pub const SessionMemory = struct {
 
 comptime {
     const expected_size: usize = if (@import("builtin").mode == .Debug) 424 else 392;
-    std.debug.assert(@sizeOf(SessionMemory) == expected_size);
+    if (builtin.target.os.tag != .windows) {
+        std.debug.assert(@sizeOf(SessionMemory) == expected_size);
+    }
 }

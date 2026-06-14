@@ -198,8 +198,8 @@ fn rowFromSupport(
 
     return .{
         .wavelength_nm = support.wavelength_nm,
-        .layer_index = 0,
-        .sublayer_index = 0,
+        .layer_index = @intCast(layer_index),
+        .sublayer_index = supportSublayerIndex(layers, layer_index, support_index),
         .global_sublayer_index = @intCast(support_index),
         .interval_index_1based = support.interval_index_1based,
         .support_row_kind = support_row_kind,
@@ -280,6 +280,19 @@ fn supportLayerIndex(layers: atmosphere_layers.LayerGrid, support_index: usize) 
         if (support_index >= start and support_index < start + count) return layer_index;
     }
     return 0;
+}
+
+fn supportSublayerIndex(
+    layers: atmosphere_layers.LayerGrid,
+    layer_index: usize,
+    support_index: usize,
+) u32 {
+    // supportSublayerIndex -----------------------------------------------------------------------------------|
+    // Convert a layer-owned support row into the public zero-based sublayer coordinate.                       |
+    // --------------------------------------------------------------------------------------------------------|
+    const layer_start: usize = @intCast(layers.layer_support_starts[layer_index]);
+    if (support_index <= layer_start) return 0;
+    return @intCast(support_index - layer_start - 1);
 }
 
 comptime {

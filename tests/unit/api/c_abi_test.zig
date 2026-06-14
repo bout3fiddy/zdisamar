@@ -3,6 +3,7 @@ const std = @import("std");
 const c_api = @import("c_api");
 
 test "optimal-estimation C ABI result rows keep ctypes layout" {
+    try std.testing.expect(c_api.links_libc);
     try std.testing.expectEqual(@as(usize, 80), @sizeOf(c_api.ZdsOptimalEstimationStateSpec));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(c_api.ZdsOptimalEstimationControls));
     try std.testing.expectEqual(@as(usize, 72), @sizeOf(c_api.ZdsOptimalEstimationRequest));
@@ -10,6 +11,11 @@ test "optimal-estimation C ABI result rows keep ctypes layout" {
     try std.testing.expectEqual(@as(usize, 104), @sizeOf(c_api.ZdsOptimalEstimationBatchRequest));
     try std.testing.expectEqual(@as(usize, 72), @sizeOf(c_api.ZdsOptimalEstimationBatchResult));
     try std.testing.expectEqual(@as(usize, 104), @sizeOf(c_api.ZdsOptimalEstimationFastmodeBatchResult));
+}
+
+test "C ABI radiance-Jacobian scale uses transport solar cosine floor" {
+    try std.testing.expectApproxEqAbs(0.5, c_api.solarMu0FromZenithDegrees(60.0), 1.0e-15);
+    try std.testing.expectApproxEqAbs(0.05, c_api.solarMu0FromZenithDegrees(90.0), 1.0e-15);
 }
 
 test "tiny JSON C ABI spectrum returns two product rows" {
@@ -112,6 +118,87 @@ test "optimal-estimation pressure state requires profile rows" {
     try std.testing.expectEqualStrings("missing pressure profile altitude", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
+test "optimal-estimation batch rejects unsupported worker counts" {
+    const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
+    defer c_api.zds_context_destroy(ctx);
+    try prepareTinyJson(ctx);
+
+    const wavelength_nm = [_]f64{ 758.0, 760.0 };
+    const reflectance = [_]f64{ 0.12, 0.13 };
+    const variance = [_]f64{ 1.0e-4, 1.0e-4 };
+    var state_template = [_]c_api.ZdsOptimalEstimationStateSpec{aerosolOpticalDepthSpec()};
+    const initial = [_]f64{0.1};
+    const prior = [_]f64{0.1};
+    var request = batchRequest(&wavelength_nm, &reflectance, &variance, &state_template, &initial, &prior);
+    request.batch_worker_count = 2;
+    var result: c_api.ZdsOptimalEstimationBatchResult = .{};
+
+    try std.testing.expectEqual(
+        @intFromEnum(c_api.ZdsStatus.failure),
+        c_api.zds_run_o2a_optimal_estimation_batch(ctx, &request, &result),
+    );
+    try std.testing.expectEqual(c_api.ZdsOptimalEstimationBatchResult{}, result);
+    try std.testing.expectEqualStrings(
+        "invalid optimal-estimation batch_worker_count",
+        std.mem.span(c_api.zds_last_error(ctx)),
+    );
+}
+
+test "fastmode optimal-estimation batch rejects mismatched state ordering" {
+    const fast_ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
+    defer c_api.zds_context_destroy(fast_ctx);
+    const correction_ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
+    defer c_api.zds_context_destroy(correction_ctx);
+    try prepareTinyJson(fast_ctx);
+    try prepareTinyJson(correction_ctx);
+
+    const wavelength_nm = [_]f64{ 758.0, 760.0 };
+    const reflectance = [_]f64{ 0.12, 0.13 };
+    const variance = [_]f64{ 1.0e-4, 1.0e-4 };
+    const altitude_km = [_]f64{ 0.0, 1.0 };
+    const pressure_hpa = [_]f64{ 900.0, 800.0 };
+    var fast_state_template = [_]c_api.ZdsOptimalEstimationStateSpec{
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
+    };
+    var correction_state_template = [_]c_api.ZdsOptimalEstimationStateSpec{
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
+        aerosolOpticalDepthSpec(),
+    };
+    const initial = [_]f64{ 0.1, 850.0 };
+    const prior = [_]f64{ 0.1, 850.0 };
+    var fast_request = batchRequest(
+        &wavelength_nm,
+        &reflectance,
+        &variance,
+        &fast_state_template,
+        &initial,
+        &prior,
+    );
+    var correction_request = batchRequest(
+        &wavelength_nm,
+        &reflectance,
+        &variance,
+        &correction_state_template,
+        &initial,
+        &prior,
+    );
+    var result: c_api.ZdsOptimalEstimationFastmodeBatchResult = .{};
+
+    try std.testing.expectEqual(
+        @intFromEnum(c_api.ZdsStatus.failure),
+        c_api.zds_run_o2a_fastmode_optimal_estimation_batch(
+            fast_ctx,
+            correction_ctx,
+            &fast_request,
+            &correction_request,
+            &result,
+        ),
+    );
+    try std.testing.expectEqual(c_api.ZdsOptimalEstimationFastmodeBatchResult{}, result);
+    try std.testing.expectEqualStrings("InvalidStateSpec", std.mem.span(c_api.zds_last_error(fast_ctx)));
+}
+
 fn prepareTinyJson(ctx: *c_api.Context) !void {
     const allocator = std.testing.allocator;
     var json_len: usize = 0;
@@ -179,6 +266,27 @@ fn pressureStateWithoutProfile() c_api.ZdsOptimalEstimationStateSpec {
     };
 }
 
+fn aerosolPressureSpec(
+    altitude_km: []const f64,
+    pressure_hpa: []const f64,
+) c_api.ZdsOptimalEstimationStateSpec {
+    return .{
+        .state_id = 1,
+        .has_lower = 1,
+        .has_upper = 1,
+        .interval_index_1based = 2,
+        .initial = 850.0,
+        .prior = 850.0,
+        .variance = 100.0,
+        .lower = 600.0,
+        .upper = 1000.0,
+        .thickness_hpa = 10.0,
+        .pressure_profile_count = altitude_km.len,
+        .pressure_profile_altitude_km = altitude_km.ptr,
+        .pressure_profile_pressure_hpa = pressure_hpa.ptr,
+    };
+}
+
 fn singleRequest(
     wavelength_nm: []const f64,
     reflectance: []const f64,
@@ -192,5 +300,27 @@ fn singleRequest(
         .variance = variance.ptr,
         .state_count = states.len,
         .states = states.ptr,
+    };
+}
+
+fn batchRequest(
+    wavelength_nm: []const f64,
+    reflectance: []const f64,
+    variance: []const f64,
+    state_template: []const c_api.ZdsOptimalEstimationStateSpec,
+    initial: []const f64,
+    prior: []const f64,
+) c_api.ZdsOptimalEstimationBatchRequest {
+    return .{
+        .sample_count = wavelength_nm.len,
+        .wavelength_nm = wavelength_nm.ptr,
+        .reflectance = reflectance.ptr,
+        .variance = variance.ptr,
+        .state_count = state_template.len,
+        .state_template = state_template.ptr,
+        .run_count = initial.len / state_template.len,
+        .initial = initial.ptr,
+        .prior = prior.ptr,
+        .batch_worker_count = 1,
     };
 }

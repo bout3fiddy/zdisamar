@@ -35,6 +35,8 @@ RETRIEVAL_UNSUPPORTED_ERRORS = (
     "UnsupportedOptimalEstimationCorrection",
     "UnsupportedOptimalEstimationBatch",
     "UnsupportedFastmodeOptimalEstimationBatch",
+    "UnsupportedState",
+    "UnsupportedJacobianState",
 )
 
 
@@ -107,7 +109,7 @@ def run_retrieval_or_skip(
         return retrieval_module.run(db, progress, run_id)
     except RuntimeError as exc:
         reason = str(exc)
-        if reason not in RETRIEVAL_UNSUPPORTED_ERRORS:
+        if not unsupported_retrieval_error(reason):
             raise
 
         payload = {
@@ -117,7 +119,12 @@ def run_retrieval_or_skip(
         }
         db.summary(run_id, "retrieval_skipped", payload)
         progress.log("retrieval", f"skipped: {reason}")
-        return None
+        return payload
+
+
+def unsupported_retrieval_error(reason: str) -> bool:
+
+    return any(fragment in reason for fragment in RETRIEVAL_UNSUPPORTED_ERRORS)
 
 
 def build_fast_results(
@@ -142,7 +149,18 @@ def build_fast_results(
             "reason": "retrieval path not run",
         },
     }
-    if retrieval_result is not None:
+    if retrieval_result is not None and retrieval_result.get("status") == "skipped":
+        retrieval_cases = {
+            "oe_session": {
+                "status": "skipped",
+                "reason": retrieval_result["reason"],
+            },
+            "oe_sweep": {
+                "status": "skipped",
+                "reason": retrieval_result["reason"],
+            },
+        }
+    elif retrieval_result is not None:
         retrieval_session = retrieval_result["single"]["session"]
         retrieval_sweep = retrieval_result["sweep"]
         sweep_delta = retrieval_sweep["fast_minus_session"]

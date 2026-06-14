@@ -293,10 +293,14 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
     };
     const total_lines = try collectRuntimeLines(allocator, lines.rows, lines.isotopes_sim);
     defer allocator.free(total_lines);
+
+    const strong_sidecars = chooseStrongLineSidecars(lines);
+
     var active_lines: []readers.LineAssetRow = &.{};
     var weak_states: []WeakLinePreparedState = &.{};
     var total_weak_states: []WeakLinePreparedState = &.{};
     var strong_states: []StrongLinePreparedState = &.{};
+
     if (build_layer_values) {
         const line_strength_threshold = thresholdStrength(lines.rows, lines.threshold_line_sim);
         active_lines = try collectActiveLines(
@@ -323,8 +327,8 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
         );
         strong_states = try prepareLayerStrongLineStates(
             allocator,
-            lines.strong_lines,
-            lines.relaxation_matrix,
+            strong_sidecars.lines,
+            strong_sidecars.relaxation_matrix,
             layers.layer_temperatures_k,
             layers.layer_pressures_hpa,
             cost_timing_active,
@@ -375,8 +379,8 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
     defer deinitWeakLineStates(allocator, support_total_weak_states);
     const support_strong_states = try prepareProfileStrongLineStates(
         allocator,
-        lines.strong_lines,
-        lines.relaxation_matrix,
+        strong_sidecars.lines,
+        strong_sidecars.relaxation_matrix,
         layers.spectroscopy_profile.rows,
         cost_timing_active,
     );
@@ -387,7 +391,8 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
         worker_count,
         wavelengths_nm,
         layers,
-        lines,
+        strong_sidecars.lines,
+        strong_sidecars.relaxation_matrix,
         runtime,
         build_layer_values and include_temperature_derivatives,
         active_lines,
@@ -412,6 +417,8 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
         .support_profile_node_count = support_profile_node_count,
         .reuse_stamp = profileLineReuseStamp(
             scene.id,
+            lines,
+            layers,
             wavelengths_nm,
             build_layer_values,
             include_temperature_derivatives,
@@ -502,7 +509,8 @@ fn buildProfileLineValuesByWavelength(
     worker_count: usize,
     wavelengths_nm: []const f64,
     layers: atmosphere_layers.LayerGrid,
-    lines: line_tables.LineTable,
+    strong_lines: []const readers.StrongLineAssetRow,
+    relaxation_matrix: readers.RelaxationMatrixAsset,
     runtime: RuntimeControls,
     include_temperature_derivatives: bool,
     active_lines: []const readers.LineAssetRow,
@@ -555,8 +563,8 @@ fn buildProfileLineValuesByWavelength(
             .include_temperature_derivatives = include_temperature_derivatives,
             .active_lines = active_lines,
             .total_lines = total_lines,
-            .strong_lines = lines.strong_lines,
-            .relaxation_matrix = lines.relaxation_matrix,
+            .strong_lines = strong_lines,
+            .relaxation_matrix = relaxation_matrix,
             .weak_states = weak_states,
             .upper_weak_states = upper_weak_states,
             .lower_weak_states = lower_weak_states,
@@ -774,21 +782,125 @@ fn preferredProfileLineStateWorkerCount(profile_count: usize) usize {
 
 pub fn profileLineReuseStamp(
     scene_id: []const u8,
+    lines: line_tables.LineTable,
+    layers: atmosphere_layers.LayerGrid,
     wavelengths_nm: []const f64,
     build_layer_values: bool,
     include_temperature_derivatives: bool,
 ) hashing.ReuseStamp {
     // profileLineReuseStamp ----------------------------------------------------------------------------------|
-    // Include exact wavelength bits, layer-row presence, and derivative-row presence in the retained stamp.   |
+    // Include the line/profile inputs that determine retained spectroscopy rows.                              |
     // --------------------------------------------------------------------------------------------------------|
     var hasher = std.hash.Wyhash.init(0);
     hasher.update(scene_id);
-    hasher.update(std.mem.sliceAsBytes(wavelengths_nm));
-    const layer_byte = [_]u8{if (build_layer_values) 1 else 0};
-    hasher.update(&layer_byte);
-    const derivative_byte = [_]u8{if (include_temperature_derivatives) 1 else 0};
-    hasher.update(&derivative_byte);
+    hashF64Slice(&hasher, wavelengths_nm);
+    hashLineInputs(&hasher, lines);
+    atmosphere_layers.hashAll(&hasher, layers);
+    hashAtmosphereRows(&hasher, layers.spectroscopy_profile.rows);
+    hashing.updateBool(&hasher, build_layer_values);
+    hashing.updateBool(&hasher, include_temperature_derivatives);
     return .{ .value = hasher.final() };
+}
+
+fn hashLineInputs(hasher: *std.hash.Wyhash, lines: line_tables.LineTable) void {
+    // hashLineInputs -----------------------------------------------------------------------------------------|
+    // Hash parsed line assets and runtime line-filter controls without reading struct padding bytes.          |
+    // --------------------------------------------------------------------------------------------------------|
+    hashLineRows(hasher, lines.rows);
+    hashStrongLineRows(hasher, lines.strong_lines);
+    hashRelaxationMatrix(hasher, lines.relaxation_matrix);
+    hashing.updateValue(hasher, lines.isotopes_sim.len);
+    hasher.update(lines.isotopes_sim);
+    hashing.updateValue(hasher, lines.threshold_line_sim);
+    hashing.updateValue(hasher, lines.cutoff_sim_cm1);
+    hashing.updateValue(hasher, lines.line_mixing_factor);
+}
+
+fn hashLineRows(hasher: *std.hash.Wyhash, rows: []const readers.LineAssetRow) void {
+    // hashLineRows -------------------------------------------------------------------------------------------|
+    // Hash one HITRAN row family field-by-field so optional metadata participates in cache identity.          |
+    // --------------------------------------------------------------------------------------------------------|
+    hashing.updateValue(hasher, rows.len);
+    for (rows) |row| {
+        hashing.updateValue(hasher, row.gas_index);
+        hashing.updateValue(hasher, row.isotope_number);
+        hashing.updateBool(hasher, row.vendor_filter_metadata_from_source);
+        for ([_]f64{
+            row.center_wavelength_nm,
+            row.center_wavenumber_cm1,
+            row.line_strength_cm2_per_molecule,
+            row.air_half_width_cm1,
+            row.lower_state_energy_cm1,
+            row.temperature_exponent,
+            row.pressure_shift_cm1,
+        }) |value| hashing.updateValue(hasher, value);
+        hashOptionalU8(hasher, row.branch_ic1);
+        hashOptionalU8(hasher, row.branch_ic2);
+        hashOptionalU8(hasher, row.rotational_nf);
+    }
+}
+
+fn hashStrongLineRows(hasher: *std.hash.Wyhash, rows: []const readers.StrongLineAssetRow) void {
+    // hashStrongLineRows -------------------------------------------------------------------------------------|
+    // Hash LISA SDF sidecar rows that can contribute to strong-line and line-mixing sigma.                    |
+    // --------------------------------------------------------------------------------------------------------|
+    hashing.updateValue(hasher, rows.len);
+    for (rows) |row| {
+        for ([_]f64{
+            row.center_wavenumber_cm1,
+            row.center_wavelength_nm,
+            row.population_t0,
+            row.dipole_ratio,
+            row.dipole_t0,
+            row.lower_state_energy_cm1,
+            row.air_half_width_cm1,
+            row.air_half_width_nm,
+            row.temperature_exponent,
+            row.pressure_shift_cm1,
+            row.pressure_shift_nm,
+        }) |value| hashing.updateValue(hasher, value);
+        hashing.updateValue(hasher, row.rotational_index_m1);
+    }
+}
+
+fn hashRelaxationMatrix(hasher: *std.hash.Wyhash, matrix: readers.RelaxationMatrixAsset) void {
+    // hashRelaxationMatrix -----------------------------------------------------------------------------------|
+    // Hash the dense LISA RMF matrices and their square dimension.                                            |
+    // --------------------------------------------------------------------------------------------------------|
+    hashing.updateValue(hasher, matrix.line_count);
+    hashF64Slice(hasher, matrix.wt0);
+    hashF64Slice(hasher, matrix.bw);
+}
+
+fn hashAtmosphereRows(hasher: *std.hash.Wyhash, rows: []const readers.AtmosphereProfileRow) void {
+    // hashAtmosphereRows -------------------------------------------------------------------------------------|
+    // Hash spectroscopy-profile thermodynamics used by support-profile sigma rows.                            |
+    // --------------------------------------------------------------------------------------------------------|
+    hashing.updateValue(hasher, rows.len);
+    for (rows) |row| {
+        for ([_]f64{
+            row.altitude_km,
+            row.pressure_hpa,
+            row.temperature_k,
+            row.air_number_density_cm3,
+        }) |value| hashing.updateValue(hasher, value);
+    }
+}
+
+fn hashF64Slice(hasher: *std.hash.Wyhash, values: []const f64) void {
+    // hashF64Slice -------------------------------------------------------------------------------------------|
+    // Hash an f64 slice with its length so empty and repeated-prefix rows stay distinct.                      |
+    // --------------------------------------------------------------------------------------------------------|
+    hashing.updateValue(hasher, values.len);
+    hasher.update(std.mem.sliceAsBytes(values));
+}
+
+fn hashOptionalU8(hasher: *std.hash.Wyhash, value: ?u8) void {
+    // hashOptionalU8 -----------------------------------------------------------------------------------------|
+    // Hash optional compact metadata with explicit presence.                                                  |
+    // --------------------------------------------------------------------------------------------------------|
+    hashing.updateBool(hasher, value != null);
+    if (value) |resolved| hashing.updateValue(hasher, resolved);
 }
 
 fn prepareCutoffGrid(allocator: Allocator, support_wavelengths_nm: []const f64) !CutoffGrid {
@@ -830,6 +942,23 @@ fn lessThanF64(_: void, lhs: f64, rhs: f64) bool {
     return lhs < rhs;
 }
 
+fn chooseStrongLineSidecars(lines: line_tables.LineTable) StrongLineSidecars {
+    // chooseStrongLineSidecars -------------------------------------------------------------------------------|
+    // Use LISA strong-line sidecars only for isotope-1 O2 rows.                                               |
+    // --------------------------------------------------------------------------------------------------------|
+    if (isotopeOneActive(lines.isotopes_sim)) {
+        return .{
+            .lines = lines.strong_lines,
+            .relaxation_matrix = lines.relaxation_matrix,
+        };
+    }
+
+    return .{
+        .lines = &.{},
+        .relaxation_matrix = emptyRelaxationMatrix(),
+    };
+}
+
 // RuntimeControls --------------------------------------------------------------------------------------------|
 // Borrowed line-list controls needed by weak-line setup evaluation.                                           |
 //                                                                                                             |
@@ -846,6 +975,12 @@ const RuntimeControls = struct {
     line_mixing_factor: f64,
     cutoff_grid_wavelengths_nm: []const f64 = &.{},
     cutoff_grid_wavenumbers_cm1: []const f64 = &.{},
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+const StrongLineSidecars = struct {
+    lines: []const readers.StrongLineAssetRow,
+    relaxation_matrix: readers.RelaxationMatrixAsset,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -1310,5 +1445,15 @@ fn runtimeLine(line: readers.LineAssetRow, active_isotopes: []const u8) bool {
         if (line.isotope_number == isotope_number) return true;
     }
 
+    return false;
+}
+
+fn isotopeOneActive(active_isotopes: []const u8) bool {
+    // isotopeOneActive ---------------------------------------------------------------------------------------|
+    // LISA strong-line sidecars are isotope-1 O2 data; disable them when that isotope is not requested.       |
+    // --------------------------------------------------------------------------------------------------------|
+    for (active_isotopes) |isotope_number| {
+        if (isotope_number == 1) return true;
+    }
     return false;
 }

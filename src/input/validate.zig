@@ -11,8 +11,20 @@ pub fn sceneControls(scene: scene_input.Scene) !void {
     // Validate every control O2 A consumes so unsupported or malformed setup input cannot pass inertly.       |
     // --------------------------------------------------------------------------------------------------------|
     if (scene.spectral_grid.sample_count < 2) return errors.Error.InvalidControl;
-    if (scene.spectral_grid.end_nm <= scene.spectral_grid.start_nm) return errors.Error.InvalidControl;
-    if (scene.surface_albedo < 0.0 or scene.surface_albedo > 1.0) return errors.Error.InvalidControl;
+
+    if (!std.math.isFinite(scene.spectral_grid.start_nm) or
+        !std.math.isFinite(scene.spectral_grid.end_nm) or
+        scene.spectral_grid.end_nm <= scene.spectral_grid.start_nm)
+    {
+        return errors.Error.InvalidControl;
+    }
+
+    if (!std.math.isFinite(scene.surface_albedo) or
+        scene.surface_albedo < 0.0 or
+        scene.surface_albedo > 1.0)
+    {
+        return errors.Error.InvalidControl;
+    }
     try measuredWavelengths(scene.spectral_grid, scene.observation.measured_wavelengths_nm);
 
     if (scene.atmosphere.layer_count == 0) return errors.Error.InvalidControl;
@@ -25,26 +37,123 @@ pub fn sceneControls(scene: scene_input.Scene) !void {
 
     for (scene.atmosphere.intervals, 0..) |interval, index| {
         if (interval.index_1based != index + 1) return errors.Error.InvalidControl;
+
         if (interval.altitude_divisions == 0) return errors.Error.InvalidControl;
-        if (interval.bottom_pressure_hpa <= interval.top_pressure_hpa) return errors.Error.InvalidControl;
+
+        if (!std.math.isFinite(interval.top_pressure_hpa) or
+            !std.math.isFinite(interval.bottom_pressure_hpa) or
+            interval.bottom_pressure_hpa <= interval.top_pressure_hpa)
+        {
+            return errors.Error.InvalidControl;
+        }
+
+        if (index != 0 and
+            !std.math.approxEqAbs(
+                f64,
+                scene.atmosphere.intervals[index - 1].bottom_pressure_hpa,
+                interval.top_pressure_hpa,
+                profile_pressure_tolerance_hpa,
+            ))
+        {
+            return errors.Error.InvalidControl;
+        }
     }
 
-    if (scene.aerosol.optical_depth < 0.0) return errors.Error.InvalidControl;
-    if (scene.aerosol.single_scatter_albedo < 0.0 or scene.aerosol.single_scatter_albedo > 1.0) {
-        return errors.Error.InvalidControl;
-    }
+    try aerosolScalar(scene.aerosol, scene.atmosphere.intervals);
     try aerosolProfile(scene.aerosol.profile, scene.atmosphere.intervals);
 
-    if (scene.observation.instrument_line_fwhm_nm <= 0.0) return errors.Error.InvalidControl;
-    if (scene.observation.high_resolution_step_nm <= 0.0) return errors.Error.InvalidControl;
+    if (!std.math.isFinite(scene.observation.instrument_line_fwhm_nm) or
+        !std.math.isFinite(scene.observation.high_resolution_step_nm) or
+        !std.math.isFinite(scene.observation.high_resolution_half_span_nm) or
+        scene.observation.instrument_line_fwhm_nm <= 0.0 or
+        scene.observation.high_resolution_step_nm <= 0.0 or
+        scene.observation.high_resolution_half_span_nm < 0.0)
+    {
+        return errors.Error.InvalidControl;
+    }
 
     if (scene.line_gas.isotopes_sim.len == 0) return errors.Error.InvalidControl;
-    if (scene.line_gas.threshold_line_sim <= 0.0) return errors.Error.InvalidControl;
-    if (scene.line_gas.cutoff_sim_cm1 <= 0.0) return errors.Error.InvalidControl;
+
+    for (scene.line_gas.isotopes_sim) |isotope| {
+        if (isotope == 0) return errors.Error.InvalidControl;
+    }
+
+    if (!std.math.isFinite(scene.line_gas.line_mixing_factor) or
+        !std.math.isFinite(scene.line_gas.threshold_line_sim) or
+        !std.math.isFinite(scene.line_gas.cutoff_sim_cm1) or
+        scene.line_gas.threshold_line_sim <= 0.0 or
+        scene.line_gas.cutoff_sim_cm1 <= 0.0)
+    {
+        return errors.Error.InvalidControl;
+    }
 
     if (!scene.cia.enabled) return errors.Error.InvalidControl;
     if (scene.rtm.stream_count == 0) return errors.Error.InvalidControl;
+    if (scene.rtm.fourier_term_limit == 0 or
+        scene.rtm.fourier_term_limit > @as(usize, std.math.maxInt(u16)) + 1)
+    {
+        return errors.Error.InvalidControl;
+    }
     scene.rtm.performance_thresholds.validate() catch return errors.Error.InvalidControl;
+}
+
+fn aerosolScalar(
+    aerosol: scene_input.AerosolControls,
+    intervals: []const scene_input.VerticalInterval,
+) !void {
+    // aerosolScalar ------------------------------------------------------------------------------------------|
+    // Validate the scalar aerosol controls and their declared pressure interval.                              |
+    // --------------------------------------------------------------------------------------------------------|
+    if (!std.math.isFinite(aerosol.optical_depth) or aerosol.optical_depth < 0.0) {
+        return errors.Error.InvalidControl;
+    }
+
+    if (!std.math.isFinite(aerosol.single_scatter_albedo) or
+        aerosol.single_scatter_albedo < 0.0 or
+        aerosol.single_scatter_albedo > 1.0)
+    {
+        return errors.Error.InvalidControl;
+    }
+
+    if (!std.math.isFinite(aerosol.asymmetry_factor) or
+        aerosol.asymmetry_factor < -1.0 or
+        aerosol.asymmetry_factor > 1.0)
+    {
+        return errors.Error.InvalidControl;
+    }
+
+    if (!std.math.isFinite(aerosol.angstrom_exponent) or
+        !std.math.isFinite(aerosol.reference_wavelength_nm) or
+        aerosol.reference_wavelength_nm <= 0.0)
+    {
+        return errors.Error.InvalidControl;
+    }
+
+    if (aerosol.interval_index_1based == 0 or aerosol.interval_index_1based > intervals.len) {
+        return errors.Error.InvalidControl;
+    }
+
+    if (!std.math.isFinite(aerosol.top_pressure_hpa) or
+        !std.math.isFinite(aerosol.bottom_pressure_hpa) or
+        !(aerosol.top_pressure_hpa < aerosol.bottom_pressure_hpa))
+    {
+        return errors.Error.InvalidControl;
+    }
+
+    if (!scalarAerosolMatchesInterval(aerosol, intervals[aerosol.interval_index_1based - 1])) {
+        return errors.Error.InvalidRequest;
+    }
+}
+
+fn scalarAerosolMatchesInterval(
+    aerosol: scene_input.AerosolControls,
+    interval: scene_input.VerticalInterval,
+) bool {
+    // scalarAerosolMatchesInterval ---------------------------------------------------------------------------|
+    // Ensure the enabled scalar aerosol layer belongs to the selected atmosphere interval.                    |
+    // --------------------------------------------------------------------------------------------------------|
+    return aerosol.top_pressure_hpa + profile_pressure_tolerance_hpa >= interval.top_pressure_hpa and
+        aerosol.bottom_pressure_hpa <= interval.bottom_pressure_hpa + profile_pressure_tolerance_hpa;
 }
 
 fn measuredWavelengths(

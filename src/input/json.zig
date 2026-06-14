@@ -60,11 +60,11 @@ pub fn parseSceneJson(allocator: Allocator, raw_json: []const u8) !ParsedSceneJs
         NativeSceneJson,
         allocator,
         normalized.bytes,
-        .{ .ignore_unknown_fields = true, .allocate = .alloc_always },
+        .{ .allocate = .alloc_always },
     );
     errdefer parsed.deinit();
 
-    const scene = try buildScene(parsed.value);
+    const scene = try buildScene(parsed.arena.allocator(), parsed.value);
     try validate.sceneControls(scene);
 
     return .{ .parsed = parsed, .scene = scene };
@@ -82,7 +82,7 @@ pub fn renderDefaultSceneJson(allocator: Allocator) ![]u8 {
     return out.toOwnedSlice();
 }
 
-fn buildScene(native: NativeSceneJson) !scene_input.Scene {
+fn buildScene(allocator: Allocator, native: NativeSceneJson) !scene_input.Scene {
     // buildScene ---------------------------------------------------------------------------------------------|
     // Convert API JSON rows into Scene while rejecting unsupported controls at the parser boundary.           |
     // --------------------------------------------------------------------------------------------------------|
@@ -93,6 +93,8 @@ fn buildScene(native: NativeSceneJson) !scene_input.Scene {
     const performance_thresholds = try performanceThresholdsFromJson(native.rtm_controls.performance_thresholds);
     try validateRtm(native.rtm_controls, native.geometry.model, performance_thresholds);
     try validateAerosol(native.aerosol);
+    const intervals = try verticalIntervalsFromJson(allocator, native.intervals);
+    const aerosol_profile = try aerosolProfileRowsFromJson(allocator, native.aerosol.profile);
 
     const line_mixing_factor = native.o2.line_mixing_factor orelse return errors.Error.UnsupportedJsonInput;
     const threshold_line_sim = native.o2.threshold_line_sim orelse return errors.Error.UnsupportedJsonInput;
@@ -111,7 +113,7 @@ fn buildScene(native: NativeSceneJson) !scene_input.Scene {
             .layer_count = native.layer_count,
             .sublayer_divisions = native.sublayer_divisions,
             .fit_interval_index_1based = native.fit_interval_index_1based,
-            .intervals = native.intervals,
+            .intervals = intervals,
         },
 
         .geometry = .{
@@ -130,7 +132,7 @@ fn buildScene(native: NativeSceneJson) !scene_input.Scene {
             .interval_index_1based = native.aerosol.placement.interval_index_1based,
             .top_pressure_hpa = aerosolScalarTopPressureHpa(native.aerosol),
             .bottom_pressure_hpa = aerosolScalarBottomPressureHpa(native.aerosol),
-            .profile = aerosolProfileRows(native.aerosol),
+            .profile = aerosol_profile,
         },
 
         .observation = .{
@@ -233,6 +235,86 @@ fn validateAerosol(aerosol: AerosolJson) !void {
     if (!std.mem.eql(u8, aerosol.placement.semantics, "explicit_interval_bounds")) {
         return errors.Error.UnsupportedJsonInput;
     }
+    try validateInertAltitudePlaceholder(aerosol.placement.top_altitude_km);
+    try validateInertAltitudePlaceholder(aerosol.placement.bottom_altitude_km);
+}
+
+fn verticalIntervalsFromJson(
+    allocator: Allocator,
+    rows: []const VerticalIntervalJson,
+) ![]const scene_input.VerticalInterval {
+    // verticalIntervalsFromJson ------------------------------------------------------------------------------|
+    // Convert native interval JSON while accepting only null altitude placeholders as inert metadata.         |
+    // --------------------------------------------------------------------------------------------------------|
+    const intervals = try allocator.alloc(scene_input.VerticalInterval, rows.len);
+    errdefer allocator.free(intervals);
+
+    for (rows, intervals) |row, *interval| {
+        try validateInertAltitudePlaceholder(row.top_altitude_km);
+        try validateInertAltitudePlaceholder(row.bottom_altitude_km);
+        try validateInertPressureVariance(row.top_pressure_variance_hpa2);
+        try validateInertPressureVariance(row.bottom_pressure_variance_hpa2);
+        interval.* = .{
+            .index_1based = row.index_1based,
+            .top_pressure_hpa = row.top_pressure_hpa,
+            .bottom_pressure_hpa = row.bottom_pressure_hpa,
+            .altitude_divisions = row.altitude_divisions,
+        };
+    }
+
+    return intervals;
+}
+
+fn aerosolProfileRowsFromJson(
+    allocator: Allocator,
+    rows: []const AerosolProfileLayerJson,
+) ![]const scene_input.AerosolProfileLayer {
+    // aerosolProfileRowsFromJson -----------------------------------------------------------------------------|
+    // Convert public aerosol profile rows while rejecting non-null altitude placeholders on this pressure route.
+    // --------------------------------------------------------------------------------------------------------|
+    for (rows) |row| {
+        try validateInertAltitudePlaceholder(row.top_altitude_km);
+        try validateInertAltitudePlaceholder(row.bottom_altitude_km);
+    }
+    if (rows.len <= 1) return &.{};
+
+    const profile = try allocator.alloc(scene_input.AerosolProfileLayer, rows.len);
+    errdefer allocator.free(profile);
+    for (rows, profile) |row, *layer| {
+        layer.* = aerosolProfileLayerFromJson(row);
+    }
+    return profile;
+}
+
+fn aerosolProfileLayerFromJson(row: AerosolProfileLayerJson) scene_input.AerosolProfileLayer {
+    // aerosolProfileLayerFromJson ----------------------------------------------------------------------------|
+    // Strip known inert altitude placeholders after they have been validated as null.                         |
+    // --------------------------------------------------------------------------------------------------------|
+    return .{
+        .top_pressure_hpa = row.top_pressure_hpa,
+        .bottom_pressure_hpa = row.bottom_pressure_hpa,
+        .optical_depth = row.optical_depth,
+        .single_scatter_albedo = row.single_scatter_albedo,
+        .asymmetry_factor = row.asymmetry_factor,
+        .angstrom_exponent = row.angstrom_exponent,
+        .reference_wavelength_nm = row.reference_wavelength_nm,
+    };
+}
+
+fn validateInertAltitudePlaceholder(value: ?f64) !void {
+    // validateInertAltitudePlaceholder -----------------------------------------------------------------------|
+    // Native O2 A uses pressure bounds; finite altitude bounds would be silently inert on this route.         |
+    // --------------------------------------------------------------------------------------------------------|
+    if (value) |resolved| {
+        if (!std.math.isNan(resolved)) return errors.Error.UnsupportedJsonInput;
+    }
+}
+
+fn validateInertPressureVariance(value: f64) !void {
+    // validateInertPressureVariance --------------------------------------------------------------------------|
+    // Native O2 A consumes deterministic pressure bounds; non-zero pressure variances would be inert here.    |
+    // --------------------------------------------------------------------------------------------------------|
+    if (!std.math.isFinite(value) or value != 0.0) return errors.Error.UnsupportedJsonInput;
 }
 
 fn aerosolScalarOpticalDepth(aerosol: AerosolJson) f64 {
@@ -297,13 +379,6 @@ fn aerosolScalarBottomPressureHpa(aerosol: AerosolJson) f64 {
         aerosol.profile[0].bottom_pressure_hpa
     else
         aerosol.placement.bottom_pressure_hpa;
-}
-
-fn aerosolProfileRows(aerosol: AerosolJson) []const scene_input.AerosolProfileLayer {
-    // aerosolProfileRows -------------------------------------------------------------------------------------|
-    // Preserve single-layer folding while passing explicit multi-layer profile rows into setup.               |
-    // --------------------------------------------------------------------------------------------------------|
-    return if (aerosol.profile.len > 1) aerosol.profile else &.{};
 }
 
 fn performanceThresholdsFromJson(thresholds: PerformanceThresholdsJson) !transport_controls.PerformanceThresholds {
@@ -566,11 +641,36 @@ const GeometryJson = struct {
     relative_azimuth_deg: f64,
 };
 
+const VerticalIntervalJson = struct {
+    index_1based: usize,
+    top_pressure_hpa: f64,
+    bottom_pressure_hpa: f64,
+    top_altitude_km: ?f64 = null,
+    bottom_altitude_km: ?f64 = null,
+    top_pressure_variance_hpa2: f64 = 0.0,
+    bottom_pressure_variance_hpa2: f64 = 0.0,
+    altitude_divisions: usize,
+};
+
 const AerosolPlacementJson = struct {
     semantics: []const u8,
     interval_index_1based: usize,
     top_pressure_hpa: f64,
     bottom_pressure_hpa: f64,
+    top_altitude_km: ?f64 = null,
+    bottom_altitude_km: ?f64 = null,
+};
+
+const AerosolProfileLayerJson = struct {
+    top_pressure_hpa: f64,
+    bottom_pressure_hpa: f64,
+    top_altitude_km: ?f64 = null,
+    bottom_altitude_km: ?f64 = null,
+    optical_depth: f64,
+    single_scatter_albedo: f64 = 0.93,
+    asymmetry_factor: f64 = 0.65,
+    angstrom_exponent: f64 = 1.3,
+    reference_wavelength_nm: f64 = 550.0,
 };
 
 const AerosolJson = struct {
@@ -580,7 +680,7 @@ const AerosolJson = struct {
     angstrom_exponent: f64,
     reference_wavelength_nm: f64,
     placement: AerosolPlacementJson,
-    profile: []const scene_input.AerosolProfileLayer = &.{},
+    profile: []const AerosolProfileLayerJson = &.{},
 };
 
 const AdaptiveGridJson = struct {
@@ -659,7 +759,7 @@ const NativeSceneJson = struct {
     sublayer_divisions: usize,
     surface_pressure_hpa: f64,
     fit_interval_index_1based: usize,
-    intervals: []const scene_input.VerticalInterval,
+    intervals: []const VerticalIntervalJson,
     surface_albedo: f64,
     geometry: GeometryJson,
     aerosol: AerosolJson,

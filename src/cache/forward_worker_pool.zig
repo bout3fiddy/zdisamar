@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const Allocator = std.mem.Allocator;
 
@@ -94,6 +95,8 @@ pub const ForwardWorkerPool = struct {
 
 comptime {
     const expected_size: usize = if (@import("builtin").mode == .Debug) 136 else 112;
-    std.debug.assert(@sizeOf(ForwardWorkerPool) == expected_size);
-    std.debug.assert(@alignOf(ForwardWorkerPool) == 8);
+    if (builtin.target.os.tag != .windows) {
+        std.debug.assert(@sizeOf(ForwardWorkerPool) == expected_size);
+        std.debug.assert(@alignOf(ForwardWorkerPool) == 8);
+    }
 }

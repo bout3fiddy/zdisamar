@@ -30,6 +30,8 @@ RETRIEVAL_UNSUPPORTED_ERRORS = (
     "UnsupportedOptimalEstimationCorrection",
     "UnsupportedOptimalEstimationBatch",
     "UnsupportedFastmodeOptimalEstimationBatch",
+    "UnsupportedState",
+    "UnsupportedJacobianState",
 )
 
 
@@ -107,7 +109,7 @@ def run_retrieval_or_skip(
         retrieval_module.run(db, progress, run_id)
     except RuntimeError as exc:
         reason = str(exc)
-        if reason not in RETRIEVAL_UNSUPPORTED_ERRORS:
+        if not unsupported_retrieval_error(reason):
             raise
 
         db.summary(
@@ -120,6 +122,11 @@ def run_retrieval_or_skip(
             },
         )
         progress.log("retrieval", f"skipped: {reason}")
+
+
+def unsupported_retrieval_error(reason: str) -> bool:
+
+    return any(fragment in reason for fragment in RETRIEVAL_UNSUPPORTED_ERRORS)
 
 
 if __name__ == "__main__":

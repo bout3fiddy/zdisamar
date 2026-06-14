@@ -898,7 +898,7 @@ def resolved_state_vector_from_profile(
     changed = False
 
     for parameter in state_vector.parameters:
-        resolver = getattr(parameter, "resolve_for_case", None)
+        resolver = getattr(parameter, "resolve_for_scene", None)
 
         if resolver is None:
             parameters.append(parameter)

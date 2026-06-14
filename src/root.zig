@@ -33,6 +33,7 @@ const spectrum_run = @import("spectrum/spectrum_run.zig");
 const CostTiming = @import("instrumentation/cost_timing.zig");
 
 const Allocator = std.mem.Allocator;
+pub const geometry_direction_cosine_floor: f64 = 0.05;
 
 // root.zig ---------------------------------------------------------------------------------------------------|
 // Public explicit row surface for the O2 A forward model.                                                     |
@@ -640,6 +641,10 @@ pub fn runFastmodeOptimalEstimationBatch(
     // --------------------------------------------------------------------------------------------------------|
     if (fast_state_template.len != correction_state_template.len) return error.InvalidStateSpec;
 
+    for (fast_state_template, correction_state_template) |fast_spec, correction_spec| {
+        if (fast_spec.state != correction_spec.state) return error.InvalidStateSpec;
+    }
+
     if (initial_states.len != prior_states.len) return error.InvalidStateSpec;
 
     if (correction_prior_states.len != prior_states.len) return error.InvalidStateSpec;
@@ -818,6 +823,7 @@ pub fn solveConfig(scene: Scene) SolveConfig {
     // solveConfig --------------------------------------------------------------------------------------------|
     // Build the exercised O2 A transport controls used by integrated transport evidence.                      |
     // --------------------------------------------------------------------------------------------------------|
+    const performance_thresholds = performanceThresholdsWithFourierLimit(scene.rtm);
     return .{
         .derivative_mode = .semi_analytical,
         .derivative_state_mask = jacobian_states.stateMask(.aerosol_optical_depth) |
@@ -825,12 +831,25 @@ pub fn solveConfig(scene: Scene) SolveConfig {
         .controls = .{
             .scattering = .multiple,
             .n_streams = @intCast(scene.rtm.stream_count),
-            .performance_thresholds = scene.rtm.performance_thresholds,
+            .performance_thresholds = performance_thresholds,
             .use_spherical_correction = scene.geometry.pseudo_spherical,
             .integrate_source_function = true,
             .renorm_phase_function = true,
         },
     };
+}
+
+fn performanceThresholdsWithFourierLimit(rtm: scene_input.RtmControls) controls.PerformanceThresholds {
+    // performanceThresholdsWithFourierLimit ------------------------------------------------------------------|
+    // Convert the public Fourier term count into the inclusive Fourier-order cap used by transport.           |
+    // --------------------------------------------------------------------------------------------------------|
+    var thresholds = rtm.performance_thresholds;
+    const term_cap: u16 = @intCast(rtm.fourier_term_limit - 1);
+    thresholds.fourier_order_cap = if (thresholds.fourier_order_cap) |cap|
+        @min(cap, term_cap)
+    else
+        term_cap;
+    return thresholds;
 }
 
 fn validateRetrievalControls(retrieval_controls: retrieval.Controls) !void {
@@ -1028,6 +1047,8 @@ fn prepareSessionRows(
     const needs_temperature_derivatives = false;
     const profile_stamp = profile_lines.profileLineReuseStamp(
         prepared.scene.id,
+        prepared.tables.lines,
+        prepared.tables.layers,
         exact_wavelengths,
         build_layer_values,
         needs_temperature_derivatives,
@@ -1242,8 +1263,14 @@ fn viewAngles(scene: Scene) solve.ViewAngles {
     const solar_sin = @sin(std.math.degreesToRadians(scene.geometry.solar_zenith_deg));
     const view_sin = @sin(std.math.degreesToRadians(scene.geometry.viewing_zenith_deg));
     return .{
-        .solar_mu = @sqrt(@max(1.0 - solar_sin * solar_sin, 0.0)),
-        .view_mu = @sqrt(@max(1.0 - view_sin * view_sin, 0.0)),
+        .solar_mu = @max(
+            @sqrt(@max(1.0 - solar_sin * solar_sin, 0.0)),
+            geometry_direction_cosine_floor,
+        ),
+        .view_mu = @max(
+            @sqrt(@max(1.0 - view_sin * view_sin, 0.0)),
+            geometry_direction_cosine_floor,
+        ),
 
         .relative_azimuth_rad = std.math.degreesToRadians(@mod(180.0 - scene.geometry.relative_azimuth_deg, 360.0)),
     };

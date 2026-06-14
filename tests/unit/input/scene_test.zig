@@ -22,6 +22,37 @@ test "invalid controls are rejected instead of carried inertly" {
     scene.cia.enabled = false;
     try std.testing.expectError(error.InvalidControl, internal.input.validate.sceneControls(scene));
 
+    scene = internal.input.defaults.referenceScene();
+    scene.surface_albedo = std.math.nan(f64);
+    try std.testing.expectError(error.InvalidControl, internal.input.validate.sceneControls(scene));
+
+    scene = internal.input.defaults.referenceScene();
+    scene.aerosol.asymmetry_factor = 2.0;
+    try std.testing.expectError(error.InvalidControl, internal.input.validate.sceneControls(scene));
+
+    scene = internal.input.defaults.referenceScene();
+    scene.aerosol.interval_index_1based = 1;
+    try std.testing.expectError(error.InvalidRequest, internal.input.validate.sceneControls(scene));
+
+    scene = internal.input.defaults.referenceScene();
+    var intervals = [_]internal.input.scene_input.VerticalInterval{
+        scene.atmosphere.intervals[0],
+        scene.atmosphere.intervals[1],
+        scene.atmosphere.intervals[2],
+    };
+    intervals[1].top_pressure_hpa = 501.0;
+    scene.atmosphere.intervals = intervals[0..];
+    try std.testing.expectError(error.InvalidControl, internal.input.validate.sceneControls(scene));
+
+    scene = internal.input.defaults.referenceScene();
+    const invalid_isotopes = [_]u8{ 1, 0 };
+    scene.line_gas.isotopes_sim = invalid_isotopes[0..];
+    try std.testing.expectError(error.InvalidControl, internal.input.validate.sceneControls(scene));
+
+    scene = internal.input.defaults.referenceScene();
+    scene.rtm.fourier_term_limit = 0;
+    try std.testing.expectError(error.InvalidControl, internal.input.validate.sceneControls(scene));
+
     try std.testing.expectError(
         error.MissingField,
         internal.input.json.parseSceneJson(std.testing.allocator, "{}"),
@@ -71,6 +102,55 @@ test "Python NaN altitude placeholders are normalized before typed parsing" {
     try std.testing.expectEqual(@as(f64, 0.3), parsed.scene.atmosphere.intervals[0].top_pressure_hpa);
 }
 
+test "Python native JSON rejects unknown controls while accepting null altitude placeholders" {
+    const allocator = std.testing.allocator;
+
+    const rendered = try internal.input.json.renderDefaultSceneJson(allocator);
+    defer allocator.free(rendered);
+
+    const unknown_threshold = try std.mem.replaceOwned(
+        u8,
+        allocator,
+        rendered,
+        "\"performance_thresholds\":{",
+        "\"performance_thresholds\":{\"typo\":1,",
+    );
+    defer allocator.free(unknown_threshold);
+
+    try std.testing.expectError(
+        error.UnknownField,
+        internal.input.json.parseSceneJson(allocator, unknown_threshold),
+    );
+
+    const finite_altitude = try std.mem.replaceOwned(
+        u8,
+        allocator,
+        rendered,
+        "\"index_1based\":1,",
+        "\"index_1based\":1,\"top_altitude_km\":1.0,",
+    );
+    defer allocator.free(finite_altitude);
+
+    try std.testing.expectError(
+        error.UnsupportedJsonInput,
+        internal.input.json.parseSceneJson(allocator, finite_altitude),
+    );
+
+    const pressure_variance = try std.mem.replaceOwned(
+        u8,
+        allocator,
+        rendered,
+        "\"index_1based\":1,",
+        "\"index_1based\":1,\"top_pressure_variance_hpa2\":1.0,",
+    );
+    defer allocator.free(pressure_variance);
+
+    try std.testing.expectError(
+        error.UnsupportedJsonInput,
+        internal.input.json.parseSceneJson(allocator, pressure_variance),
+    );
+}
+
 test "Python native fast RTM thresholds are consumed by solve config" {
     const allocator = std.testing.allocator;
 
@@ -95,6 +175,23 @@ test "Python native fast RTM thresholds are consumed by solve config" {
     try std.testing.expectEqual(
         @as(?u16, 5),
         internal.public.solveConfig(parsed.scene).controls.performance_thresholds.fourier_order_cap,
+    );
+}
+
+test "RTM Fourier term limit is consumed by solve config" {
+    var scene = internal.input.defaults.referenceScene();
+    scene.rtm.fourier_term_limit = 3;
+
+    try internal.input.validate.sceneControls(scene);
+    try std.testing.expectEqual(
+        @as(?u16, 2),
+        internal.public.solveConfig(scene).controls.performance_thresholds.fourier_order_cap,
+    );
+
+    scene.rtm.performance_thresholds.fourier_order_cap = 1;
+    try std.testing.expectEqual(
+        @as(?u16, 1),
+        internal.public.solveConfig(scene).controls.performance_thresholds.fourier_order_cap,
     );
 }
 

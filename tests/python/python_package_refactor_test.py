@@ -865,6 +865,25 @@ def assert_scene_aerosol_state_properties() -> None:
     assert "layer_center_km" not in serialized_aerosol
     assert "layer_width_km" not in serialized_aerosol
 
+    native_scene = copy.deepcopy(scene.to_native_dict())
+    native_intervals = cast(list[dict[str, object]], native_scene["intervals"])
+    native_intervals[0]["top_altitude_km"] = None
+    native_intervals[0]["bottom_altitude_km"] = None
+    native_intervals[0]["top_pressure_variance_hpa2"] = None
+    native_intervals[0]["bottom_pressure_variance_hpa2"] = None
+    native_aerosol = cast(dict[str, object], native_scene["aerosol"])
+    native_placement = cast(dict[str, object], native_aerosol["placement"])
+    native_placement["top_altitude_km"] = None
+    native_placement["bottom_altitude_km"] = None
+
+    null_placeholder_scene = o2a.Scene.from_dict(native_scene)
+    assert math.isnan(null_placeholder_scene.atmosphere.intervals[0].top_altitude_km)
+    assert math.isnan(null_placeholder_scene.atmosphere.intervals[0].bottom_altitude_km)
+    assert null_placeholder_scene.atmosphere.intervals[0].top_pressure_variance_hpa2 == 0.0
+    assert null_placeholder_scene.atmosphere.intervals[0].bottom_pressure_variance_hpa2 == 0.0
+    assert math.isnan(null_placeholder_scene.aerosol.placement.top_altitude_km)
+    assert math.isnan(null_placeholder_scene.aerosol.placement.bottom_altitude_km)
+
     scene.aerosol_optical_depth_550_nm = 0.31
     scene.aerosol_layer.thickness_hpa = 50.0
     scene.aerosol_layer.mid_pressure_hpa = 900.0

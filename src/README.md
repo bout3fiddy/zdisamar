@@ -2,7 +2,7 @@
 
 `zdisamar` computes the top-of-atmosphere reflectance spectrum across the oxygen
 A band (about 755–775 nm) and fits it for aerosol parameters, specifically the
-aerosol optical thickness and the aerosol layer height. This directory holds the 
+aerosol optical thickness and the aerosol layer height. This directory holds the
 whole model.
 
 Each subdirectory has its own README with the physics and the data flow for that
