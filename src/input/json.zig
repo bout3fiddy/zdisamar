@@ -15,7 +15,7 @@ const default_output_isotopes = [_]usize{ 1, 2, 3 };
 // boundary                                                                                                    |
 //   Python emits Scene.to_native_json_bytes() with resolved asset paths and a few Python bookkeeping          |
 //   fields. This parser turns that API shape into Scene, validates controls that are intentionally inert      |
-//   for this O2 A forward-only route, and rejects unsupported route changes before compute sees the case.     |
+//   for this O2 A forward-only route, and rejects unsupported route changes before compute sees the scene.    |
 //                                                                                                             |
 // JSON input normalization                                                                                    |
 //   Python's json encoder emits bare NaN for optional altitude placeholders. Zig's JSON scanner is strict,    |
@@ -31,17 +31,17 @@ const default_output_isotopes = [_]usize{ 1, 2, 3 };
 //                                                                                                             |
 // memory                                                                                                      |
 // [   0..1039] parsed: std.json.Parsed(NativeSceneJson)                                                       |
-// [1040..1743] case  : Scene                                                                                  |
+// [1040..1743] scene : Scene                                                                                  |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   case slices and strings point into parsed.arena and stay valid until deinit.                              |
+//   scene slices and strings point into parsed.arena and stay valid until deinit.                             |
 pub const ParsedSceneJson = struct {
     parsed: std.json.Parsed(NativeSceneJson),
     scene: scene_input.Scene,
 
     pub fn deinit(self: *ParsedSceneJson) void {
         // ParsedSceneJson.deinit -----------------------------------------------------------------------------|
-        // Release the JSON parser arena that backs all borrowed case strings and slices.                      |
+        // Release the JSON parser arena that backs all borrowed scene strings and slices.                     |
         // ----------------------------------------------------------------------------------------------------|
         self.parsed.deinit();
         self.* = undefined;
@@ -51,7 +51,7 @@ pub const ParsedSceneJson = struct {
 
 pub fn parseSceneJson(allocator: Allocator, raw_json: []const u8) !ParsedSceneJson {
     // parseSceneJson -----------------------------------------------------------------------------------------|
-    // Parse Python's native O2 A JSON shape and return a typed case borrowing parser-owned rows.              |
+    // Parse Python's native O2 A JSON shape and return a typed scene borrowing parser-owned rows.             |
     // --------------------------------------------------------------------------------------------------------|
     const normalized = try normalizePythonJson(allocator, raw_json);
     defer normalized.deinit(allocator);
@@ -72,7 +72,7 @@ pub fn parseSceneJson(allocator: Allocator, raw_json: []const u8) !ParsedSceneJs
 
 pub fn renderDefaultSceneJson(allocator: Allocator) ![]u8 {
     // renderDefaultSceneJson ---------------------------------------------------------------------------------|
-    // Render the built-in O2 A case in the Python native JSON shape consumed by Scene.from_json.              |
+    // Render the built-in O2 A scene in the Python native JSON shape consumed by Scene.from_json.             |
     // --------------------------------------------------------------------------------------------------------|
     const scene = defaults.referenceScene();
     var out: std.Io.Writer.Allocating = .init(allocator);
@@ -213,7 +213,7 @@ fn validateRtm(
     performance_thresholds: transport_controls.PerformanceThresholds,
 ) !void {
     // validateRtm --------------------------------------------------------------------------------------------|
-    // Keep O2 A on the supported integrated-source route while consuming case-owned LABOS threshold controls. |
+    // Keep O2 A on the supported integrated-source route while consuming scene-owned LABOS threshold controls.|
     // --------------------------------------------------------------------------------------------------------|
     if (!std.mem.eql(u8, rtm.scattering, "multiple")) return errors.Error.UnsupportedJsonInput;
     if (rtm.n_streams != defaults.referenceScene().rtm.stream_count) return errors.Error.UnsupportedJsonInput;
@@ -386,7 +386,7 @@ fn performanceThresholdsFromJson(thresholds: PerformanceThresholdsJson) !transpo
     // Convert Python-native LABOS threshold controls into the transport row consumed by root solve config.    |
     //                                                                                                         |
     // boundary                                                                                                |
-    //   Python `with_rtm_optimisation_applied()` writes fastmode RTM thresholds into the native case before   |
+    //   Python `with_rtm_optimisation_applied()` writes fastmode RTM thresholds into the native scene before  |
     //   crossing the C ABI. The parser must consume those values; accepting them and then using defaults      |
     //   would silently ignore a public forward control.                                                       |
     // --------------------------------------------------------------------------------------------------------|
@@ -430,7 +430,7 @@ fn expectAsset(asset: scene_input.Asset, id: []const u8, format: []const u8) !vo
 
 fn outputScene(scene: scene_input.Scene) OutputSceneJson {
     // outputScene --------------------------------------------------------------------------------------------|
-    // Build the Python-native JSON view for the built-in default product case.                                |
+    // Build the Python-native JSON view for the built-in default product scene.                               |
     // --------------------------------------------------------------------------------------------------------|
     const geometry_model = if (scene.geometry.pseudo_spherical) "pseudo_spherical" else "plane_parallel";
 

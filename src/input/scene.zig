@@ -1,8 +1,8 @@
 const std = @import("std");
 const transport_controls = @import("../rtm/controls.zig");
 
-// case.zig -----------------------------------------------------------------------------------------------    |
-// Typed O2 A product-case controls consumed by setup tables and forward runs.                                 |
+// scene.zig ----------------------------------------------------------------------------------------------    |
+// Typed O2 A product-scene controls consumed by setup tables and forward runs.                                |
 //                                                                                                             |
 // runtime boundary                                                                                            |
 //   These rows are setup inputs only. Asset paths and text formats are resolved by src/assets; setup tables   |
@@ -306,7 +306,7 @@ pub const Scene = struct {
 
 pub fn asset(id: []const u8, path: []const u8, format: []const u8) Asset {
     // asset --------------------------------------------------------------------------------------------------|
-    // Build a borrowed asset descriptor for static default-case assets.                                       |
+    // Build a borrowed asset descriptor for static default-scene assets.                                      |
     // --------------------------------------------------------------------------------------------------------|
     return .{ .id = id, .path = path, .format = format };
 }

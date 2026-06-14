@@ -25,7 +25,7 @@ const default_isotopes = [_]u8{ 1, 2, 3 };
 
 pub fn referenceScene() scene_input.Scene {
     // referenceScene -----------------------------------------------------------------------------------------|
-    // Return the default product O2 A case used by Python and public forward runs.                            |
+    // Return the default product O2 A scene used by Python and public forward runs.                           |
     // --------------------------------------------------------------------------------------------------------|
     return .{
         .id = "o2a_disamar_reference_python",
