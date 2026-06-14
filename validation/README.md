@@ -96,7 +96,7 @@ the bundle is `1e-13` max absolute residual.
 
 ## Baseline Case
 
-Validation lanes use the typed O2 A baseline exposed by `zdisamar.defaultO2AInput()`
+Validation lanes use the typed O2 A baseline exposed by `zdisamar.wavelength_bands.o2a.reference_scene()`
 and mirrored in `validation/o2a/case.py`. Keep Zig validation
 tests and Python validation scripts aligned with that case instead of introducing
 a second serialized validation input.

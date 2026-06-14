@@ -16,6 +16,14 @@ def to_float(value: object) -> float:
     raise TypeError(f"expected numeric value, got {type(value).__name__}")
 
 
+def placeholder_float(data: dict[str, object], key: str, default: float) -> float:
+    """Convert inert placeholder fields where null means omitted."""
+
+    value = data.get(key, default)
+
+    return default if value is None else to_float(value)
+
+
 def to_int(value: object) -> int:
     """Convert a JSON scalar to int with a typed failure for bad shapes."""
 

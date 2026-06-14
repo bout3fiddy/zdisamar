@@ -19,11 +19,10 @@ FN_RE = re.compile(r"\b(?:pub\s+)?(?:inline\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)\b"
 LOCAL_TYPE_RE = re.compile(r"\b(?:const|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([^=;]+)")
 
 HOT_PATH_PARTS = {
-    "forward_model",
-    "instrument_grid",
-    "labos",
-    "optical_properties",
-    "optimal_estimation",
+    "optics",
+    "retrieval",
+    "rtm",
+    "spectrum",
 }
 ACCESS_WORDS = {"for", "if", "while", "switch", "return", "try", "catch", "else"}
 NUMERIC_TYPES = {

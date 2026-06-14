@@ -112,7 +112,7 @@ def mid_pressure_jacobian_scale(case) -> float:
 
     from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
 
-    profile = o2a_oe.pressure_altitude_profile_from_case(case)
+    profile = o2a_oe.pressure_altitude_profile_from_scene(case)
 
     aerosol_mid_pressure_hpa = 0.5 * (
         case.aerosol.placement.top_pressure_hpa + case.aerosol.placement.bottom_pressure_hpa

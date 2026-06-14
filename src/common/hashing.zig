@@ -1,39 +1,50 @@
 const std = @import("std");
 
 // hashing.zig ------------------------------------------------------------------------------------------------|
-// Shared exact-bit hash helpers for cache and plan keys. These helpers only append bytes to a caller-owned    |
-// Wyhash; seed choice and domain-specific fields stay local to each key builder.                              |
+// Reuse stamps for setup/cache owners.                                                                        |
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn updateOptionalInt(hash: *std.hash.Wyhash, value: anytype) void {
-    updateInt(hash, value != null);
-    if (value) |resolved| updateInt(hash, resolved);
-}
+// ReuseStamp -------------------------------------------------------------------------------------------------|
+// Compact identity stamp for retained setup/cache rows.                                                       |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 8 B (0.008 KiB), align: 8 B                                                                           |
+//                                                                                                             |
+// memory                                                                                                      |
+// [0..7] value : u64                                                                                          |
+pub const ReuseStamp = struct {
+    value: u64 = 0,
 
-pub fn updateOptionalIntSlice(hash: *std.hash.Wyhash, value: anytype) void {
-    updateInt(hash, value != null);
-    if (value) |resolved| {
-        updateInt(hash, resolved.len);
-        for (resolved) |item| updateOptionalInt(hash, item);
+    pub fn eql(self: ReuseStamp, other: ReuseStamp) bool {
+        // ReuseStamp.eql -------------------------------------------------------------------------------------|
+        // Compare two retained setup/cache stamps.                                                            |
+        // ----------------------------------------------------------------------------------------------------|
+        return self.value == other.value;
     }
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+pub fn updateValue(hasher: *std.hash.Wyhash, value: anytype) void {
+    // updateValue ------------------------------------------------------------------------------------------- |
+    // Hash one scalar value after the caller has reduced enums/options to padding-free storage.               |
+    // --------------------------------------------------------------------------------------------------------|
+    const stored = value;
+    hasher.update(std.mem.asBytes(&stored));
 }
 
-pub fn updateOptionalFloat(hash: *std.hash.Wyhash, value: ?f64) void {
-    updateInt(hash, value != null);
-    if (value) |resolved| updateFloat(hash, resolved);
+pub fn updateBool(hasher: *std.hash.Wyhash, value: bool) void {
+    // updateBool -------------------------------------------------------------------------------------------- |
+    // Hash one bool as a stable byte instead of compiler-specific bool storage.                               |
+    // --------------------------------------------------------------------------------------------------------|
+    const byte = [_]u8{if (value) 1 else 0};
+    hasher.update(&byte);
 }
 
-pub fn updateFloatSlice(hash: *std.hash.Wyhash, values: []const f64) void {
-    updateInt(hash, values.len);
-    hash.update(std.mem.sliceAsBytes(values));
+pub fn updateOptionalU16(hasher: *std.hash.Wyhash, value: ?u16) void {
+    // updateOptionalU16 ------------------------------------------------------------------------------------- |
+    // Hash optional u16 caps with an explicit presence byte.                                                  |
+    // --------------------------------------------------------------------------------------------------------|
+    updateBool(hasher, value != null);
+    if (value) |resolved| updateValue(hasher, resolved);
 }
-
-pub fn updateFloat(hash: *std.hash.Wyhash, value: f64) void {
-    var bits = @as(u64, @bitCast(value));
-    hash.update(std.mem.asBytes(&bits));
-}
-
-pub fn updateInt(hash: *std.hash.Wyhash, value: anytype) void {
-    var bits = value;
-    hash.update(std.mem.asBytes(&bits));
-}
+// ------------------------------------------------------------------------------------------------------------|

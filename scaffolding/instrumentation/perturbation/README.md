@@ -13,7 +13,7 @@ shape:
 - the research executable imports the real perturbation sink and sets the build
   option to `true`;
 - all file I/O, experiment catalogs, result tables, and mutable experiment state
-  stay outside `src/forward_model/`;
+  stay outside `src/`;
 - every hook compiles to the baseline expression in product builds.
 
 ## Boundary
@@ -25,8 +25,8 @@ call typed perturbation-channel functions with values it already computed.
 Intended module layout:
 
 ```text
-src/forward_model/instrumentation/sensitivity.zig
-src/forward_model/instrumentation/stubs/perturbation_sensitivity_sink.zig
+src/instrumentation/sensitivity.zig
+src/instrumentation/stubs/perturbation_sensitivity_sink.zig
 scaffolding/instrumentation/perturbation/zig/perturbation_sensitivity_sink.zig
 scaffolding/instrumentation/perturbation/zig/perturbation_sensitivity_cli.zig
 scaffolding/instrumentation/perturbation/
@@ -108,15 +108,15 @@ residual question.
 
 | Channel | Source | Baseline expression | Perturbation question |
 | --- | --- | --- | --- |
-| `fourier_weighted_reflectance` | `src/forward_model/radiative_transfer/labos/execute.zig` | `fourier_weight * refl_fc` | Which Fourier terms can be zeroed without changing spectra beyond tolerance? |
-| `fourier_tail_break` | `src/forward_model/radiative_transfer/labos/execute.zig` | current tail-break decision | How early can we stop if cumulative residual stays bounded? |
-| `qseries_skip` | `src/forward_model/radiative_transfer/labos/layers.zig` | `abs(trace(R)^2) <= threshold_mul` | Are always-skip coordinates safe to force skip across scenes? |
-| `qseries_rd_product` | `src/forward_model/radiative_transfer/labos/layers.zig` | `abs(trace(R) * trace(D)) > threshold_mul` | When `qseries_skip=true`, can rare `R-D` work be suppressed? |
-| `qseries_tu_product` | `src/forward_model/radiative_transfer/labos/layers.zig` | `abs(trace(T) * trace(U)) > threshold_mul` | When `qseries_skip=true`, can rare `T-U` work be suppressed? |
-| `qseries_td_product` | `src/forward_model/radiative_transfer/labos/layers.zig` | `abs(trace(T) * trace(D)) > threshold_mul` | When `qseries_skip=true`, can rare `T-D` work be suppressed? |
-| `orders_convergence` | `src/forward_model/radiative_transfer/labos/orders.zig` | order-loop convergence decision | What residual appears if late scattering orders are stopped earlier? |
-| `aerosol_aod_tangent` | `src/forward_model/radiative_transfer/labos/execute.zig` | Fourier-weighted AOD tangent | Which derivative terms matter to OE retrieval state? |
-| `aerosol_pressure_tangent` | `src/forward_model/radiative_transfer/labos/execute.zig` | Fourier-weighted pressure tangent | Which pressure derivative terms matter to OE retrieval state? |
+| `fourier_weighted_reflectance` | `src/rtm/solve.zig` | `fourier_weight * refl_fc` | Which Fourier terms can be zeroed without changing spectra beyond tolerance? |
+| `fourier_tail_break` | `src/rtm/solve.zig` | current tail-break decision | How early can we stop if cumulative residual stays bounded? |
+| `qseries_skip` | `src/rtm/layer_reflect_transmit.zig` | `abs(trace(R)^2) <= threshold_mul` | Are always-skip coordinates safe to force skip across scenes? |
+| `qseries_rd_product` | `src/rtm/layer_reflect_transmit.zig` | `abs(trace(R) * trace(D)) > threshold_mul` | When `qseries_skip=true`, can rare `R-D` work be suppressed? |
+| `qseries_tu_product` | `src/rtm/layer_reflect_transmit.zig` | `abs(trace(T) * trace(U)) > threshold_mul` | When `qseries_skip=true`, can rare `T-U` work be suppressed? |
+| `qseries_td_product` | `src/rtm/layer_reflect_transmit.zig` | `abs(trace(T) * trace(D)) > threshold_mul` | When `qseries_skip=true`, can rare `T-D` work be suppressed? |
+| `orders_convergence` | `src/rtm/scattering_orders.zig` | order-loop convergence decision | What residual appears if late scattering orders are stopped earlier? |
+| `aerosol_aod_tangent` | `src/rtm/solve.zig` | Fourier-weighted AOD tangent | Which derivative terms matter to OE retrieval state? |
+| `aerosol_pressure_tangent` | `src/rtm/solve.zig` | Fourier-weighted pressure tangent | Which pressure derivative terms matter to OE retrieval state? |
 
 Avoid perturbing physical scene inputs first. Zeroing optical depth, single
 scatter albedo, or phase coefficients answers a different question: it changes
@@ -224,6 +224,6 @@ Every perturbation-channel implementation must prove:
   perturbation sink;
 - the research executable is the only build target with
   `enable_perturbation_sensitivity=true`;
-- no file I/O or experiment state is reachable from `src/forward_model/` in
+- no file I/O or experiment state is reachable from product `src/` modules in
   product builds;
 - no unused channel hooks remain after an experiment is rejected.

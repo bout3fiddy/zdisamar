@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Self
 
-from .shared import object_dict, object_dict_list, to_float, to_int
+from .shared import object_dict, object_dict_list, placeholder_float, to_float, to_int
 
 
 @dataclass
@@ -27,8 +27,8 @@ class AerosolPlacement:
             interval_index_1based=to_int(data["interval_index_1based"]),
             top_pressure_hpa=to_float(data["top_pressure_hpa"]),
             bottom_pressure_hpa=to_float(data["bottom_pressure_hpa"]),
-            top_altitude_km=to_float(data.get("top_altitude_km", math.nan)),
-            bottom_altitude_km=to_float(data.get("bottom_altitude_km", math.nan)),
+            top_altitude_km=placeholder_float(data, "top_altitude_km", math.nan),
+            bottom_altitude_km=placeholder_float(data, "bottom_altitude_km", math.nan),
         )
 
     def to_dict(self) -> dict[str, float | int | str]:

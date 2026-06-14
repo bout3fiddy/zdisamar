@@ -1,96 +1,76 @@
 const std = @import("std");
-const Scene = @import("../input/Scene.zig").Scene;
-const Optics = @import("../forward_model/optical_properties/root.zig");
-const Rayleigh = @import("../input/reference/rayleigh.zig");
-const OpticalDepth = @import("../forward_model/optical_properties/state_build/state_optical_depth.zig");
-const Scalar = @import("../forward_model/optical_properties/state_build/state_scalar.zig");
-const Spectroscopy = @import("../forward_model/optical_properties/state_build/state_spectroscopy.zig");
-const StateTypes = @import("../forward_model/optical_properties/state_build/state.zig");
+
+const layer_depths = @import("../optics/layer_depths.zig");
+const scene_input = @import("../input/scene.zig");
+const atmosphere_layers = @import("../setup/atmosphere_layers.zig");
+const run_tables = @import("../setup/run_tables.zig");
+const profile_line_memory = @import("../cache/profile_line_memory.zig");
 
 const Allocator = std.mem.Allocator;
-const OpticalDepthBreakdown = Optics.OpticalDepthBreakdown;
-const PreparedLayer = Optics.PreparedLayer;
-const PreparedOpticalState = Optics.PreparedOpticalState;
-const PreparedSublayer = Optics.PreparedSublayer;
 
 // atmospheric_budget.zig -------------------------------------------------------------------------------------|
-// Base vertical diagnostic table for prepared optical state. It materializes wavelength x layer/sublayer rows |
-// shared by output tables that need vertical optical-depth views.                                             |
+// Public atmospheric support-row diagnostic table for the explicit O2 A route.                                |
 //                                                                                                             |
-// called by                                                                                                   |
-//   root.zig exposes buildAtmosphericBudget for Zig callers. api/c.zig copies rows into Context-owned C ABI   |
-//   storage. output.o2_o2_cia reuses the rows for CIA share columns. output.radiative_transfer_diagnostics    |
-//   reuses the rows for RTM proxy columns.                                                                    |
+// boundary                                                                                                    |
+//   The builder projects existing setup/profile-line/optics rows into the fixed Python C ABI row order. It    |
+//   does not parse inputs, own API handles, or enter transport.                                               |
 //                                                                                                             |
-// main paths                                                                                                  |
-//   build       -> allocate full wavelength x vertical-row table                                              |
-//   sublayerRow -> evaluate sublayer-resolved optical properties through the profile spectroscopy cache       |
-//   layerRow    -> write legacy layer-level rows when sublayers are not prepared                              |
-//                                                                                                             |
-// row model                                                                                                   |
-//   Sublayer rows preserve interval-grid support kind and global sublayer index. Layer rows preserve the      |
-//   older layer-level output shape when no prepared sublayer grid exists.                                     |
-//                                                                                                             |
-// hot path                                                                                                    |
-//   Diagnostics can request many wavelengths. For sublayer grids, build creates one profile spectroscopy      |
-//   cache per wavelength and reuses it while walking all vertical support rows at that wavelength.            |
-//                                                                                                             |
-// memory                                                                                                      |
-//   The returned row slice is owned by the caller. Rows are value records with no referenced storage.         |
+//   public table exposes support-row optical-depth components at requested diagnostic wavelengths.            |
 // ------------------------------------------------------------------------------------------------------------|
 
-pub const SupportRowKind = enum(u32) {
-    physical = 0,
-    parity_boundary = 1,
-    parity_active = 2,
+const support_row_kind_boundary: u32 = 1;
+const support_row_kind_active: u32 = 2;
+
+const SupportBounds = struct {
+    top_altitude_km: f64,
+    bottom_altitude_km: f64,
+    top_pressure_hpa: f64,
+    bottom_pressure_hpa: f64,
 };
 
 // AtmosphericBudgetRow ---------------------------------------------------------------------------------------|
-// Stores one vertical diagnostic row for one wavelength and one layer or sublayer.                            |
+// One public support-row diagnostic record for one wavelength.                                                |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 208 B (0.203 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
-// [  0..  7] oxygen_number_density_cm3        : f64                                                           |
-// [  8.. 15] aerosol_absorption_optical_depth : f64                                                           |
-// [ 16.. 23] single_scatter_albedo            : f64                                                           |
-// [ 24.. 31] total_optical_depth              : f64                                                           |
-// [ 32.. 39] wavelength_nm                    : f64                                                           |
-// [ 40.. 47] total_scattering_optical_depth   : f64                                                           |
-// [ 48.. 55] altitude_km                      : f64                                                           |
-// [ 56.. 63] top_altitude_km                  : f64                                                           |
-// [ 64.. 71] bottom_altitude_km               : f64                                                           |
-// [ 72.. 79] pressure_hpa                     : f64                                                           |
-// [ 80.. 87] top_pressure_hpa                 : f64                                                           |
-// [ 88.. 95] bottom_pressure_hpa              : f64                                                           |
-// [ 96..103] total_absorption_optical_depth   : f64                                                           |
-// [104..111] temperature_k                    : f64                                                           |
-// [112..119] number_density_cm3               : f64                                                           |
-// [120..127] absorber_number_density_cm3      : f64                                                           |
-// [128..135] path_length_cm                   : f64                                                           |
-// [136..143] aerosol_fraction                 : f64                                                           |
-// [144..151] gas_absorption_optical_depth     : f64                                                           |
-// [152..159] gas_scattering_optical_depth     : f64                                                           |
-// [160..167] cia_optical_depth                : f64                                                           |
-// [168..175] aerosol_optical_depth            : f64                                                           |
-// [176..183] aerosol_scattering_optical_depth : f64                                                           |
-// [184..187] interval_index_1based            : u32                                                           |
-// [188..191] layer_index                      : u32                                                           |
-// [192..195] support_row_kind                 : SupportRowKind                                                |
-// [196..199] global_sublayer_index            : u32                                                           |
-// [200..203] sublayer_index                   : u32                                                           |
-// [204..207] trailing padding                                                                                 |
-//                                                                                                             |
-// unused bits: 32 padding + 0 bool-storage slack = 32 bits                                                    |
-// footprint: per instance = 208 B (0.203 KiB); total = per instance * live instance count                     |
-pub const AtmosphericBudgetRow = struct {
+// [  0..  7] wavelength_nm                    : f64                                                           |
+// [  8.. 11] layer_index                      : u32                                                           |
+// [ 12.. 15] sublayer_index                   : u32                                                           |
+// [ 16.. 19] global_sublayer_index            : u32                                                           |
+// [ 20.. 23] interval_index_1based            : u32                                                           |
+// [ 24.. 27] support_row_kind                 : u32                                                           |
+// [ 28.. 31] padding                          : 4 B                                                           |
+// [ 32.. 39] altitude_km                      : f64                                                           |
+// [ 40.. 47] top_altitude_km                  : f64                                                           |
+// [ 48.. 55] bottom_altitude_km               : f64                                                           |
+// [ 56.. 63] pressure_hpa                     : f64                                                           |
+// [ 64.. 71] top_pressure_hpa                 : f64                                                           |
+// [ 72.. 79] bottom_pressure_hpa              : f64                                                           |
+// [ 80.. 87] temperature_k                    : f64                                                           |
+// [ 88.. 95] number_density_cm3               : f64                                                           |
+// [ 96..103] oxygen_number_density_cm3        : f64                                                           |
+// [104..111] absorber_number_density_cm3      : f64                                                           |
+// [112..119] path_length_cm                   : f64                                                           |
+// [120..127] aerosol_fraction                 : f64                                                           |
+// [128..135] gas_absorption_optical_depth     : f64                                                           |
+// [136..143] gas_scattering_optical_depth     : f64                                                           |
+// [144..151] cia_optical_depth                : f64                                                           |
+// [152..159] aerosol_optical_depth            : f64                                                           |
+// [160..167] aerosol_scattering_optical_depth : f64                                                           |
+// [168..175] aerosol_absorption_optical_depth : f64                                                           |
+// [176..183] total_absorption_optical_depth   : f64                                                           |
+// [184..191] total_scattering_optical_depth   : f64                                                           |
+// [192..199] total_optical_depth              : f64                                                           |
+// [200..207] single_scatter_albedo            : f64                                                           |
+pub const AtmosphericBudgetRow = extern struct {
     wavelength_nm: f64,
     layer_index: u32,
     sublayer_index: u32,
     global_sublayer_index: u32,
     interval_index_1based: u32,
-    support_row_kind: SupportRowKind,
+    support_row_kind: u32,
     altitude_km: f64,
     top_altitude_km: f64,
     bottom_altitude_km: f64,
@@ -116,238 +96,206 @@ pub const AtmosphericBudgetRow = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn build(
-    allocator: Allocator,
-    scene: *const Scene,
-    prepared: *const PreparedOpticalState,
-    wavelengths_nm: []const f64,
-) ![]AtmosphericBudgetRow {
-    // build --------------------------------------------------------------------------------------------------|
-    // Allocates and fills the atmospheric-budget table for every requested wavelength and vertical row.       |
-    //                                                                                                         |
-    // hot path                                                                                                |
-    //   repeated : diagnostics requested over wavelength x layer/sublayer grids                               |
-    //   costly   : profile-cache spectroscopy evaluation for each sublayer row                                |
-    //   memory   : one owned output slice; profile spectroscopy cache is rebuilt per wavelength               |
-    //                                                                                                         |
-    // calls                                                                                                   |
-    //   sublayerRow                                                                                           |
-    //   layerRow                                                                                              |
-    // --------------------------------------------------------------------------------------------------------|
-
-    const vertical_count = if (prepared.sublayers) |sublayers| sublayers.len else prepared.layers.len;
-    const row_count = try std.math.mul(usize, wavelengths_nm.len, vertical_count);
-    const rows = try allocator.alloc(AtmosphericBudgetRow, row_count);
-    errdefer allocator.free(rows);
-
-    var write_index: usize = 0;
-    for (wavelengths_nm) |wavelength_nm| {
-        if (prepared.sublayers) |sublayers| {
-            var profile_cache = Spectroscopy.ProfileNodeSpectroscopyCache.init(prepared, wavelength_nm);
-            for (sublayers, 0..) |sublayer, sublayer_index| {
-                rows[write_index] = sublayerRow(
-                    prepared,
-                    scene,
-                    wavelength_nm,
-                    sublayers,
-                    sublayer,
-                    sublayer_index,
-                    &profile_cache,
-                );
-                write_index += 1;
-            }
-        } else {
-            for (prepared.layers) |layer| {
-                rows[write_index] = layerRow(prepared, wavelength_nm, layer);
-                write_index += 1;
-            }
-        }
-    }
-
-    return rows;
-}
-
-fn sublayerRow(
-    prepared: *const PreparedOpticalState,
-    scene: *const Scene,
-    wavelength_nm: f64,
-    sublayers: []const PreparedSublayer,
-    sublayer: PreparedSublayer,
-    sublayer_index: usize,
-    profile_cache: *const Spectroscopy.ProfileNodeSpectroscopyCache,
-) AtmosphericBudgetRow {
-    const strong_line_states = choose_strong_line_states: {
-        const states = prepared.strong_line_states orelse break :choose_strong_line_states null;
-        if (sublayer_index >= states.len) break :choose_strong_line_states null;
-        break :choose_strong_line_states states[sublayer_index .. sublayer_index + 1];
-    };
-
-    const evaluated = OpticalDepth.evaluateLayerAtWavelengthWithSpectroscopyCache(
-        prepared,
-        scene,
-        sublayer.altitude_km,
-        wavelength_nm,
-        sublayer_index,
-        sublayers[sublayer_index .. sublayer_index + 1],
-        strong_line_states,
-        profile_cache,
-    );
-    const totals = derivedTotals(evaluated.breakdown);
-
-    const global_sublayer_index = choose_global_sublayer_index: {
-        if (sublayer.global_sublayer_index != 0) break :choose_global_sublayer_index sublayer.global_sublayer_index;
-        break :choose_global_sublayer_index @as(u32, @intCast(sublayer_index));
-    };
-
-    return .{
-        .wavelength_nm = wavelength_nm,
-        .layer_index = sublayer.parent_layer_index,
-        .sublayer_index = sublayer.sublayer_index,
-        .global_sublayer_index = global_sublayer_index,
-        .interval_index_1based = sublayer.interval_index_1based,
-        .support_row_kind = supportRowKind(sublayer.support_row_kind),
-        .altitude_km = sublayer.altitude_km,
-        .top_altitude_km = sublayer.top_altitude_km,
-        .bottom_altitude_km = sublayer.bottom_altitude_km,
-        .pressure_hpa = sublayer.pressure_hpa,
-        .top_pressure_hpa = sublayer.top_pressure_hpa,
-        .bottom_pressure_hpa = sublayer.bottom_pressure_hpa,
-        .temperature_k = sublayer.temperature_k,
-        .number_density_cm3 = sublayer.number_density_cm3,
-        .oxygen_number_density_cm3 = sublayer.oxygen_number_density_cm3,
-        .absorber_number_density_cm3 = sublayer.absorber_number_density_cm3,
-        .path_length_cm = sublayer.path_length_cm,
-        .aerosol_fraction = sublayer.aerosol_fraction,
-        .gas_absorption_optical_depth = evaluated.breakdown.gas_absorption_optical_depth,
-        .gas_scattering_optical_depth = evaluated.breakdown.gas_scattering_optical_depth,
-        .cia_optical_depth = evaluated.breakdown.cia_optical_depth,
-        .aerosol_optical_depth = evaluated.breakdown.aerosol_optical_depth,
-        .aerosol_scattering_optical_depth = evaluated.breakdown.aerosol_scattering_optical_depth,
-        .aerosol_absorption_optical_depth = totals.aerosol_absorption,
-        .total_absorption_optical_depth = totals.absorption,
-        .total_scattering_optical_depth = totals.scattering,
-        .total_optical_depth = totals.optical_depth,
-        .single_scatter_albedo = totals.single_scatter_albedo,
-    };
-}
-
-fn layerRow(
-    prepared: *const PreparedOpticalState,
-    wavelength_nm: f64,
-    layer: PreparedLayer,
-) AtmosphericBudgetRow {
-    const aerosol_single_scatter_albedo = prepared.resolvedAerosolSingleScatterAlbedo();
-    const aerosol_optical_depth = Scalar.particleOpticalDepthAtWavelength(
-        layer.aerosol_optical_depth,
-        layer.aerosol_base_optical_depth,
-        prepared.aerosol_reference_wavelength_nm,
-        prepared.aerosol_angstrom_exponent,
-        prepared.aerosol_fraction_control,
-        wavelength_nm,
-    );
-    const gas_scattering_optical_depth = compute_gas_scattering_optical_depth: {
-        if (layer.gas_scattering_optical_depth > 0.0) {
-            break :compute_gas_scattering_optical_depth layer.gas_scattering_optical_depth;
-        }
-
-        break :compute_gas_scattering_optical_depth Rayleigh.crossSectionCm2(wavelength_nm) *
-            layer.number_density_cm3 *
-            @max(layer.top_altitude_km - layer.bottom_altitude_km, 0.0) *
-            1.0e5;
-    };
-
-    const breakdown = OpticalDepthBreakdown{
-        .gas_absorption_optical_depth = @max(layer.gas_optical_depth - gas_scattering_optical_depth, 0.0),
-        .gas_scattering_optical_depth = gas_scattering_optical_depth,
-        .cia_optical_depth = layer.cia_optical_depth,
-        .aerosol_optical_depth = aerosol_optical_depth,
-        .aerosol_scattering_optical_depth = aerosol_optical_depth * aerosol_single_scatter_albedo,
-    };
-    const totals = derivedTotals(breakdown);
-
-    return .{
-        .wavelength_nm = wavelength_nm,
-        .layer_index = layer.layer_index,
-        .sublayer_index = std.math.maxInt(u32),
-        .global_sublayer_index = std.math.maxInt(u32),
-        .interval_index_1based = layer.interval_index_1based,
-        .support_row_kind = .physical,
-        .altitude_km = layer.altitude_km,
-        .top_altitude_km = layer.top_altitude_km,
-        .bottom_altitude_km = layer.bottom_altitude_km,
-        .pressure_hpa = layer.pressure_hpa,
-        .top_pressure_hpa = layer.top_pressure_hpa,
-        .bottom_pressure_hpa = layer.bottom_pressure_hpa,
-        .temperature_k = layer.temperature_k,
-        .number_density_cm3 = layer.number_density_cm3,
-        .oxygen_number_density_cm3 = 0.0,
-        .absorber_number_density_cm3 = 0.0,
-        .path_length_cm = @max(layer.top_altitude_km - layer.bottom_altitude_km, 0.0) * 1.0e5,
-        .aerosol_fraction = layer.aerosol_fraction,
-        .gas_absorption_optical_depth = breakdown.gas_absorption_optical_depth,
-        .gas_scattering_optical_depth = breakdown.gas_scattering_optical_depth,
-        .cia_optical_depth = breakdown.cia_optical_depth,
-        .aerosol_optical_depth = breakdown.aerosol_optical_depth,
-        .aerosol_scattering_optical_depth = breakdown.aerosol_scattering_optical_depth,
-        .aerosol_absorption_optical_depth = totals.aerosol_absorption,
-        .total_absorption_optical_depth = totals.absorption,
-        .total_scattering_optical_depth = totals.scattering,
-        .total_optical_depth = totals.optical_depth,
-        .single_scatter_albedo = totals.single_scatter_albedo,
-    };
-}
-
-// DerivedTotals ----------------------------------------------------------------------------------------------|
-// Carries optical-depth totals derived from one breakdown before they are copied into an output row.          |
+// AtmosphericBudget ------------------------------------------------------------------------------------------|
+// Owned atmospheric-budget row table returned through root/API calls.                                         |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 40 B (0.039 KiB), align: 8 B                                                                          |
+// size: 16 B (0.016 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [ 0.. 7] aerosol_absorption    : f64                                                                        |
-// [ 8..15] absorption            : f64                                                                        |
-// [16..23] scattering            : f64                                                                        |
-// [24..31] optical_depth         : f64                                                                        |
-// [32..39] single_scatter_albedo : f64                                                                        |
+// [0..15] rows : []AtmosphericBudgetRow                                                                       |
 //                                                                                                             |
-// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
-// footprint: per value = 40 B (0.039 KiB); total = caller-local temporary                                     |
-const DerivedTotals = struct {
-    aerosol_absorption: f64,
-    absorption: f64,
-    scattering: f64,
-    optical_depth: f64,
-    single_scatter_albedo: f64,
+// referenced storage                                                                                          |
+//   rows owns wavelength_count * support_row_count records in wavelength-major order.                         |
+pub const AtmosphericBudget = struct {
+    rows: []AtmosphericBudgetRow = &.{},
+
+    pub fn deinit(self: *AtmosphericBudget, allocator: Allocator) void {
+        // AtmosphericBudget.deinit ---------------------------------------------------------------------------|
+        // Release the owned diagnostic row table.                                                             |
+        // ----------------------------------------------------------------------------------------------------|
+        allocator.free(self.rows);
+        self.* = .{};
+    }
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-fn derivedTotals(breakdown: OpticalDepthBreakdown) DerivedTotals {
+pub fn build(
+    allocator: Allocator,
+    scene: scene_input.Scene,
+    tables: *const run_tables.RunTables,
+    wavelengths_nm: []const f64,
+) !AtmosphericBudget {
+    // build --------------------------------------------------------------------------------------------------|
+    // Build the public atmospheric-budget table for caller-selected diagnostic wavelengths.                   |
+    //                                                                                                         |
+    // memory                                                                                                  |
+    //   Allocates one output row table, one temporary profile-line table for requested wavelengths, and two   |
+    //   support-row work slices reused across wavelengths.                                                    |
+    // --------------------------------------------------------------------------------------------------------|
+    const support_count = tables.layers.support_mid_altitudes_km.len;
+    const row_count = try std.math.mul(usize, wavelengths_nm.len, support_count);
+    const rows = try allocator.alloc(AtmosphericBudgetRow, row_count);
+    errdefer allocator.free(rows);
+
+    var profile_values = try profile_line_memory.buildProfileLineValuesForWavelengths(
+        allocator,
+        scene,
+        wavelengths_nm,
+    );
+    defer profile_values.deinit(allocator);
+
+    const support_sigma = try allocator.alloc(f64, support_count);
+    defer allocator.free(support_sigma);
+    const support_optics = try allocator.alloc(layer_depths.SupportOptics, support_count);
+    defer allocator.free(support_optics);
+
+    for (wavelengths_nm, 0..) |wavelength_nm, wavelength_index| {
+        try profile_values.fillSupportLineSigmaAtWavelengthIndex(
+            tables.layers,
+            wavelength_index,
+            support_sigma,
+            null,
+        );
+        try layer_depths.fillSupportOpticsAtWavelength(
+            wavelength_nm,
+            tables.layers,
+            support_sigma,
+            tables.cia,
+            tables.aerosol,
+            support_optics,
+            null,
+        );
+
+        const row_start = wavelength_index * support_count;
+        for (support_optics, 0..) |support, support_index| {
+            rows[row_start + support_index] = rowFromSupport(tables.layers, support, support_index);
+        }
+    }
+
+    return .{ .rows = rows };
+}
+
+fn rowFromSupport(
+    layers: atmosphere_layers.LayerGrid,
+    support: layer_depths.SupportOptics,
+    support_index: usize,
+) AtmosphericBudgetRow {
+    // rowFromSupport -----------------------------------------------------------------------------------------|
+    // Project one support-row optics record into the fixed public diagnostic row order.                       |
+    // --------------------------------------------------------------------------------------------------------|
+    const layer_index = supportLayerIndex(layers, support_index);
+    const boundary = layers.support_path_lengths_cm[support_index] == 0.0;
+    const bounds = supportBounds(layers, layer_index, support_index, boundary);
+    const support_row_kind = if (boundary)
+        support_row_kind_boundary
+    else
+        support_row_kind_active;
     const aerosol_absorption = @max(
-        breakdown.aerosol_optical_depth - breakdown.aerosol_scattering_optical_depth,
+        support.aerosol_optical_depth - support.aerosol_scattering_optical_depth,
         0.0,
     );
-    const scattering = breakdown.totalScatteringOpticalDepth();
-    const optical_depth = breakdown.totalOpticalDepth();
-    const single_scatter_albedo = if (optical_depth > 0.0)
-        std.math.clamp(scattering / optical_depth, 0.0, 1.0)
-    else
-        0.0;
 
     return .{
-        .aerosol_absorption = aerosol_absorption,
-        .absorption = breakdown.gas_absorption_optical_depth +
-            breakdown.cia_optical_depth +
+        .wavelength_nm = support.wavelength_nm,
+        .layer_index = @intCast(layer_index),
+        .sublayer_index = supportSublayerIndex(layers, layer_index, support_index),
+        .global_sublayer_index = @intCast(support_index),
+        .interval_index_1based = support.interval_index_1based,
+        .support_row_kind = support_row_kind,
+        .altitude_km = layers.support_mid_altitudes_km[support_index],
+        .top_altitude_km = bounds.top_altitude_km,
+        .bottom_altitude_km = bounds.bottom_altitude_km,
+        .pressure_hpa = layers.support_pressures_hpa[support_index],
+        .top_pressure_hpa = bounds.top_pressure_hpa,
+        .bottom_pressure_hpa = bounds.bottom_pressure_hpa,
+        .temperature_k = layers.support_temperatures_k[support_index],
+        .number_density_cm3 = layers.support_air_number_densities_cm3[support_index],
+        .oxygen_number_density_cm3 = layers.support_o2_number_densities_cm3[support_index],
+        .absorber_number_density_cm3 = layers.support_o2_number_densities_cm3[support_index],
+        .path_length_cm = layers.support_path_lengths_cm[support_index],
+        .aerosol_fraction = 0.0,
+        .gas_absorption_optical_depth = support.gas_absorption_optical_depth,
+        .gas_scattering_optical_depth = support.gas_scattering_optical_depth,
+        .cia_optical_depth = support.cia_optical_depth,
+        .aerosol_optical_depth = support.aerosol_optical_depth,
+        .aerosol_scattering_optical_depth = support.aerosol_scattering_optical_depth,
+        .aerosol_absorption_optical_depth = aerosol_absorption,
+        .total_absorption_optical_depth = support.gas_absorption_optical_depth +
+            support.cia_optical_depth +
             aerosol_absorption,
-        .scattering = scattering,
-        .optical_depth = optical_depth,
-        .single_scatter_albedo = single_scatter_albedo,
+        .total_scattering_optical_depth = support.total_scattering_optical_depth,
+        .total_optical_depth = support.total_optical_depth,
+        .single_scatter_albedo = support.single_scatter_albedo,
     };
 }
 
-fn supportRowKind(kind: StateTypes.PreparedSupportRowKind) SupportRowKind {
-    return switch (kind) {
-        .physical => .physical,
-        .parity_boundary => .parity_boundary,
-        .parity_active => .parity_active,
+fn supportBounds(
+    layers: atmosphere_layers.LayerGrid,
+    layer_index: usize,
+    support_index: usize,
+    boundary: bool,
+) SupportBounds {
+    // supportBounds ------------------------------------------------------------------------------------------|
+    // Select public top/bottom geometry for active layer rows and zero-path boundary rows.                    |
+    // --------------------------------------------------------------------------------------------------------|
+    if (!boundary) {
+        return .{
+            .top_altitude_km = layers.layer_top_altitudes_km[layer_index],
+            .bottom_altitude_km = layers.layer_bottom_altitudes_km[layer_index],
+            .top_pressure_hpa = layers.layer_top_pressures_hpa[layer_index],
+            .bottom_pressure_hpa = layers.layer_bottom_pressures_hpa[layer_index],
+        };
+    }
+
+    const pressure_hpa = boundaryPressureHpa(layers, layer_index, support_index);
+    return .{
+        .top_altitude_km = layers.support_mid_altitudes_km[support_index],
+        .bottom_altitude_km = layers.support_mid_altitudes_km[support_index],
+        .top_pressure_hpa = pressure_hpa,
+        .bottom_pressure_hpa = pressure_hpa,
     };
+}
+
+fn boundaryPressureHpa(layers: atmosphere_layers.LayerGrid, layer_index: usize, support_index: usize) f64 {
+    // boundaryPressureHpa ------------------------------------------------------------------------------------|
+    // Public diagnostics keep representative pressure in pressure_hpa, but top/bottom pressure on zero-path   |
+    // support rows comes from the layer-boundary pressure field. Surface/top endpoints therefore keep         |
+    // configured interval bounds even when the interpolated support pressure differs by a few bits.           |
+    // --------------------------------------------------------------------------------------------------------|
+    const layer_start: usize = @intCast(layers.layer_support_starts[layer_index]);
+    const layer_count: usize = @intCast(layers.layer_support_counts[layer_index]);
+    if (support_index == layer_start) return layers.layer_bottom_pressures_hpa[layer_index];
+    if (support_index + 1 == layer_start + layer_count) return layers.layer_top_pressures_hpa[layer_index];
+    return layers.support_pressures_hpa[support_index];
+}
+
+fn supportLayerIndex(layers: atmosphere_layers.LayerGrid, support_index: usize) usize {
+    // supportLayerIndex --------------------------------------------------------------------------------------|
+    // Find the layer whose support window owns a support row.                                                 |
+    // --------------------------------------------------------------------------------------------------------|
+    for (layers.layer_support_starts, layers.layer_support_counts, 0..) |start_raw, count_raw, layer_index| {
+        const start: usize = @intCast(start_raw);
+        const count: usize = @intCast(count_raw);
+        if (support_index >= start and support_index < start + count) return layer_index;
+    }
+    return 0;
+}
+
+fn supportSublayerIndex(
+    layers: atmosphere_layers.LayerGrid,
+    layer_index: usize,
+    support_index: usize,
+) u32 {
+    // supportSublayerIndex -----------------------------------------------------------------------------------|
+    // Convert a layer-owned support row into the public zero-based sublayer coordinate.                       |
+    // --------------------------------------------------------------------------------------------------------|
+    const layer_start: usize = @intCast(layers.layer_support_starts[layer_index]);
+    if (support_index <= layer_start) return 0;
+    return @intCast(support_index - layer_start - 1);
+}
+
+comptime {
+    std.debug.assert(@sizeOf(AtmosphericBudgetRow) == 208);
+    std.debug.assert(@sizeOf(AtmosphericBudget) == 16);
 }

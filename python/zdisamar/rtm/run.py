@@ -5,50 +5,50 @@ from collections.abc import Generator
 from contextlib import contextmanager
 
 from ..bindings.handles import RtmHandle
-from ..input.wavelength_band.o2a import O2AInput
+from ..input.wavelength_band.o2a import Scene
 from .session_cache import SessionCache
 
 
 @contextmanager
-def _temporary_cache(case: O2AInput, *, copy_case: bool = False) -> Generator[SessionCache]:
+def _temporary_cache(scene: Scene, *, copy_scene: bool = False) -> Generator[SessionCache]:
 
     cache = SessionCache()
 
     try:
-        cache.load(case, copy_case=copy_case)
+        cache.load(scene, copy_scene=copy_scene)
         yield cache
     finally:
         cache.close()
 
 
 def spectrum(
-    case: O2AInput,
+    scene: Scene,
     *,
     cache: SessionCache | None = None,
     jacobian: bool = False,
     jacobian_state_names: tuple[str, ...] | None = None,
-    include_case: bool = False,
+    include_scene: bool = False,
 ):
     """Run radiative transfer for one wavelength-band case."""
 
     if cache is not None:
         return cache.spectrum(
-            case,
+            scene,
             jacobian=jacobian,
             jacobian_state_names=jacobian_state_names,
-            include_case=include_case,
+            include_scene=include_scene,
         )
 
-    with _temporary_cache(case, copy_case=include_case) as temporary:
+    with _temporary_cache(scene, copy_scene=include_scene) as temporary:
         return temporary.spectrum(
             jacobian=jacobian,
             jacobian_state_names=jacobian_state_names,
-            include_case=include_case,
+            include_scene=include_scene,
         )
 
 
 def atmospheric_budget(
-    case: O2AInput,
+    scene: Scene,
     wavelengths_nm,
     *,
     cache: SessionCache | None = None,
@@ -56,16 +56,16 @@ def atmospheric_budget(
     """Return atmospheric optical-depth budget rows."""
 
     if cache is not None:
-        cache.load(case)
+        cache.load(scene)
 
         return cache.atmospheric_budget(wavelengths_nm)
 
-    with _temporary_cache(case) as temporary:
+    with _temporary_cache(scene) as temporary:
         return temporary.atmospheric_budget(wavelengths_nm)
 
 
 def instrument_response(
-    case: O2AInput,
+    scene: Scene,
     wavelengths_nm=None,
     *,
     channels: tuple[str, ...] = ("radiance", "irradiance"),
@@ -73,19 +73,19 @@ def instrument_response(
 ):
     """Return instrument response support rows."""
 
-    grid = nominal_wavelengths(case) if wavelengths_nm is None else wavelengths_nm
+    grid = nominal_wavelengths(scene) if wavelengths_nm is None else wavelengths_nm
 
     if cache is not None:
-        cache.load(case)
+        cache.load(scene)
 
         return cache.instrument_response(grid, channels=channels)
 
-    with _temporary_cache(case) as temporary:
+    with _temporary_cache(scene) as temporary:
         return temporary.instrument_response(grid, channels=channels)
 
 
 def collision_induced_absorption(
-    case: O2AInput,
+    scene: Scene,
     wavelengths_nm,
     *,
     cache: SessionCache | None = None,
@@ -93,16 +93,16 @@ def collision_induced_absorption(
     """Return O2-O2 collision-induced absorption rows."""
 
     if cache is not None:
-        cache.load(case)
+        cache.load(scene)
 
         return cache.collision_induced_absorption(wavelengths_nm)
 
-    with _temporary_cache(case) as temporary:
+    with _temporary_cache(scene) as temporary:
         return temporary.collision_induced_absorption(wavelengths_nm)
 
 
 def o2_line_contributions(
-    case: O2AInput,
+    scene: Scene,
     wavelengths_nm,
     *,
     max_rows: int = 50_000,
@@ -111,18 +111,18 @@ def o2_line_contributions(
     """Return line-by-line O2 evidence rows."""
 
     if cache is not None:
-        cache.load(case)
+        cache.load(scene)
 
         return cache._handle.o2_line_contributions(wavelengths_nm, max_rows=max_rows)
 
-    with _temporary_cache(case) as temporary:
+    with _temporary_cache(scene) as temporary:
         return temporary._handle.o2_line_contributions(wavelengths_nm, max_rows=max_rows)
 
 
-def nominal_wavelengths(case: O2AInput):
+def nominal_wavelengths(scene: Scene):
     """Recreate the nominal spectrum grid from a wavelength-band case."""
 
-    count = int(case.spectral_grid.sample_count)
+    count = int(scene.spectral_grid.sample_count)
 
     if count < 0:
         raise ValueError("nominal spectral sample_count must be non-negative")
@@ -131,10 +131,10 @@ def nominal_wavelengths(case: O2AInput):
         return array("d")
 
     if count == 1:
-        return array("d", [float(case.spectral_grid.start_nm)])
+        return array("d", [float(scene.spectral_grid.start_nm)])
 
-    start = float(case.spectral_grid.start_nm)
-    end = float(case.spectral_grid.end_nm)
+    start = float(scene.spectral_grid.start_nm)
+    end = float(scene.spectral_grid.end_nm)
     step = (end - start) / float(count - 1)
     wavelengths = array("d", (start + step * index for index in range(count)))
     wavelengths[-1] = end
@@ -142,8 +142,8 @@ def nominal_wavelengths(case: O2AInput):
     return wavelengths
 
 
-def o2a_reference_case() -> O2AInput:
+def reference_scene() -> Scene:
     """Return the packaged O2 A reference case."""
 
     with RtmHandle() as handle:
-        return handle.default_o2a_case()
+        return handle.default_scene()

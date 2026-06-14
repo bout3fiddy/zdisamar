@@ -15,8 +15,8 @@ from ..input import (
     FastModeWavelengthWindow,
     Geometry,
     InstrumentResponse,
-    O2AOptimisation,
-    O2LineByLine,
+    LineByLine,
+    Optimisation,
     OxygenCollisionInducedAbsorption,
     RadiativeTransferControls,
     RadiativeTransferPerformanceThresholds,
@@ -26,15 +26,15 @@ from ..input import (
     Surface,
     VerticalInterval,
 )
-from ..input.wavelength_band.o2a import O2AInput as O2ACase
+from ..input.wavelength_band.o2a import Scene as Scene
 
 
-def reference_case() -> O2ACase:
+def reference_scene() -> Scene:
     """Return the packaged DISAMAR-family O2 A reference case."""
 
-    from ..rtm.run import o2a_reference_case
+    from ..rtm.run import reference_scene
 
-    return o2a_reference_case()
+    return reference_scene()
 
 
 __all__ = [
@@ -52,9 +52,9 @@ __all__ = [
     "FastModeWavelengthWindow",
     "Geometry",
     "InstrumentResponse",
-    "O2ACase",
-    "O2AOptimisation",
-    "O2LineByLine",
+    "Scene",
+    "Optimisation",
+    "LineByLine",
     "OxygenCollisionInducedAbsorption",
     "RadiativeTransferControls",
     "RadiativeTransferPerformanceThresholds",
@@ -63,5 +63,5 @@ __all__ = [
     "SpectralGrid",
     "Surface",
     "VerticalInterval",
-    "reference_case",
+    "reference_scene",
 ]

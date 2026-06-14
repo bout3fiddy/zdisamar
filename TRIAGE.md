@@ -47,7 +47,7 @@ prefetchSimulationPlan
 ```
 
 The hot source loop is the fixed 10x10 q-series triangular solve in
-`src/forward_model/radiative_transfer/labos/matrix.zig`:
+`src/rtm/matrix_12x10.zig`:
 
 ```zig
 for (0..i) |j| s -= one_minus_ab_gg[row_offset + j] * y[j];

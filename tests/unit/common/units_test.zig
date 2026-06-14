@@ -2,43 +2,19 @@ const std = @import("std");
 const internal = @import("internal");
 
 const units = internal.common.units;
-const Error = units.Error;
-const WavelengthRange = units.WavelengthRange;
-const AltitudeRangeKm = units.AltitudeRangeKm;
-const PressureRangeHpa = units.PressureRangeHpa;
-const AngleDeg = units.AngleDeg;
-const ZenithAngleDeg = units.ZenithAngleDeg;
-const AzimuthAngleDeg = units.AzimuthAngleDeg;
 
-test "wavelength range rejects inverted intervals" {
-    try std.testing.expectError(Error.InvalidRange, (WavelengthRange{
-        .start_nm = 771.0,
-        .end_nm = 758.0,
-    }).validate());
+test "unit conversions preserve wavelength and wavenumber round trips" {
+    const wavelength_nm = 760.0;
+    const wavenumber_cm1 = units.wavelengthToWavenumberCm1(wavelength_nm);
+
+    try std.testing.expectApproxEqAbs(wavelength_nm, units.wavenumberToWavelengthNm(wavenumber_cm1), 1.0e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 13157.894736842105), wavenumber_cm1, 1.0e-12);
 }
 
-test "altitude and pressure ranges enforce physical ordering" {
-    try (AltitudeRangeKm{ .bottom_km = 0.0, .top_km = 2.5 }).validate();
-    try (PressureRangeHpa{ .top_hpa = 150.0, .bottom_hpa = 900.0 }).validate();
-    try std.testing.expectError(Error.InvalidRange, (AltitudeRangeKm{
-        .bottom_km = 3.0,
-        .top_km = 2.0,
-    }).validate());
-    try std.testing.expectError(Error.InvalidRange, (PressureRangeHpa{
-        .top_hpa = 900.0,
-        .bottom_hpa = 150.0,
-    }).validate());
-}
+test "spectral width conversion uses local line-center slope" {
+    const width_nm = units.spectralWidthCm1ToNm(2.0, 13157.894736842105);
 
-test "angle validation rejects NaN" {
-    try std.testing.expectError(Error.InvalidValue, (AngleDeg{
-        .value = std.math.nan(f64),
-    }).validate());
-}
-
-test "zenith and azimuth helpers enforce physical angle ranges" {
-    try (ZenithAngleDeg{ .value = 95.0 }).validate();
-    try (AzimuthAngleDeg{ .value = 270.0 }).validate();
-    try std.testing.expectError(Error.InvalidRange, (ZenithAngleDeg{ .value = -1.0 }).validate());
-    try std.testing.expectError(Error.InvalidRange, (AzimuthAngleDeg{ .value = 361.0 }).validate());
+    try std.testing.expectApproxEqAbs(@as(f64, 0.11552), width_nm, 1.0e-12);
+    try std.testing.expect(units.wavelengthToWavenumberCm1(0.0) > 1.0e15);
+    try std.testing.expect(units.wavenumberToWavelengthNm(0.0) > 1.0e15);
 }

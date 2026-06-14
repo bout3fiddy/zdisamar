@@ -4,7 +4,7 @@ import math
 from dataclasses import dataclass
 from typing import Self
 
-from .shared import object_dict_list, to_float, to_int
+from .shared import object_dict_list, placeholder_float, to_float, to_int
 
 
 @dataclass
@@ -28,10 +28,18 @@ class VerticalInterval:
             top_pressure_hpa=to_float(data["top_pressure_hpa"]),
             bottom_pressure_hpa=to_float(data["bottom_pressure_hpa"]),
             altitude_divisions=to_int(data["altitude_divisions"]),
-            top_altitude_km=to_float(data.get("top_altitude_km", math.nan)),
-            bottom_altitude_km=to_float(data.get("bottom_altitude_km", math.nan)),
-            top_pressure_variance_hpa2=to_float(data.get("top_pressure_variance_hpa2", 0.0)),
-            bottom_pressure_variance_hpa2=to_float(data.get("bottom_pressure_variance_hpa2", 0.0)),
+            top_altitude_km=placeholder_float(data, "top_altitude_km", math.nan),
+            bottom_altitude_km=placeholder_float(data, "bottom_altitude_km", math.nan),
+            top_pressure_variance_hpa2=placeholder_float(
+                data,
+                "top_pressure_variance_hpa2",
+                0.0,
+            ),
+            bottom_pressure_variance_hpa2=placeholder_float(
+                data,
+                "bottom_pressure_variance_hpa2",
+                0.0,
+            ),
         )
 
     def to_dict(self) -> dict[str, float | int]:

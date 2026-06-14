@@ -25,6 +25,15 @@ from suite.db import BenchmarkDb  # noqa: E402
 from suite.progress import Progress  # noqa: E402
 from suite.timing import elapsed_since, timing_start  # noqa: E402
 
+RETRIEVAL_UNSUPPORTED_ERRORS = (
+    "UnsupportedOptimalEstimation",
+    "UnsupportedOptimalEstimationCorrection",
+    "UnsupportedOptimalEstimationBatch",
+    "UnsupportedFastmodeOptimalEstimationBatch",
+    "UnsupportedState",
+    "UnsupportedJacobianState",
+)
+
 
 def configure_runtime_defaults() -> None:
 
@@ -62,7 +71,7 @@ def main() -> int:
 
         started = timing_start()
         forward.run(db, progress, run_id)
-        retrieval.run(db, progress, run_id)
+        run_retrieval_or_skip(db, progress, run_id, retrieval)
         total_timing = elapsed_since(started)
         memory_payload = memory_probe.finish()
         progress.log("layout", "start post-timing memory-layout diagnostics")
@@ -87,6 +96,37 @@ def main() -> int:
         raise
     finally:
         db.close()
+
+
+def run_retrieval_or_skip(
+    db: BenchmarkDb,
+    progress: Progress,
+    run_id: str,
+    retrieval_module,
+) -> None:
+
+    try:
+        retrieval_module.run(db, progress, run_id)
+    except RuntimeError as exc:
+        reason = str(exc)
+        if not unsupported_retrieval_error(reason):
+            raise
+
+        db.summary(
+            run_id,
+            "retrieval_skipped",
+            {
+                "status": "skipped",
+                "reason": reason,
+                "owner": "retrieval",
+            },
+        )
+        progress.log("retrieval", f"skipped: {reason}")
+
+
+def unsupported_retrieval_error(reason: str) -> bool:
+
+    return any(fragment in reason for fragment in RETRIEVAL_UNSUPPORTED_ERRORS)
 
 
 if __name__ == "__main__":

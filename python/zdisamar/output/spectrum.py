@@ -5,10 +5,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ..display import NotebookDisplay
-from ..input.wavelength_band.o2a import O2AInput
+from ..input.wavelength_band.o2a import Scene
 
 JACOBIAN_STATE_NAMES = (
-    "surface_albedo",
     "aerosol_optical_depth",
     "aerosol_layer_mid_pressure_hpa",
 )
@@ -50,7 +49,7 @@ class Spectrum(NotebookDisplay):
     radiance: array
     irradiance: array
     reflectance: array
-    case: O2AInput | None = None
+    scene: Scene | None = None
     solar_mu0_value: float | None = None
     diagnostic_report: DiagnosticReport | None = None
     radiance_jacobian_quantity: RadianceJacobian | None = None
@@ -72,18 +71,18 @@ class Spectrum(NotebookDisplay):
         )
 
     @property
-    def input(self) -> O2AInput | None:
+    def input(self) -> Scene | None:
         """Return the wavelength-band case associated with this spectrum."""
 
-        return self.case
+        return self.scene
 
     @property
     def solar_mu0(self) -> float | None:
 
-        if self.case is None:
+        if self.scene is None:
             return self.solar_mu0_value
 
-        return self.case.geometry.solar_mu0
+        return self.scene.geometry.solar_mu0
 
     @property
     def sun_normalized_radiance(self) -> array:

@@ -8,7 +8,7 @@ from numbers import Integral
 from typing import Self
 
 from .. import reference_data
-from ..input.wavelength_band.o2a import O2AInput
+from ..input.wavelength_band.o2a import Scene
 from ..output.spectrum import (
     JACOBIAN_STATE_NAMES,
     DiagnosticReport,
@@ -137,8 +137,8 @@ class RtmHandle:
 
         self._lib = configure(load_library())
         self._ctx = self._lib.zds_context_create()
-        self._case: O2AInput | None = None
-        self._case_fingerprint: bytes | None = None
+        self._scene: Scene | None = None
+        self._scene_fingerprint: bytes | None = None
         self._loaded_has_multi_layer_aerosol_profile = False
         self._solar_mu0: float | None = None
 
@@ -146,12 +146,12 @@ class RtmHandle:
             raise RuntimeError("failed to start zdisamar RTM handle")
 
     @property
-    def input(self) -> O2AInput | None:
+    def input(self) -> Scene | None:
         """Return the wavelength-band case loaded into this handle."""
 
-        return None if self._case is None else copy.deepcopy(self._case)
+        return None if self._scene is None else copy.deepcopy(self._scene)
 
-    def default_o2a_case(self) -> O2AInput:
+    def default_scene(self) -> Scene:
         """Read the packaged O2 A reference case from the Zig binding."""
 
         size = ctypes.c_size_t()
@@ -166,13 +166,13 @@ class RtmHandle:
             )
         )
 
-        return O2AInput.from_json(buffer.value[: size.value])
+        return Scene.from_json(buffer.value[: size.value])
 
-    def load_o2a_case(self, case: O2AInput, *, copy_case: bool = True) -> None:
+    def load_scene(self, scene: Scene, *, copy_scene: bool = True) -> None:
         """Load one O2 A wavelength-band case into the RTM handle."""
 
-        rtm_case = case.with_rtm_optimisation_applied()
-        resolved = rtm_case.with_resolved_asset_resolver(reference_data.resolve_asset_path)
+        rtm_scene = scene.with_rtm_optimisation_applied()
+        resolved = rtm_scene.with_resolved_asset_resolver(reference_data.resolve_asset_path)
         payload = resolved.to_native_json_bytes()
         self._check(
             self._lib.zds_prepare_o2a_json(
@@ -181,12 +181,12 @@ class RtmHandle:
                 len(payload),
             )
         )
-        self._case = copy.deepcopy(rtm_case) if copy_case else None
-        self._case_fingerprint = payload
-        self._loaded_has_multi_layer_aerosol_profile = len(rtm_case.aerosol.profile) > 1
-        self._solar_mu0 = rtm_case.geometry.solar_mu0
+        self._scene = copy.deepcopy(rtm_scene) if copy_scene else None
+        self._scene_fingerprint = payload
+        self._loaded_has_multi_layer_aerosol_profile = len(rtm_scene.aerosol.profile) > 1
+        self._solar_mu0 = rtm_scene.geometry.solar_mu0
 
-    def loaded_o2a_case_matches(self, case: O2AInput) -> bool:
+    def loaded_scene_matches(self, scene: Scene) -> bool:
         """Return whether the native handle already owns this prepared case.
 
         The fingerprint uses the resolved deterministic payload passed to Zig.
@@ -194,13 +194,13 @@ class RtmHandle:
         Python case copy solely for invalidation.
         """
 
-        if self._case_fingerprint is None:
+        if self._scene_fingerprint is None:
             return False
 
-        rtm_case = case.with_rtm_optimisation_applied()
-        resolved = rtm_case.with_resolved_asset_resolver(reference_data.resolve_asset_path)
+        rtm_scene = scene.with_rtm_optimisation_applied()
+        resolved = rtm_scene.with_resolved_asset_resolver(reference_data.resolve_asset_path)
 
-        return resolved.to_native_json_bytes() == self._case_fingerprint
+        return resolved.to_native_json_bytes() == self._scene_fingerprint
 
     def warm_cache(self) -> None:
         """Build reusable RTM work arrays for repeated runs."""
@@ -224,7 +224,7 @@ class RtmHandle:
         *,
         jacobian: bool = False,
         jacobian_state_names: tuple[str, ...] | None = None,
-        include_case: bool = False,
+        include_scene: bool = False,
     ) -> Spectrum:
         """Run the loaded wavelength-band case and return copied spectral arrays."""
 
@@ -253,13 +253,13 @@ class RtmHandle:
             return self._copied_spectrum(
                 raw,
                 jacobian_state_names=jacobian_state_names,
-                include_case=include_case,
+                include_scene=include_scene,
             )
 
         runner = self._lib.zds_run_spectrum_jacobian if jacobian else self._lib.zds_run_spectrum
         self._check(runner(self._ctx, ctypes.byref(raw)))
 
-        return self._copied_spectrum(raw, include_case=include_case)
+        return self._copied_spectrum(raw, include_scene=include_scene)
 
     def atmospheric_budget(self, wavelengths_nm) -> AtmosphericBudget:
         """Return copied atmospheric optical-depth rows."""
@@ -684,8 +684,8 @@ class RtmHandle:
         if self._ctx:
             self._lib.zds_context_destroy(self._ctx)
             self._ctx = None
-            self._case = None
-            self._case_fingerprint = None
+            self._scene = None
+            self._scene_fingerprint = None
             self._loaded_has_multi_layer_aerosol_profile = False
             self._solar_mu0 = None
 
@@ -694,7 +694,7 @@ class RtmHandle:
         raw: CSpectrum,
         *,
         jacobian_state_names: tuple[str, ...] | None = None,
-        include_case: bool = True,
+        include_scene: bool = True,
     ) -> Spectrum:
 
         try:
@@ -728,7 +728,7 @@ class RtmHandle:
             radiance=radiance,
             irradiance=irradiance,
             reflectance=reflectance,
-            case=self.input if include_case else None,
+            scene=self.input if include_scene else None,
             solar_mu0_value=self._solar_mu0,
             diagnostic_report=report,
             radiance_jacobian_quantity=(

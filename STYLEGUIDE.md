@@ -64,28 +64,34 @@ explanatory comments above `fn`, even for small private helpers or methods.
 For methods inside a struct, title the box `StructName.fnName`.
 
 ```zig
-fn layerResolvedSolveWithWorkspace(...) Result {
-    // layerResolvedSolveWithWorkspace ------------------------------------------------------------------------|
-    // Runs layer-resolved transport for one high-resolution sample. Steps:                                    |
+pub fn solveReflectance(
+    angles: ViewAngles,
+    surface_albedo: f64,
+    layers: []const layer_depths.LayerOptics,
+    level_sources: []const source_levels.SourceLevel,
+    phase: phase_table.PhaseTable,
+    config: controls.SolveConfig,
+    work: *TransportWorkArrays,
+) Error!ReflectanceResult {
+    // solveReflectance ---------------------------------------------------------------------------------------|
+    // Dispatch one explicit transport solve for one high-resolution sample. Steps:                            |
     //                                                                                                         |
-    //   1. build attenuation for this geometry and correction setting                                         |
-    //   2. loop retained Fourier terms:                                                                       |
-    //        basis                                                                                            |
-    //          -> layer matrices                                                                              |
-    //          -> transported fields                                                                          |
-    //          -> Fourier reflectance term                                                                    |
-    //   3. add Fourier weight * Fourier reflectance term into total reflectance                               |
-    //   4. add requested surface, aerosol-depth, and pressure Jacobians                                       |
-    //   5. stop when the Fourier tail is below the threshold                                                  |
+    //   1. choose direct surface or layer-resolved LABOS transport                                            |
+    //   2. require integrated-source rows before accepting pressure Jacobians                                 |
+    //   3. build the borrowed curved-grid view for pseudo-spherical top paths                                 |
+    //   4. return reflectance plus the fixed-order Jacobian vector                                            |
     //                                                                                                         |
     // hot path                                                                                                |
     //   repeated : every retained Fourier term                                                                |
-    //   costly   : basis build                                                                                |
-    //              layer-matrix build                                                                         |
+    //   costly   : layer-matrix build                                                                         |
     //              scattering-order propagation                                                               |
     //              reflectance integral                                                                       |
     //   Jacobian : aerosol weighting, only when requested                                                     |
-    //   memory   : workspace buffers reused when this route allows                                            |
+    //                                                                                                         |
+    // dataflow                                                                                                |
+    //   inputs : explicit scalars, slices, and named physics tables                                           |
+    //   reads  : geometry and phase basis borrowed as *const                                                  |
+    //   writes : caller-owned TransportWorkArrays only, never a broad Context or Workspace                    |
     //                                                                                                         |
     // calls                                                                                                   |
     //   buildLayerMatrices                                                                                    |
@@ -93,19 +99,18 @@ fn layerResolvedSolveWithWorkspace(...) Result {
     //   integrateReflectance                                                                                  |
     //                                                                                                         |
     // math                                                                                                    |
-    //   total reflectance += Fourier weight * Fourier reflectance term                                        |
-    //                                                                                                         |
-    //   Fourier weight                                                                                        |
-    //     = 1                                      when m = 0                                                 |
-    //     = 2 * cos(m * relative_azimuth)          when m > 0                                                 |
-    //                                                                                                         |
-    //   m : Fourier index                                                                                     |
+    //   direct path = exp(-tau / max(mu0, 0.05)) * exp(-tau / max(muv, 0.05))                                 |
+    //   reflectance = surface_albedo * direct path                                                            |
     // --------------------------------------------------------------------------------------------------------|
 ```
 
 Use sections only when they help. Good sections are `hot path`, `calls`,
-`math`, and `instrumentation`. If a function has many trace or telemetry blocks,
-the function map should say what they measure and why they exist.
+`math`, `dataflow`, and `instrumentation`. If a function has many trace or
+telemetry blocks, the function map should say what they measure and why they
+exist. In the hot folders (`src/optics`, `src/rtm`, `src/spectrum`,
+`src/retrieval`) use a `dataflow` section to state what the signature reads
+(explicit scalars, slices, `*const` borrows) and what it writes (a single named
+data owner). See the explicit-dataflow rule in `src/AGENTS.md`.
 
 ## Value Blocks
 

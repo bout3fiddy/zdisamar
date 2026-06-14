@@ -1,204 +1,213 @@
 const std = @import("std");
-const zdisamar = @import("zdisamar");
+const builtin = @import("builtin");
+const internal = @import("internal");
 
-// See tests/unit/internal_root.zig for the rationale: a `test` block is
-// required to force Zig to analyze the imported test files.
 test {
-    _ = @import("observation_model_test.zig");
-    _ = @import("input/o2a_reference/root_test.zig");
-    _ = @import("optimal_estimation_test.zig");
+    _ = @import("input/scene_test.zig");
+    _ = @import("input/hitran_partition_tables_test.zig");
+    _ = @import("assets/readers_test.zig");
+    _ = @import("common/units_test.zig");
+    _ = @import("common/memory_test.zig");
+    _ = @import("common/worker_partition_test.zig");
+    _ = @import("common/math/gauss_legendre_test.zig");
+    _ = @import("common/math/spline_test.zig");
+    _ = @import("setup/run_tables_test.zig");
+    _ = @import("setup/phase_table_test.zig");
+    _ = @import("cache/forward_worker_pool_test.zig");
+    _ = @import("cache/session_memory_test.zig");
+    _ = @import("cache/profile_line_memory_test.zig");
+    _ = @import("cache/radiance_memory_test.zig");
+    _ = @import("cache/solar_irradiance_memory_test.zig");
+    _ = @import("cache/spectrum_memory_test.zig");
+    _ = @import("cache/transport_worker_memory_test.zig");
+    _ = @import("optics/curved_sun_path_test.zig");
+    _ = @import("optics/layer_depths_test.zig");
+    _ = @import("optics/source_levels_test.zig");
+    _ = @import("rtm/attenuation_test.zig");
+    _ = @import("rtm/controls_test.zig");
+    _ = @import("rtm/gauss_angles_test.zig");
+    _ = @import("rtm/jacobian_states_test.zig");
+    _ = @import("rtm/layer_reflect_transmit_test.zig");
+    _ = @import("rtm/matrix_12x10_test.zig");
+    _ = @import("rtm/phase_basis_test.zig");
+    _ = @import("instrumentation/cost_timing_test.zig");
+    _ = @import("rtm/reflectance_test.zig");
+    _ = @import("rtm/rows_test.zig");
+    _ = @import("rtm/scattering_orders_test.zig");
+    _ = @import("rtm/solve_test.zig");
+    _ = @import("spectrum/instrument_average_test.zig");
+    _ = @import("spectrum/radiance_results_test.zig");
+    _ = @import("spectrum/radiance_wavelengths_test.zig");
+    _ = @import("spectrum/sampling_table_test.zig");
+    _ = @import("spectrum/solar_lookup_test.zig");
+    _ = @import("spectrum/spectrum_run_test.zig");
+    _ = @import("output/atmospheric_budget_test.zig");
+    _ = @import("output/instrument_response_test.zig");
+    _ = @import("output/line_contributions_test.zig");
+    _ = @import("output/cia_diagnostics_test.zig");
+    _ = @import("retrieval/root_test.zig");
+    _ = @import("validation/band_metrics_test.zig");
+    _ = @import("instrumentation/facades_test.zig");
 }
 
-const Scene = zdisamar.Input;
-const empty_scene: Scene = .{};
-const ObservationModel = @TypeOf(empty_scene.observation_model);
-const Absorber = std.meta.Child(@TypeOf(empty_scene.absorbers.items));
-const empty_observation_model: ObservationModel = .{};
-const OperationalBandSupport = std.meta.Child(@TypeOf(empty_observation_model.operational_band_support));
+test "public root exposes setup session and spectrum surface" {
+    const zdisamar = internal.public;
 
-test "unit suite keeps the public surface literal" {
-    try std.testing.expect(@hasDecl(zdisamar, "Input"));
-    try std.testing.expect(@hasDecl(zdisamar, "ReferenceData"));
-    try std.testing.expect(@hasDecl(zdisamar, "OpticalProperties"));
-    try std.testing.expect(@hasDecl(zdisamar, "PreparedInput"));
+    try std.testing.expect(@hasDecl(zdisamar, "Scene"));
+    try std.testing.expect(@hasDecl(zdisamar, "RunTables"));
+    try std.testing.expect(@hasDecl(zdisamar, "ProfileLineValues"));
+    try std.testing.expect(@hasDecl(zdisamar, "SessionMemory"));
+    try std.testing.expect(@hasDecl(zdisamar, "AtmosphericBudget"));
     try std.testing.expect(@hasDecl(zdisamar, "AtmosphericBudgetRow"));
-    try std.testing.expect(@hasDecl(zdisamar, "O2LineContributionRow"));
-    try std.testing.expect(@hasDecl(zdisamar, "O2LineContributionTable"));
+    try std.testing.expect(@hasDecl(zdisamar, "InstrumentResponse"));
+    try std.testing.expect(@hasDecl(zdisamar, "InstrumentResponseRow"));
+    try std.testing.expect(@hasDecl(zdisamar, "LineContributions"));
+    try std.testing.expect(@hasDecl(zdisamar, "LineContributionRow"));
+    try std.testing.expect(@hasDecl(zdisamar, "CiaDiagnostics"));
+    try std.testing.expect(@hasDecl(zdisamar, "CiaRow"));
+    try std.testing.expect(@hasDecl(zdisamar, "Spectrum"));
+    try std.testing.expect(@hasDecl(zdisamar, "SpectrumRunResult"));
+    try std.testing.expect(@hasDecl(zdisamar, "optimal_estimation"));
+    try std.testing.expect(@hasDecl(zdisamar, "RetrievalStateSpec"));
+    try std.testing.expect(@hasDecl(zdisamar, "RetrievalPressureAltitudeProfile"));
+    try std.testing.expect(@hasDecl(zdisamar, "RetrievalResult"));
+    try std.testing.expect(@hasDecl(zdisamar, "RetrievalBatchResult"));
+    try std.testing.expect(@hasDecl(zdisamar, "RetrievalFastmodeBatchResult"));
+    try std.testing.expect(@hasDecl(zdisamar, "defaultScene"));
     try std.testing.expect(@hasDecl(zdisamar, "prepare"));
-    try std.testing.expect(@hasDecl(zdisamar, "run"));
+    try std.testing.expect(@hasDecl(zdisamar, "initSessionMemory"));
+    try std.testing.expect(@hasDecl(zdisamar, "warmSessionMemory"));
+    try std.testing.expect(@hasDecl(zdisamar, "runForwardWithSessionMemory"));
+    try std.testing.expect(@hasDecl(zdisamar, "runForward"));
+    try std.testing.expect(@hasDecl(zdisamar, "buildRunTables"));
+    try std.testing.expect(@hasDecl(zdisamar, "buildProfileLineValues"));
     try std.testing.expect(@hasDecl(zdisamar, "buildAtmosphericBudget"));
-    try std.testing.expect(@hasDecl(zdisamar, "buildO2LineContributions"));
-    try std.testing.expect(!@hasDecl(zdisamar, "loadData"));
-    try std.testing.expect(!@hasDecl(zdisamar, "buildOptics"));
-    try std.testing.expect(!@hasDecl(zdisamar, "runSpectrum"));
-    try std.testing.expect(!@hasDecl(zdisamar, "compat"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Engine"));
-    try std.testing.expect(!@hasDecl(zdisamar, "calculation_telemetry"));
-}
+    try std.testing.expect(@hasDecl(zdisamar, "buildInstrumentResponse"));
+    try std.testing.expect(@hasDecl(zdisamar, "buildLineContributions"));
+    try std.testing.expect(@hasDecl(zdisamar, "buildCiaDiagnostics"));
 
-test "prepared lifecycle owns resolved O2A state" {
-    var input: zdisamar.Input = .{
-        .id = "prepared-lifecycle",
-        .spectral_grid = .{ .start_nm = 758.0, .end_nm = 771.0, .sample_count = 3 },
-        .observation_model = .{
-            .instrument = .tropomi,
-            .instrument_line_fwhm_nm = 0.38,
-        },
-    };
-
-    var prepared = try zdisamar.prepare(std.testing.allocator, &input);
-    defer prepared.deinit(std.testing.allocator);
-
-    try std.testing.expectEqualStrings("prepared-lifecycle", prepared.input.id);
-    try std.testing.expect(prepared.optical_properties.total_optical_depth >= 0.0);
-}
-
-test "unsupported bundled line-by-line spectroscopy fails instead of dropping absorption" {
-    const absorbers = [_]Absorber{.{
-        .id = "no2",
-        .species = "no2",
-        .profile_source = .atmosphere,
-        .spectroscopy = .{
-            .mode = .line_by_line,
-        },
-    }};
-    var input: zdisamar.Input = .{
-        .id = "unsupported-line-by-line",
-        .spectral_grid = .{ .start_nm = 405.0, .end_nm = 465.0, .sample_count = 3 },
-        .absorbers = .{ .items = absorbers[0..] },
-        .observation_model = .{
-            .instrument = .tropomi,
-            .instrument_line_fwhm_nm = 0.38,
-        },
-    };
-
-    try std.testing.expectError(
-        error.UnsupportedSpectroscopyConfiguration,
-        zdisamar.prepare(std.testing.allocator, &input),
-    );
-}
-
-test "unsupported bundled cross-section spectroscopy fails instead of zeroing continuum" {
-    const absorbers = [_]Absorber{.{
-        .id = "o2_o2",
-        .species = "o2_o2",
-        .resolved_species = .o2_o2,
-        .profile_source = .atmosphere,
-        .spectroscopy = .{
-            .mode = .cross_sections,
-        },
-    }};
-    var input: zdisamar.Input = .{
-        .id = "unsupported-cross-section",
-        .spectral_grid = .{ .start_nm = 405.0, .end_nm = 465.0, .sample_count = 3 },
-        .absorbers = .{ .items = absorbers[0..] },
-        .observation_model = .{
-            .instrument = .tropomi,
-            .instrument_line_fwhm_nm = 0.38,
-        },
-    };
-
-    try std.testing.expectError(
-        error.UnsupportedSpectroscopyConfiguration,
-        zdisamar.prepare(std.testing.allocator, &input),
-    );
-}
-
-test "generated O2A LUTs live only in operational band support" {
-    const support = [_]OperationalBandSupport{.{
-        .id = "primary",
-        .high_resolution_step_nm = 0.05,
-        .high_resolution_half_span_nm = 0.25,
-    }};
-    const absorbers = [_]Absorber{.{
-        .id = "o2",
-        .species = "o2",
-        .resolved_species = .o2,
-        .profile_source = .atmosphere,
-        .spectroscopy = .{
-            .mode = .line_by_line,
-            .line_gas_controls = .{
-                .active_stage = .simulation,
-            },
-        },
-    }};
-    var input: zdisamar.Input = .{
-        .id = "generated-lut-ownership",
-        .spectral_grid = .{ .start_nm = 758.0, .end_nm = 771.0, .sample_count = 3 },
-        .absorbers = .{ .items = absorbers[0..] },
-        .observation_model = .{
-            .instrument = .tropomi,
-            .instrument_line_fwhm_nm = 0.38,
-            .operational_band_support = support[0..],
-        },
-        .lut_controls = .{
-            .xsec = .{
-                .mode = .generate,
-                .min_temperature_k = 180.0,
-                .max_temperature_k = 325.0,
-                .min_pressure_hpa = 0.03,
-                .max_pressure_hpa = 1050.0,
-                .temperature_grid_count = 3,
-                .pressure_grid_count = 3,
-                .temperature_coefficient_count = 2,
-                .pressure_coefficient_count = 2,
-            },
-        },
-    };
-
-    var prepared = try zdisamar.prepare(std.testing.allocator, &input);
-    defer prepared.deinit(std.testing.allocator);
-
-    const prepared_support = prepared.input.observation_model.primaryOperationalBandSupport();
-    try std.testing.expect(prepared_support.o2_operational_lut.enabled());
-}
-
-test "public root exposes the O2A forward lab surface" {
-    try std.testing.expect(@hasDecl(zdisamar, "Input"));
-    try std.testing.expect(@hasDecl(zdisamar, "ReferenceData"));
-    try std.testing.expect(@hasDecl(zdisamar, "OpticalProperties"));
-    try std.testing.expect(@hasDecl(zdisamar, "CalculationStorage"));
-    try std.testing.expect(@hasDecl(zdisamar, "Output"));
-    try std.testing.expect(@hasDecl(zdisamar, "DiagnosticReport"));
-    try std.testing.expect(@hasDecl(zdisamar, "AtmosphericBudgetRow"));
-    try std.testing.expect(@hasDecl(zdisamar, "O2LineContributionRow"));
-    try std.testing.expect(@hasDecl(zdisamar, "O2LineContributionTable"));
-    try std.testing.expect(@hasDecl(zdisamar, "PreparedInput"));
-    try std.testing.expect(@hasDecl(zdisamar, "O2AInput"));
-    try std.testing.expect(@hasDecl(zdisamar, "PreparedO2A"));
-    try std.testing.expect(@hasDecl(zdisamar, "O2ASessionStorage"));
-    try std.testing.expect(@hasDecl(zdisamar, "defaultO2AInput"));
-    try std.testing.expect(@hasDecl(zdisamar, "prepareO2A"));
-    try std.testing.expect(@hasDecl(zdisamar, "runO2A"));
-    try std.testing.expect(@hasDecl(zdisamar, "runO2AWithSessionStorage"));
-    try std.testing.expect(@hasDecl(zdisamar, "warmO2ASessionStorage"));
-    try std.testing.expect(@hasDecl(zdisamar, "buildAtmosphericBudget"));
-    try std.testing.expect(@hasDecl(zdisamar, "buildO2LineContributions"));
-    try std.testing.expect(@hasDecl(zdisamar, "o2a"));
-    try std.testing.expect(@hasDecl(zdisamar, "prepare"));
-    try std.testing.expect(@hasDecl(zdisamar, "run"));
-    try std.testing.expect(@hasDecl(zdisamar, "writeReport"));
-}
-
-test "public root no longer exposes removed framework scaffolding" {
-    try std.testing.expect(!@hasDecl(zdisamar, "Engine"));
-    try std.testing.expect(!@hasDecl(zdisamar, "PreparedPlan"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Storage"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Request"));
-    try std.testing.expect(!@hasDecl(zdisamar, "canonical_config"));
-    try std.testing.expect(!@hasDecl(zdisamar, "mission_s5p"));
-    try std.testing.expect(!@hasDecl(zdisamar, "exporters"));
-    try std.testing.expect(!@hasDecl(zdisamar, "test_support"));
-    try std.testing.expect(!@hasDecl(zdisamar, "vendor_case"));
     try std.testing.expect(!@hasDecl(zdisamar, "Case"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Data"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Optics"));
-    try std.testing.expect(!@hasDecl(zdisamar, "RunStorage"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Result"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Report"));
-    try std.testing.expect(!@hasDecl(zdisamar, "Prepared"));
-    try std.testing.expect(!@hasDecl(zdisamar, "parity"));
-    try std.testing.expect(!@hasDecl(zdisamar, "loadData"));
-    try std.testing.expect(!@hasDecl(zdisamar, "buildOptics"));
-    try std.testing.expect(!@hasDecl(zdisamar, "runSpectrum"));
+    try std.testing.expect(!@hasDecl(zdisamar, "PreparedOpticalState"));
+    try std.testing.expect(!@hasDecl(zdisamar, "Context"));
+    try std.testing.expect(!@hasDecl(zdisamar, "zds_context_create"));
+}
+
+test "public O2 A root surface keeps route-only spectrum knobs internal" {
+    const zdisamar = internal.public;
+
+    // Source: canonical O2 A evidence fixtures owned by this repository.
+    // Canonical expected values owned by this repository.
+    // integrated irradiance rows. `python-reference-case-native.json` exposes no calibration, slit-kernel,
+    // radiance-integration, or irradiance-integration override keys, so the root call keeps those six
+    // `runForwardSpectrum` arguments as fixed route constants rather than public case fields.
+    try std.testing.expect(!@hasDecl(zdisamar, "buildReferenceRunTables"));
+    try std.testing.expect(!@hasDecl(zdisamar, "deinitReferenceRunTables"));
+    try std.testing.expect(!@hasDecl(zdisamar, "deinitRunTables"));
+    try std.testing.expect(!@hasDecl(zdisamar, "buildReferenceProfileLineValues"));
+    try std.testing.expect(!@hasDecl(zdisamar, "buildReferenceSpectrumSamplingTable"));
+    try std.testing.expect(!@hasDecl(zdisamar, "parseReferenceSceneJson"));
+    try std.testing.expect(!@hasDecl(zdisamar, "parseReferenceSceneJson"));
+    try std.testing.expect(!@hasDecl(zdisamar, "renderDefaultReferenceSceneJson"));
+    try std.testing.expect(!@hasDecl(zdisamar, "renderDefaultReferenceSceneJson"));
+    try std.testing.expect(!@hasDecl(zdisamar, "ParsedReferenceSceneJson"));
+    try std.testing.expect(!@hasDecl(zdisamar, "ParsedReferenceSceneJson"));
+    try std.testing.expect(!@hasDecl(zdisamar, "runReferenceSpectrumSingleWorker"));
+    try std.testing.expect(!@hasDecl(zdisamar, "runReferenceSpectrum"));
+    try std.testing.expect(!@hasDecl(zdisamar, "runForwardSpectrum"));
+
+    const scene = zdisamar.defaultScene();
+    const Scene = @TypeOf(scene);
+    const Observation = @TypeOf(scene.observation);
+    try std.testing.expect(!@hasField(Scene, "radiance_calibration"));
+    try std.testing.expect(!@hasField(Scene, "irradiance_calibration"));
+    try std.testing.expect(!@hasField(Scene, "radiance_slit_kernel"));
+    try std.testing.expect(!@hasField(Scene, "irradiance_slit_kernel"));
+    try std.testing.expect(!@hasField(Observation, "uses_integrated_radiance_sampling"));
+    try std.testing.expect(!@hasField(Observation, "uses_integrated_irradiance_sampling"));
+}
+
+test "runForwardWithSessionMemory reuses profile-line rows across repeated scene runs" {
+    if (builtin.mode == .Debug) return error.SkipZigTest;
+    if (!std.process.hasEnvVarConstant("ZDISAMAR_RUN_ROOT_SESSION_PARITY")) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const zdisamar = internal.public;
+
+    var scene = zdisamar.defaultScene();
+    scene.spectral_grid = .{
+        .start_nm = 758.0,
+        .end_nm = 760.0,
+        .sample_count = 2,
+    };
+
+    var prepared = try zdisamar.prepare(allocator, scene);
+    defer prepared.deinit(allocator);
+    var session = zdisamar.initSessionMemory(allocator);
+    defer session.deinit(allocator);
+
+    const solve_config = zdisamar.SolveConfig{
+        .derivative_mode = .none,
+        .derivative_state_mask = 0,
+        .controls = .{
+            .scattering = .none,
+            .n_streams = @intCast(scene.rtm.stream_count),
+            .integrate_source_function = false,
+        },
+    };
+
+    var first = try zdisamar.runForwardWithSessionMemory(
+        allocator,
+        &session,
+        &prepared,
+        solve_config,
+    );
+    defer first.deinit(allocator);
+    const support_profile_values_ptr = session.profile_lines.support_profile_values.ptr;
+    const dense_radiance_ptr = session.radiance.results.ptr;
+    const dense_radiance_stamp = session.radiance.result_stamp;
+    try std.testing.expect(dense_radiance_stamp.value != 0);
+    try std.testing.expectEqual(@as(usize, 0), session.profile_lines.profile_node_count);
+    try std.testing.expectEqual(@as(usize, 0), session.profile_lines.values.len);
+    try std.testing.expect(session.profile_lines.support_profile_values.len != 0);
+
+    var second = try zdisamar.runForwardWithSessionMemory(
+        allocator,
+        &session,
+        &prepared,
+        solve_config,
+    );
+    defer second.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), first.spectrum.sampleCount());
+    try std.testing.expectEqual(first.spectrum.sampleCount(), second.spectrum.sampleCount());
+    try std.testing.expectEqual(@as(usize, 0), session.profile_lines.values.len);
+    try std.testing.expect(session.profile_lines.support_profile_values.ptr == support_profile_values_ptr);
+    try std.testing.expect(session.radiance.results.ptr == dense_radiance_ptr);
+    try std.testing.expect(session.radiance.result_stamp.eql(dense_radiance_stamp));
+
+    for (
+        first.spectrum.wavelength_nm,
+        first.spectrum.radiance,
+        first.spectrum.irradiance,
+        first.spectrum.reflectance,
+        second.spectrum.radiance,
+        second.spectrum.irradiance,
+        second.spectrum.reflectance,
+    ) |
+        wavelength_nm,
+        first_radiance,
+        first_irradiance,
+        first_reflectance,
+        second_radiance,
+        second_irradiance,
+        second_reflectance,
+    | {
+        try std.testing.expect(std.math.isFinite(wavelength_nm));
+        try std.testing.expect(std.math.isFinite(first_radiance));
+        try std.testing.expect(std.math.isFinite(first_irradiance));
+        try std.testing.expect(std.math.isFinite(first_reflectance));
+        try std.testing.expectApproxEqAbs(first_radiance, second_radiance, 0.0);
+        try std.testing.expectApproxEqAbs(first_irradiance, second_irradiance, 0.0);
+        try std.testing.expectApproxEqAbs(first_reflectance, second_reflectance, 0.0);
+    }
 }

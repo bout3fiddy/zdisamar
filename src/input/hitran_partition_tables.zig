@@ -1,28 +1,34 @@
 const std = @import("std");
-const spline = @import("../common/math/interpolation/spline.zig");
+const spline = @import("../common/math/spline.zig");
+const CostTiming = @import("../instrumentation/cost_timing.zig");
 
-// hitran_partition_tables.zig -------------------------------------------------------------------------------|
-// Embedded HITRAN-style partition-sum tables used by strong-line temperature scaling.                        |
-//                                                                                                            |
-// called from                                                                                                |
-//   input/reference/spectroscopy/strong_lines.zig calls ratioT0OverT while preparing strong-line ConvTP and  |
-//   persistent prepared states. Unknown isotopologue codes fall back at the caller to a simple temperature   |
-//   ratio.                                                                                                   |
-//   tests/unit/hitran_partition_tables_test.zig checks representative O2-family codes and interpolation.     |
-//                                                                                                            |
-// table model                                                                                                |
-//   temperature_grid is the shared kelvin grid. q_* tables are keyed by HITRAN isotopologue code in          |
-//   ratioT0OverT. Most tables are f64; q_67 is f32 to keep the embedded constant block smaller.              |
-//                                                                                                            |
-// main paths                                                                                                 |
-//   ratioT0OverT switches from isotopologue code to the matching partition table, samples Q(T) and Q(T0),    |
-//   and returns Q(T0) / Q(T).                                                                                |
-//   interpolatePartitionTable clamps temperature to the grid range, then uses the endpoint-secant spline     |
-//   helper. The f32 table is widened on the stack before using the same interpolation path.                  |
-//                                                                                                            |
-// runtime shape                                                                                              |
-//   These tables are compile-time constants. There is no heap ownership, parser state, or runtime mutation.  |
-// -----------------------------------------------------------------------------------------------------------|
+// hitran_partition_tables.zig ------------------------------------------------------------------------------- |
+// Embedded HITRAN TIPS partition-sum tables used by line-strength temperature scaling.                        |
+//                                                                                                             |
+//   temperature grids and partition sums for isotopologues used by the O2 A line route. The q_* names follow  |
+//   HITRAN isotopologue codes: H2O uses 161/181/171/162/182/172, CO2 uses 626/636/628/627/638/637, and O2     |
+//   uses 66/68/67. Codes are the same compact gas-isotope identifiers produced by the spectroscopy            |
+//   `deriveIsotopologueCode` helper.                                                                          |
+//                                                                                                             |
+// called from                                                                                                 |
+//   cache/profile_line_memory.zig calls ratioT0OverT while evaluating weak-line profile rows. Unknown         |
+//   isotopologue codes fall back at the caller to the canonical exponent family from                          |
+//   otherwise 1.0 + 0.04 * (isotope_number - 1).                                                              |
+//   tests/unit/hitran_partition_tables_test.zig checks representative O2-family codes and interpolation.      |
+//                                                                                                             |
+// table model                                                                                                 |
+//   temperature_grid is the shared kelvin grid. q_* tables are keyed by HITRAN isotopologue code in           |
+//   ratioT0OverT. Most tables are f64; q_67 is f32 to keep the embedded constant block smaller.               |
+//                                                                                                             |
+// primary paths                                                                                               |
+//   ratioT0OverT switches from isotopologue code to the matching partition table, samples Q(T) and Q(T0),     |
+//   and returns Q(T0) / Q(T).                                                                                 |
+//   Each table stores endpoint-secant second derivatives beside the partition sums, so hot ratio evaluation   |
+//   clamps temperature and samples prepared spline state directly.                                            |
+//                                                                                                             |
+// runtime shape                                                                                               |
+//   These tables are compile-time constants. There is no heap ownership, parser state, or runtime mutation.   |
+// ----------------------------------------------------------------------------------------------------------- |
 
 const temperature_grid = [_]f64{
     60.0,   85.0,   110.0,  135.0,  160.0,  185.0,  210.0,  235.0,
@@ -456,9 +462,7 @@ const q_68 = [_]f64{
     0.84915e+04, 0.86229e+04, 0.87556e+04, 0.88895e+04, 0.90247e+04, 0.91611e+04, 0.92988e+04,
 };
 
-// DISAMAR declares this O2 isotopologue table with `E` exponents, so the
-// constants are rounded to default REAL before assignment into its real(8)
-// table. Keep the same literal precision here before widening for spline use.
+// Isotope 67 uses f32 literals before widening, matching the published O2-family table precision.
 const q_67 = [_]f32{
     0.52071E+03, 0.74484E+03, 0.96908E+03, 0.11934E+04, 0.14177E+04, 0.16422E+04, 0.18667E+04, 0.20913E+04,
     0.23161E+04, 0.25413E+04, 0.27671E+04, 0.29936E+04, 0.32212E+04, 0.34501E+04, 0.36806E+04, 0.39130E+04,
@@ -513,74 +517,214 @@ const q_5111 = [_]f64{
     0.53487E+06, 0.55734E+06, 0.58064E+06, 0.60478E+06, 0.62981E+06, 0.65574E+06, 0.68260E+06,
 };
 
-pub fn ratioT0OverT(isotopologue_code: i32, temperature_k: f64, reference_temperature_k: f64) ?f64 {
-    if (isotopologue_code == 67) {
-        return ratioT0OverTFromF32Table(q_67[0..], temperature_k, reference_temperature_k);
-    }
+const hitran_reference_temperature_k: f64 = 296.0;
 
-    const table = switch (isotopologue_code) {
-        161 => q_161[0..],
-        181 => q_181[0..],
-        171 => q_171[0..],
-        162 => q_162[0..],
-        182 => q_182[0..],
-        172 => q_172[0..],
-        626 => q_626[0..],
-        636 => q_636[0..],
-        628 => q_628[0..],
-        627 => q_627[0..],
-        638 => q_638[0..],
-        637 => q_637[0..],
-        26 => q_26[0..],
-        36 => q_36[0..],
-        28 => q_28[0..],
-        27 => q_27[0..],
-        38 => q_38[0..],
-        37 => q_37[0..],
-        211 => q_211[0..],
-        311 => q_311[0..],
-        212 => q_212[0..],
-        66 => q_66[0..],
-        68 => q_68[0..],
-        4111 => q_4111[0..],
-        5111 => q_5111[0..],
-        else => return null,
-    };
+const PreparedPartitionTable = struct {
+    values: [temperature_grid.len]f64,
+    second_derivatives: [temperature_grid.len]f64,
+    q_ref_296: f64,
+};
+
+const PreparedPartitionView = struct {
+    values: []const f64,
+    second_derivatives: []const f64,
+    q_ref_296: f64,
+};
+
+const q_67_f64 = widenF32PartitionTable(q_67);
+
+const prepared_q_161 = preparePartitionTable(q_161);
+const prepared_q_181 = preparePartitionTable(q_181);
+const prepared_q_171 = preparePartitionTable(q_171);
+const prepared_q_162 = preparePartitionTable(q_162);
+const prepared_q_182 = preparePartitionTable(q_182);
+const prepared_q_172 = preparePartitionTable(q_172);
+const prepared_q_626 = preparePartitionTable(q_626);
+const prepared_q_636 = preparePartitionTable(q_636);
+const prepared_q_628 = preparePartitionTable(q_628);
+const prepared_q_627 = preparePartitionTable(q_627);
+const prepared_q_638 = preparePartitionTable(q_638);
+const prepared_q_637 = preparePartitionTable(q_637);
+const prepared_q_26 = preparePartitionTable(q_26);
+const prepared_q_36 = preparePartitionTable(q_36);
+const prepared_q_28 = preparePartitionTable(q_28);
+const prepared_q_27 = preparePartitionTable(q_27);
+const prepared_q_38 = preparePartitionTable(q_38);
+const prepared_q_37 = preparePartitionTable(q_37);
+const prepared_q_211 = preparePartitionTable(q_211);
+const prepared_q_311 = preparePartitionTable(q_311);
+const prepared_q_212 = preparePartitionTable(q_212);
+const prepared_q_66 = preparePartitionTable(q_66);
+const prepared_q_68 = preparePartitionTable(q_68);
+const prepared_q_67 = preparePartitionTable(q_67_f64);
+const prepared_q_4111 = preparePartitionTable(q_4111);
+const prepared_q_5111 = preparePartitionTable(q_5111);
+
+pub fn ratioT0OverT(
+    isotopologue_code: i32,
+    temperature_k: f64,
+    reference_temperature_k: f64,
+    stage_cost: ?CostTiming.Active,
+) ?f64 {
+    // ratioT0OverT ------------------------------------------------------------------------------------------ |
+    // Return Q(reference_temperature_k) / Q(temperature_k) for a retained HITRAN isotopologue table.          |
+    // ------------------------------------------------------------------------------------------------------- |
+    const table = preparedPartitionTable(isotopologue_code) orelse return null;
+
+    const timing_start = CostTiming.start(stage_cost);
+    defer CostTiming.finish(stage_cost, timing_start, "partition_interp");
 
     const q_t = interpolatePartitionTable(table, temperature_k);
-    const q_ref = interpolatePartitionTable(table, reference_temperature_k);
+    const q_ref = if (reference_temperature_k == hitran_reference_temperature_k)
+        table.q_ref_296
+    else
+        interpolatePartitionTable(table, reference_temperature_k);
     return q_ref / @max(q_t, 1.0e-12);
 }
 
-fn ratioT0OverTFromF32Table(table: []const f32, temperature_k: f64, reference_temperature_k: f64) f64 {
-    const q_t = interpolatePartitionTableF32(table, temperature_k);
-    const q_ref = interpolatePartitionTableF32(table, reference_temperature_k);
-    return q_ref / @max(q_t, 1.0e-12);
+fn preparedPartitionTable(isotopologue_code: i32) ?PreparedPartitionView {
+    // preparedPartitionTable ---------------------------------------------------------------------------------|
+    // Select the immutable partition sums, prepared curvature, and 296 K reference value for one code.        |
+    // --------------------------------------------------------------------------------------------------------|
+    return switch (isotopologue_code) {
+        161 => viewPreparedPartitionTable(&prepared_q_161),
+        181 => viewPreparedPartitionTable(&prepared_q_181),
+        171 => viewPreparedPartitionTable(&prepared_q_171),
+        162 => viewPreparedPartitionTable(&prepared_q_162),
+        182 => viewPreparedPartitionTable(&prepared_q_182),
+        172 => viewPreparedPartitionTable(&prepared_q_172),
+        626 => viewPreparedPartitionTable(&prepared_q_626),
+        636 => viewPreparedPartitionTable(&prepared_q_636),
+        628 => viewPreparedPartitionTable(&prepared_q_628),
+        627 => viewPreparedPartitionTable(&prepared_q_627),
+        638 => viewPreparedPartitionTable(&prepared_q_638),
+        637 => viewPreparedPartitionTable(&prepared_q_637),
+        26 => viewPreparedPartitionTable(&prepared_q_26),
+        36 => viewPreparedPartitionTable(&prepared_q_36),
+        28 => viewPreparedPartitionTable(&prepared_q_28),
+        27 => viewPreparedPartitionTable(&prepared_q_27),
+        38 => viewPreparedPartitionTable(&prepared_q_38),
+        37 => viewPreparedPartitionTable(&prepared_q_37),
+        211 => viewPreparedPartitionTable(&prepared_q_211),
+        311 => viewPreparedPartitionTable(&prepared_q_311),
+        212 => viewPreparedPartitionTable(&prepared_q_212),
+        66 => viewPreparedPartitionTable(&prepared_q_66),
+        68 => viewPreparedPartitionTable(&prepared_q_68),
+        67 => viewPreparedPartitionTable(&prepared_q_67),
+        4111 => viewPreparedPartitionTable(&prepared_q_4111),
+        5111 => viewPreparedPartitionTable(&prepared_q_5111),
+        else => null,
+    };
 }
 
-fn interpolatePartitionTable(table: []const f64, temperature_k: f64) f64 {
-    // interpolatePartitionTable -----------------------------------------------------------------------------|
-    // Samples one partition table on the shared HITRAN temperature grid.                                     |
-    //                                                                                                        |
-    // units                                                                                                  |
-    //   temperature_k is in kelvin. Values outside the table range clamp to the nearest endpoint before the  |
-    //   endpoint-secant spline helper runs.                                                                  |
-    // -------------------------------------------------------------------------------------------------------|
+fn interpolatePartitionTable(table: PreparedPartitionView, temperature_k: f64) f64 {
+    // interpolatePartitionTable ----------------------------------------------------------------------------- |
+    // Sample one prepared partition table on the shared HITRAN temperature grid.                              |
+    //                                                                                                         |
+    // units                                                                                                   |
+    //   temperature_k is in kelvin. Values outside the table range clamp to the nearest endpoint before the   |
+    //   prepared endpoint-secant spline state is sampled.                                                     |
+    // ------------------------------------------------------------------------------------------------------- |
 
     const safe_temperature = std.math.clamp(
         temperature_k,
         temperature_grid[0],
         temperature_grid[temperature_grid.len - 1],
     );
-    if (safe_temperature <= temperature_grid[0]) return table[0];
-    if (safe_temperature >= temperature_grid[temperature_grid.len - 1]) return table[table.len - 1];
-    return spline.sampleEndpointSecant(temperature_grid[0..], table, safe_temperature) catch unreachable;
+    if (safe_temperature <= temperature_grid[0]) return table.values[0];
+    if (safe_temperature >= temperature_grid[temperature_grid.len - 1]) return table.values[table.values.len - 1];
+
+    return spline.sampleWithSecondDerivatives(
+        temperature_grid[0..],
+        table.values,
+        table.second_derivatives,
+        safe_temperature,
+    ) catch unreachable;
 }
 
-fn interpolatePartitionTableF32(table: []const f32, temperature_k: f64) f64 {
+fn preparePartitionTable(comptime values: [temperature_grid.len]f64) PreparedPartitionTable {
+    // preparePartitionTable ----------------------------------------------------------------------------------|
+    // Build immutable endpoint-secant spline state for a compile-time HITRAN partition table.                 |
+    //                                                                                                         |
+    // hot path                                                                                                |
+    //   ratioT0OverT calls only sampleWithSecondDerivatives; no curvature solve remains below line physics.   |
+    // --------------------------------------------------------------------------------------------------------|
+    var second_derivatives: [temperature_grid.len]f64 = undefined;
+    spline.endpointSecantSecondDerivatives(
+        temperature_grid[0..],
+        values[0..],
+        second_derivatives[0..],
+    ) catch unreachable;
+
+    return .{
+        .values = values,
+        .second_derivatives = second_derivatives,
+        .q_ref_296 = samplePreparedPartitionTable(values, second_derivatives, hitran_reference_temperature_k),
+    };
+}
+
+fn samplePreparedPartitionTable(
+    values: [temperature_grid.len]f64,
+    second_derivatives: [temperature_grid.len]f64,
+    temperature_k: f64,
+) f64 {
+    // samplePreparedPartitionTable -------------------------------------------------------------------------- |
+    // Sample compile-time prepared spline rows while building immutable table metadata.                       |
+    // ------------------------------------------------------------------------------------------------------- |
+    const view = PreparedPartitionView{
+        .values = values[0..],
+        .second_derivatives = second_derivatives[0..],
+        .q_ref_296 = 0.0,
+    };
+    return interpolatePartitionTable(view, temperature_k);
+}
+
+fn viewPreparedPartitionTable(comptime table: *const PreparedPartitionTable) PreparedPartitionView {
+    // viewPreparedPartitionTable -----------------------------------------------------------------------------|
+    // Borrow immutable arrays from one prepared table without copying 147-point storage into callers.         |
+    // --------------------------------------------------------------------------------------------------------|
+    return .{
+        .values = table.values[0..],
+        .second_derivatives = table.second_derivatives[0..],
+        .q_ref_296 = table.q_ref_296,
+    };
+}
+
+fn widenF32PartitionTable(comptime table: [temperature_grid.len]f32) [temperature_grid.len]f64 {
+    // widenF32PartitionTable ---------------------------------------------------------------------------------|
+    // Preserve f32 literal rounding for isotope 67, then store widened f64 values for the shared sampler.     |
+    // --------------------------------------------------------------------------------------------------------|
     var widened: [temperature_grid.len]f64 = undefined;
-    for (table, 0..) |value, index| {
-        widened[index] = @as(f64, value);
-    }
-    return interpolatePartitionTable(widened[0..table.len], temperature_k);
+    for (table, 0..) |value, index| widened[index] = @as(f64, value);
+    return widened;
+}
+
+pub fn partitionSampleMatchesEndpointSecant(isotopologue_code: i32, temperature_k: f64) ?bool {
+    // partitionSampleMatchesEndpointSecant -------------------------------------------------------------------|
+    // Oracle for unit coverage of immutable partition-table curvature. The production ratio path uses the     |
+    // prepared sample directly; this rebuilds the endpoint-secant curvature once for equality checks.         |
+    // --------------------------------------------------------------------------------------------------------|
+    const table = preparedPartitionTable(isotopologue_code) orelse return null;
+
+    const safe_temperature = std.math.clamp(
+        temperature_k,
+        temperature_grid[0],
+        temperature_grid[temperature_grid.len - 1],
+    );
+
+    const rebuilt = choose_rebuilt_sample: {
+        if (safe_temperature <= temperature_grid[0]) break :choose_rebuilt_sample table.values[0];
+        if (safe_temperature >= temperature_grid[temperature_grid.len - 1]) {
+            break :choose_rebuilt_sample table.values[table.values.len - 1];
+        }
+
+        break :choose_rebuilt_sample spline.sampleEndpointSecant(
+            temperature_grid[0..],
+            table.values,
+            safe_temperature,
+        ) catch unreachable;
+    };
+
+    const prepared = interpolatePartitionTable(table, temperature_k);
+    return rebuilt == prepared;
 }

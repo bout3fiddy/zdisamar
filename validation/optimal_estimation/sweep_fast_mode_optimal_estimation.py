@@ -93,7 +93,7 @@ def run_retrieval(case: Any, measurement, state_vector) -> tuple[Any, float]:
 
     start = time.perf_counter()
     result = o2a_oe.retrieve(
-        case=case,
+        scene=case,
         measurement=measurement,
         state_vector=state_vector,
     )
