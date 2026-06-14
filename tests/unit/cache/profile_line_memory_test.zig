@@ -16,22 +16,15 @@ fn profileLineRow(
     return values.values[wavelength_index * values.profile_node_count + profile_node_index];
 }
 
-fn supportProfileLineRow(
+fn supportProfileLineSigma(
     values: internal.cache.profile_line_memory.ProfileLineValues,
     wavelength_index: usize,
     profile_node_index: usize,
-) ?internal.cache.profile_line_memory.ProfileSupportLineValue {
-    // supportProfileLineRow ----------------------------------------------------------------------------------|
-    // Return one test evidence row from the public support-profile row slice.                                 |
+) ?f64 {
+    // supportProfileLineSigma --------------------------------------------------------------------------------|
+    // Return one retained support-profile sigma from the dense f64 column.                                    |
     // --------------------------------------------------------------------------------------------------------|
-    if (wavelength_index >= values.wavelength_count or
-        profile_node_index >= values.support_profile_node_count)
-    {
-        return null;
-    }
-    return values.support_profile_values[
-        wavelength_index * values.support_profile_node_count + profile_node_index
-    ];
+    return values.supportProfileTotalSigmaAt(wavelength_index, profile_node_index);
 }
 
 test "ProfileLineValues keep wavelength-major line values for each layer node" {
@@ -50,29 +43,30 @@ test "ProfileLineValues keep wavelength-major line values for each layer node" {
     try std.testing.expectEqual(values.wavelength_count * values.profile_node_count, values.values.len);
     try std.testing.expectEqual(
         values.wavelength_count * values.support_profile_node_count,
-        values.support_profile_values.len,
+        values.support_profile_total_sigma_cm2_per_molecule.len,
     );
     try std.testing.expect(values.reuse_stamp.value != 0);
 
     const first = profileLineRow(values, 0, 0) orelse return error.MissingProfileLineValue;
     const last = profileLineRow(values, values.wavelength_count - 1, values.profile_node_count - 1) orelse
         return error.MissingProfileLineValue;
-    const support_first = supportProfileLineRow(values, 0, 0) orelse return error.MissingProfileLineValue;
+    const support_first = supportProfileLineSigma(values, 0, 0) orelse return error.MissingProfileLineValue;
     try std.testing.expectApproxEqAbs(755.0, first.wavelength_nm, 0.0);
     try std.testing.expectApproxEqAbs(776.0, last.wavelength_nm, 0.0);
-    try std.testing.expectApproxEqAbs(755.0, support_first.wavelength_nm, 0.0);
+    try std.testing.expect(std.math.isFinite(support_first));
     try std.testing.expectEqual(@as(u32, 0), first.layer_index);
     try std.testing.expectEqual(@as(u32, 44), last.layer_index);
-    try std.testing.expectEqual(@as(u32, 0), support_first.profile_node_index);
 }
 
 test "ProfileLineValues support-profile layouts stay compiler backed" {
     try std.testing.expectEqual(@as(usize, 80), @sizeOf(internal.cache.profile_line_memory.ProfileLineValue));
-    try std.testing.expectEqual(@as(usize, 64), @sizeOf(internal.cache.profile_line_memory.ProfileSupportLineValue));
     try std.testing.expectEqual(@as(usize, 64), @sizeOf(internal.cache.profile_line_memory.ProfileLineValues));
     try std.testing.expectEqual(
         @as(usize, 16),
-        @offsetOf(internal.cache.profile_line_memory.ProfileLineValues, "support_profile_values"),
+        @offsetOf(
+            internal.cache.profile_line_memory.ProfileLineValues,
+            "support_profile_total_sigma_cm2_per_molecule",
+        ),
     );
 }
 
@@ -115,7 +109,7 @@ test "ProfileLineValues build the full reference wavelength route in optimized m
     try std.testing.expectEqual(values.wavelength_count * values.profile_node_count, values.values.len);
     try std.testing.expectEqual(
         values.wavelength_count * values.support_profile_node_count,
-        values.support_profile_values.len,
+        values.support_profile_total_sigma_cm2_per_molecule.len,
     );
 }
 
@@ -304,9 +298,10 @@ test "ProfileLineValues disable strong-line sidecars when isotope one is inactiv
         try std.testing.expectEqual(@as(f64, 0.0), value.strong_line_sigma_cm2_per_molecule);
         try std.testing.expectEqual(@as(f64, 0.0), value.line_mixing_sigma_cm2_per_molecule);
     }
-    for (values.support_profile_values) |value| {
-        try std.testing.expectEqual(@as(f64, 0.0), value.line_mixing_sigma_cm2_per_molecule);
-    }
+    try std.testing.expectEqual(
+        values.wavelength_count * values.support_profile_node_count,
+        values.support_profile_total_sigma_cm2_per_molecule.len,
+    );
 }
 
 test "ProfileLineValues parallel wavelength build matches serial rows" {
@@ -347,8 +342,8 @@ test "ProfileLineValues parallel wavelength build matches serial rows" {
     try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(serial.values), std.mem.sliceAsBytes(parallel.values));
     try std.testing.expectEqualSlices(
         u8,
-        std.mem.sliceAsBytes(serial.support_profile_values),
-        std.mem.sliceAsBytes(parallel.support_profile_values),
+        std.mem.sliceAsBytes(serial.support_profile_total_sigma_cm2_per_molecule),
+        std.mem.sliceAsBytes(parallel.support_profile_total_sigma_cm2_per_molecule),
     );
 }
 

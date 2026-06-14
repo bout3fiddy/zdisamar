@@ -53,14 +53,15 @@ test "scaleReflectanceToRadiance zeros Jacobian when derivative mode is off" {
 }
 
 test "integratePrefetchedRadianceAtNominal returns direct prefetched row" {
-    const results = [_]radiance_results.RadianceResult{
-        .{ .radiance = 1.25, .jacobian = .{ 0.1, 0.2 } },
-        .{ .radiance = 2.5, .jacobian = .{ 0.4, 0.5 } },
-    };
+    var radiance = [_]f64{ 1.25, 2.5 };
+    var jacobian = [_]jacobian_states.Vector{ .{ 0.1, 0.2 }, .{ 0.4, 0.5 } };
     const sample_indices = [_]u32{1};
     const actual = try radiance_results.integratePrefetchedRadianceAtNominal(
-        .{},
-        results[0..],
+        .{
+            .derivative_mode = .semi_analytical,
+            .derivative_state_mask = jacobian_states.all_states_mask,
+        },
+        .{ .radiance = radiance[0..], .jacobian = jacobian[0..] },
         .{ .start = 0 },
         sample_indices[0..],
         &sampling_table.IntegrationKernelRef.disabled(),
@@ -73,11 +74,8 @@ test "integratePrefetchedRadianceAtNominal returns direct prefetched row" {
 }
 
 test "integratePrefetchedRadianceAtNominal weights radiance and active Jacobian lanes" {
-    const results = [_]radiance_results.RadianceResult{
-        .{ .radiance = 10.0, .jacobian = .{ 1.0, 100.0 } },
-        .{ .radiance = 20.0, .jacobian = .{ 2.0, 200.0 } },
-        .{ .radiance = 40.0, .jacobian = .{ 4.0, 400.0 } },
-    };
+    var radiance = [_]f64{ 10.0, 20.0, 40.0 };
+    var jacobian = [_]jacobian_states.Vector{ .{ 1.0, 100.0 }, .{ 2.0, 200.0 }, .{ 4.0, 400.0 } };
     const sample_indices = [_]u32{ 2, 0, 1 };
     const weights = [_]f64{ 0.25, 0.5, 0.25 };
     const offsets = [_]f64{ -0.01, 0.0, 0.01 };
@@ -93,7 +91,7 @@ test "integratePrefetchedRadianceAtNominal weights radiance and active Jacobian 
             .derivative_mode = .semi_analytical,
             .derivative_state_mask = mask,
         },
-        results[0..],
+        .{ .radiance = radiance[0..], .jacobian = jacobian[0..] },
         .{ .start = 0 },
         sample_indices[0..],
         &integration,
@@ -109,10 +107,7 @@ test "integratePrefetchedRadianceAtNominal weights radiance and active Jacobian 
 }
 
 test "integratePrefetchedRadianceAtNominal omits Jacobian when derivative mode is off" {
-    const results = [_]radiance_results.RadianceResult{
-        .{ .radiance = 1.0, .jacobian = .{ 1.0, 2.0 } },
-        .{ .radiance = 3.0, .jacobian = .{ 4.0, 5.0 } },
-    };
+    var radiance = [_]f64{ 1.0, 3.0 };
     const sample_indices = [_]u32{ 0, 1 };
     const weights = [_]f64{ 0.25, 0.75 };
     const offsets = [_]f64{ 0.0, 0.01 };
@@ -126,7 +121,7 @@ test "integratePrefetchedRadianceAtNominal omits Jacobian when derivative mode i
             .derivative_mode = .none,
             .derivative_state_mask = jacobian_states.all_states_mask,
         },
-        results[0..],
+        .{ .radiance = radiance[0..] },
         .{ .start = 0 },
         sample_indices[0..],
         &integration,
@@ -141,9 +136,7 @@ test "integratePrefetchedRadianceAtNominal omits Jacobian when derivative mode i
 }
 
 test "integratePrefetchedRadianceAtNominal rejects mismatched sample indexes" {
-    const results = [_]radiance_results.RadianceResult{
-        .{ .radiance = 1.0 },
-    };
+    var radiance = [_]f64{1.0};
     const sample_indices = [_]u32{0};
     const integration = sampling_table.IntegrationKernelRef{
         .sample_count = 2,
@@ -154,10 +147,30 @@ test "integratePrefetchedRadianceAtNominal rejects mismatched sample indexes" {
         error.ShapeMismatch,
         radiance_results.integratePrefetchedRadianceAtNominal(
             .{},
-            results[0..],
+            .{ .radiance = radiance[0..] },
             radiance_wavelengths.RadianceSampleIndexRef{ .start = 0 },
             sample_indices[0..],
             &integration,
+            .{},
+        ),
+    );
+}
+
+test "integratePrefetchedRadianceAtNominal rejects missing Jacobian storage when active" {
+    var radiance = [_]f64{1.0};
+    const sample_indices = [_]u32{0};
+
+    try std.testing.expectError(
+        error.ShapeMismatch,
+        radiance_results.integratePrefetchedRadianceAtNominal(
+            .{
+                .derivative_mode = .semi_analytical,
+                .derivative_state_mask = jacobian_states.all_states_mask,
+            },
+            .{ .radiance = radiance[0..] },
+            radiance_wavelengths.RadianceSampleIndexRef{ .start = 0 },
+            sample_indices[0..],
+            &sampling_table.IntegrationKernelRef.disabled(),
             .{},
         ),
     );

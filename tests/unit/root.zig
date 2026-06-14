@@ -162,13 +162,13 @@ test "runForwardWithSessionMemory reuses profile-line rows across repeated scene
         solve_config,
     );
     defer first.deinit(allocator);
-    const support_profile_values_ptr = session.profile_lines.support_profile_values.ptr;
-    const dense_radiance_ptr = session.radiance.results.ptr;
+    const support_profile_sigma_ptr = session.profile_lines.support_profile_total_sigma_cm2_per_molecule.ptr;
+    const dense_radiance_ptr = session.radiance.radiance.ptr;
     const dense_radiance_stamp = session.radiance.result_stamp;
     try std.testing.expect(dense_radiance_stamp.value != 0);
     try std.testing.expectEqual(@as(usize, 0), session.profile_lines.profile_node_count);
     try std.testing.expectEqual(@as(usize, 0), session.profile_lines.values.len);
-    try std.testing.expect(session.profile_lines.support_profile_values.len != 0);
+    try std.testing.expect(session.profile_lines.support_profile_total_sigma_cm2_per_molecule.len != 0);
 
     var second = try zdisamar.runForwardWithSessionMemory(
         allocator,
@@ -181,8 +181,10 @@ test "runForwardWithSessionMemory reuses profile-line rows across repeated scene
     try std.testing.expectEqual(@as(usize, 2), first.spectrum.sampleCount());
     try std.testing.expectEqual(first.spectrum.sampleCount(), second.spectrum.sampleCount());
     try std.testing.expectEqual(@as(usize, 0), session.profile_lines.values.len);
-    try std.testing.expect(session.profile_lines.support_profile_values.ptr == support_profile_values_ptr);
-    try std.testing.expect(session.radiance.results.ptr == dense_radiance_ptr);
+    try std.testing.expect(
+        session.profile_lines.support_profile_total_sigma_cm2_per_molecule.ptr == support_profile_sigma_ptr,
+    );
+    try std.testing.expect(session.radiance.radiance.ptr == dense_radiance_ptr);
     try std.testing.expect(session.radiance.result_stamp.eql(dense_radiance_stamp));
 
     for (

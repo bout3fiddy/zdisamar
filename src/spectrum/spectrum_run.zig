@@ -39,7 +39,7 @@ pub const Error = error{
 //                                                                                                             |
 // route                                                                                                       |
 //   SpectrumSamplingTable -> RadianceWavelengthList -> static radiance ranges or pooled chunks -> dense       |
-//   RadianceResult rows -> nominal gather and instrument averaging.                                           |
+//   radiance/jacobian columns -> nominal gather and instrument averaging.                                     |
 //                                                                                                             |
 // allocation                                                                                                  |
 //   The helpers here allocate nothing. Thread owners and worker-local transport memory live at the call site. |
@@ -79,19 +79,19 @@ pub const SamplingPolicy = struct {
 // Caller-owned spectrum output rows grouped at the orchestration boundary.                                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 128 B (0.125 KiB), align: 8 B                                                                         |
+// size: 144 B (0.141 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
-// [  0.. 15] dense_radiance : []RadianceResult                                                                |
-// [ 16.. 31] wavelengths_nm : []f64                                                                           |
-// [ 32.. 47] raw_radiance   : []RadianceResult                                                                |
-// [ 48.. 63] raw_irradiance : []f64                                                                           |
-// [ 64.. 79] radiance       : []RadianceResult                                                                |
-// [ 80.. 95] irradiance     : []f64                                                                           |
-// [ 96..111] reflectance    : []f64                                                                           |
-// [112..127] jacobian       : []Vector                                                                        |
+// [  0.. 31] dense_radiance : DenseRadianceResults                                                            |
+// [ 32.. 47] wavelengths_nm : []f64                                                                           |
+// [ 48.. 63] raw_radiance   : []RadianceResult                                                                |
+// [ 64.. 79] raw_irradiance : []f64                                                                           |
+// [ 80.. 95] radiance       : []RadianceResult                                                                |
+// [ 96..111] irradiance     : []f64                                                                           |
+// [112..127] reflectance    : []f64                                                                           |
+// [128..143] jacobian       : []Vector                                                                        |
 pub const ProductRows = struct {
-    dense_radiance: []radiance_results.RadianceResult,
+    dense_radiance: radiance_results.DenseRadianceResults,
     wavelengths_nm: []f64,
     raw_radiance: []radiance_results.RadianceResult,
     raw_irradiance: []f64,
@@ -138,7 +138,7 @@ pub const RadianceWorkRows = struct {
 // memory groups                                                                                               |
 //   inputs     : wavelengths, angles, surface albedo, layer grid, profile lines, CIA, aerosol, phase, solar   |
 //   controls   : prepared_solve_config                                                                        |
-//   outputs    : out_dense_radiance[index] for each claimed exact wavelength                                  |
+//   outputs    : out_dense_radiance.radiance[index] for each claimed exact wavelength                         |
 //   scheduling : static range or pooled ChunkQueue, worker index, first-error state                           |
 //   scratch    : one worker-local TransportWorkerMemory with optics and LABOS rows                            |
 //   telemetry  : base context copied before per-sample sample_index/wavelength fields are overlaid            |
@@ -153,7 +153,7 @@ const RadiancePrefetchWorker = struct {
     phase: phase_table.PhaseTable,
     solar: solar_table.SolarTable,
     prepared_solve_config: controls.SolveConfig,
-    out_dense_radiance: []radiance_results.RadianceResult,
+    out_dense_radiance: radiance_results.DenseRadianceResults,
     error_state: *RadiancePrefetchErrorState,
     start_index: usize,
     end_index: usize,
@@ -335,7 +335,7 @@ fn prefetchRadianceRows(
     pool: ?*std.Thread.Pool,
     worker_count: usize,
     reset_cost_timing: bool,
-    out_dense_radiance: []radiance_results.RadianceResult,
+    out_dense_radiance: radiance_results.DenseRadianceResults,
     transport_workers: []transport_worker_memory.TransportWorkerMemory,
 ) !void {
     // prefetchRadianceRows -----------------------------------------------------------------------------------|
@@ -350,8 +350,8 @@ fn prefetchRadianceRows(
     //   pool == null : workers keep deterministic static ranges and drain chunk size 8 within each range      |
     //                                                                                                         |
     // row contract                                                                                            |
-    //   out_dense_radiance[index] corresponds to wavelengths.wavelengths[index]. ProfileLineValues must be    |
-    //   built over the same exact list so the dense index is also the spectroscopy wavelength index.          |
+    //   out_dense_radiance.radiance[index] corresponds to wavelengths.wavelengths[index]. ProfileLineValues   |
+    //   must be built over the same exact list so the dense index is also the spectroscopy wavelength index.  |
     //   prepared_solve_config has already passed the root/spectrum validation boundary.                       |
     //                                                                                                         |
     // memory                                                                                                  |
@@ -360,7 +360,7 @@ fn prefetchRadianceRows(
     // --------------------------------------------------------------------------------------------------------|
     if (worker_count == 0 or worker_count > transport_workers.len) return error.ShapeMismatch;
 
-    if (out_dense_radiance.len != wavelengths.wavelengths.len) return error.ShapeMismatch;
+    if (out_dense_radiance.len() != wavelengths.wavelengths.len) return error.ShapeMismatch;
 
     const support_count = layer_grid.support_mid_altitudes_km.len;
     const layer_count = layer_grid.layer_pressures_hpa.len;
@@ -510,7 +510,7 @@ fn radiancePrefetchWorkerMain(worker: *RadiancePrefetchWorker) void {
             }
             defer if (comptime Telemetry.enabled) Telemetry.setContext(previous_context);
 
-            worker.out_dense_radiance[index] = radianceAtWavelength(
+            const result = radianceAtWavelength(
                 wavelength.wavelength_nm,
                 index,
                 worker.angles,
@@ -533,6 +533,10 @@ fn radiancePrefetchWorkerMain(worker: *RadiancePrefetchWorker) void {
                 },
                 worker.transport_memory,
             ) catch |err| {
+                worker.error_state.store(err);
+                return;
+            };
+            worker.out_dense_radiance.set(index, result) catch |err| {
                 worker.error_state.store(err);
                 return;
             };
@@ -593,6 +597,7 @@ pub fn runForwardSpectrum(
     const row_count = table.rows.len;
     const product_shapes_match = wavelengths.rows.len == row_count and
         product_rows.wavelengths_nm.len == row_count and
+        product_rows.dense_radiance.len() == wavelengths.wavelengths.len and
         product_rows.raw_radiance.len == row_count and
         product_rows.raw_irradiance.len == row_count and
         product_rows.radiance.len == row_count and
@@ -671,7 +676,7 @@ pub fn gatherProductRows(
     solve_config: controls.SolveConfig,
     table: sampling_table.SpectrumSamplingTable,
     wavelengths: radiance_wavelengths.RadianceWavelengthList,
-    dense_radiance: []const radiance_results.RadianceResult,
+    dense_radiance: radiance_results.DenseRadianceResults,
     solar: solar_table.SolarTable,
     solar_memory: *solar_irradiance_memory.SolarIrradianceMemory,
     out_wavelengths_nm: []f64,
@@ -686,7 +691,7 @@ pub fn gatherProductRows(
     //   calibration, convolution, and reflectance scaling.                                                    |
     //                                                                                                         |
     // data flow                                                                                               |
-    //   sampling row -> exact radiance sample indexes -> dense radiance rows -> raw product radiance          |
+    //   sampling row -> exact radiance sample indexes -> dense radiance column -> raw product radiance        |
     //   sampling row -> exact solar lookup/cache                     -> raw product irradiance                |
     //                                                                                                         |
     // memory                                                                                                  |

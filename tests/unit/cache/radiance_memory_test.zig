@@ -48,32 +48,57 @@ test "RadianceMemory takes exact wavelength list ownership and exposes active vi
     try std.testing.expectEqual(@as(u32, 0), view.sample_indices[0]);
     try std.testing.expectEqual(@as(u32, 0), view.sample_indices[1]);
     try std.testing.expect(memory.hasWavelengthList(stamp, 2, 2, 1));
-    try std.testing.expect(!memory.resultsValid(stamp));
+    try std.testing.expect(!memory.resultsValid(stamp, false));
 }
 
-test "RadianceMemory owns dense radiance result rows" {
+test "RadianceMemory owns dense radiance-only result rows" {
     var memory = radiance_memory.RadianceMemory{};
     defer memory.deinit(std.testing.allocator);
 
     memory.active.wavelength_count = 2;
-    try memory.ensureResultCapacity(std.testing.allocator, 2);
+    try memory.ensureResultCapacity(std.testing.allocator, 2, false);
     const rows = memory.resultRows();
-    rows[0] = .{ .radiance = 1.0, .jacobian = .{ 1.0, 2.0 } };
-    rows[1] = .{ .radiance = 2.0, .jacobian = .{ 4.0, 5.0 } };
+    rows.radiance[0] = 1.0;
+    rows.radiance[1] = 2.0;
     const stamp = hashing.ReuseStamp{ .value = 0x5678 };
     memory.markResultsValid(stamp);
 
-    try std.testing.expectEqual(@as(usize, 2), rows.len);
-    try std.testing.expectApproxEqAbs(2.0, memory.resultRows()[1].radiance, 0.0);
-    try std.testing.expectApproxEqAbs(5.0, memory.resultRows()[1].jacobian[1], 0.0);
-    try std.testing.expect(memory.resultsValid(stamp));
+    try std.testing.expectEqual(@as(usize, 2), rows.radiance.len);
+    try std.testing.expectEqual(@as(usize, 0), rows.jacobian.len);
+    try std.testing.expectApproxEqAbs(2.0, memory.resultRows().radiance[1], 0.0);
+    try std.testing.expect(memory.resultsValid(stamp, false));
+    try std.testing.expect(!memory.resultsValid(stamp, true));
 
-    try memory.ensureResultCapacity(std.testing.allocator, 3);
-    try std.testing.expect(!memory.resultsValid(stamp));
+    try memory.ensureResultCapacity(std.testing.allocator, 3, false);
+    try std.testing.expect(!memory.resultsValid(stamp, false));
+}
+
+test "RadianceMemory owns optional dense Jacobian result rows" {
+    var memory = radiance_memory.RadianceMemory{};
+    defer memory.deinit(std.testing.allocator);
+
+    memory.active.wavelength_count = 2;
+    try memory.ensureResultCapacity(std.testing.allocator, 2, true);
+    const rows = memory.resultRows();
+    try rows.set(0, .{ .radiance = 1.0, .jacobian = .{ 1.0, 2.0 } });
+    try rows.set(1, .{ .radiance = 2.0, .jacobian = .{ 4.0, 5.0 } });
+    const stamp = hashing.ReuseStamp{ .value = 0x9abc };
+    memory.markResultsValid(stamp);
+
+    try std.testing.expectEqual(@as(usize, 2), rows.radiance.len);
+    try std.testing.expectEqual(@as(usize, 2), rows.jacobian.len);
+    try std.testing.expectApproxEqAbs(2.0, memory.resultRows().radiance[1], 0.0);
+    try std.testing.expectApproxEqAbs(5.0, memory.resultRows().jacobian[1][1], 0.0);
+    try std.testing.expect(memory.resultsValid(stamp, true));
+
+    try memory.ensureResultCapacity(std.testing.allocator, 2, false);
+    try std.testing.expectEqual(@as(usize, 0), memory.resultRows().jacobian.len);
+    try std.testing.expect(!memory.resultsValid(stamp, true));
 }
 
 test "RadianceMemory layout matches retained owner contract" {
-    try std.testing.expectEqual(@as(usize, 112), @sizeOf(radiance_memory.RadianceMemory));
-    try std.testing.expectEqual(@as(usize, 32), @sizeOf(radiance_memory.RadianceMemoryActive));
+    try std.testing.expectEqual(@as(usize, 136), @sizeOf(radiance_memory.RadianceMemory));
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(radiance_memory.RadianceMemoryActive));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(radiance_results.RadianceResult));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(radiance_results.DenseRadianceResults));
 }

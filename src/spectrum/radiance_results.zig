@@ -38,6 +38,52 @@ pub const RadianceResult = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
+// DenseRadianceResults -------------------------------------------------------------------------------------- |
+// Split storage for high-resolution dense radiance rows before nominal slit gathering.                        |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 32 B (0.031 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// memory                                                                                                      |
+// [ 0..15] radiance : []f64                                                                                   |
+// [16..31] jacobian : []Vector                                                                                |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   radiance is always present for active dense rows. jacobian is empty on no-derivative routes, and has the  |
+//   same length as radiance only when active RTM Jacobian lanes must be gathered.                             |
+pub const DenseRadianceResults = struct {
+    radiance: []f64 = &.{},
+    jacobian: []jacobian_states.Vector = &.{},
+
+    pub fn len(self: DenseRadianceResults) usize {
+        // DenseRadianceResults.len -------------------------------------------------------------------------- |
+        // Return the number of dense radiance rows.                                                           |
+        // ----------------------------------------------------------------------------------------------------|
+        return self.radiance.len;
+    }
+
+    pub fn set(self: DenseRadianceResults, index: usize, row: RadianceResult) Error!void {
+        // DenseRadianceResults.set -------------------------------------------------------------------------- |
+        // Write one dense prefetch row into split storage.                                                    |
+        // ----------------------------------------------------------------------------------------------------|
+        if (index >= self.radiance.len) return error.ShapeMismatch;
+        self.radiance[index] = row.radiance;
+        if (self.jacobian.len != 0) {
+            if (self.jacobian.len != self.radiance.len) return error.ShapeMismatch;
+            self.jacobian[index] = row.jacobian;
+        }
+    }
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+pub fn wantsJacobian(solve_config: controls.SolveConfig) bool {
+    // wantsJacobian ----------------------------------------------------------------------------------------- |
+    // Decide whether dense radiance storage and nominal gathers need active Jacobian lanes.                   |
+    // --------------------------------------------------------------------------------------------------------|
+    return solve_config.derivative_mode != .none and
+        jacobian_states.activeStateCount(solve_config.derivative_state_mask) != 0;
+}
+
 pub fn scaleReflectanceToRadiance(
     solve_config: controls.SolveConfig,
     reflectance: solve.ReflectanceResult,
@@ -61,9 +107,7 @@ pub fn scaleReflectanceToRadiance(
     // --------------------------------------------------------------------------------------------------------|
     const scale = solar_cosine * solar_irradiance / std.math.pi;
 
-    const active_state_count = jacobian_states.activeStateCount(solve_config.derivative_state_mask);
-    const wants_jacobian = solve_config.derivative_mode != .none and active_state_count != 0;
-    const radiance_jacobian = if (wants_jacobian)
+    const radiance_jacobian = if (wantsJacobian(solve_config))
         jacobian_states.scaleMasked(reflectance.jacobian, scale, solve_config.derivative_state_mask)
     else
         jacobian_states.zero();
@@ -76,7 +120,7 @@ pub fn scaleReflectanceToRadiance(
 
 pub fn integratePrefetchedRadianceAtNominal(
     solve_config: controls.SolveConfig,
-    results: []const RadianceResult,
+    results: DenseRadianceResults,
     row_ref: radiance_wavelengths.RadianceSampleIndexRef,
     sample_indices: []const u32,
     integration: *const sampling_table.IntegrationKernelRef,
@@ -86,7 +130,7 @@ pub fn integratePrefetchedRadianceAtNominal(
     // Accumulate one nominal radiance row from already-prefetched high-resolution radiance results.           |
     //                                                                                                         |
     // data flow                                                                                               |
-    //   row_ref.start -> sample_indices[start..start + count] -> results[result_index]                        |
+    //   row_ref.start -> sample_indices[start..start + count] -> results.radiance[result_index]               |
     //                                                                                                         |
     // math                                                                                                    |
     //   L_i     = sum_j weight_ij * L(lambda_i + offset_ij)                                                   |
@@ -105,11 +149,22 @@ pub fn integratePrefetchedRadianceAtNominal(
         return error.ShapeMismatch;
     }
     const indices = sample_indices[start .. start + count];
+    const wants_jacobian = wantsJacobian(solve_config);
 
     if (!integration.enabled()) {
         const result_index: usize = @intCast(indices[0]);
-        if (result_index >= results.len) return error.ShapeMismatch;
-        return results[result_index];
+        if (result_index >= results.radiance.len) return error.ShapeMismatch;
+
+        var jacobian = jacobian_states.zero();
+        if (wants_jacobian) {
+            if (results.jacobian.len != results.radiance.len) return error.ShapeMismatch;
+            jacobian = results.jacobian[result_index];
+        }
+
+        return .{
+            .radiance = results.radiance[result_index],
+            .jacobian = jacobian,
+        };
     }
 
     const samples = integration.samples(kernel_storage);
@@ -117,17 +172,18 @@ pub fn integratePrefetchedRadianceAtNominal(
 
     var radiance_sum: f64 = 0.0;
     var jacobian_sum = jacobian_states.zero();
-    const active_state_count = jacobian_states.activeStateCount(solve_config.derivative_state_mask);
-    const wants_jacobian = solve_config.derivative_mode != .none and active_state_count != 0;
+    if (wants_jacobian and results.jacobian.len != results.radiance.len) return error.ShapeMismatch;
+
     for (indices, samples.weights) |result_index_u32, weight| {
         const result_index: usize = @intCast(result_index_u32);
-        if (result_index >= results.len) return error.ShapeMismatch;
-        const sample = results[result_index];
-        radiance_sum += weight * sample.radiance;
+        if (result_index >= results.radiance.len) return error.ShapeMismatch;
+
+        radiance_sum += weight * results.radiance[result_index];
+
         if (wants_jacobian) {
             jacobian_states.addScaledMasked(
                 &jacobian_sum,
-                sample.jacobian,
+                results.jacobian[result_index],
                 weight,
                 solve_config.derivative_state_mask,
             );
@@ -142,4 +198,5 @@ pub fn integratePrefetchedRadianceAtNominal(
 
 comptime {
     std.debug.assert(@sizeOf(RadianceResult) == 24);
+    std.debug.assert(@sizeOf(DenseRadianceResults) == 32);
 }

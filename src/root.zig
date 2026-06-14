@@ -1062,7 +1062,8 @@ fn prepareSessionRows(
     if (!wavelength_list_matches) {
         session.radiance.takeWavelengthList(allocator, &owned_wavelengths, wavelength_list_stamp);
     }
-    try session.radiance.ensureResultCapacity(allocator, dense_count);
+    const wants_dense_jacobian = radiance_results.wantsJacobian(prepared_solve_config);
+    try session.radiance.ensureResultCapacity(allocator, dense_count, wants_dense_jacobian);
 
     const layer_count = prepared.tables.layers.layer_pressures_hpa.len;
     const support_count = prepared.tables.layers.support_mid_altitudes_km.len;
@@ -1113,7 +1114,10 @@ fn prepareSessionRows(
         prepared_solve_config,
         profile_stamp,
     );
-    const dense_radiance_results_match = session.radiance.resultsValid(dense_radiance_result_stamp);
+    const dense_radiance_results_match = session.radiance.resultsValid(
+        dense_radiance_result_stamp,
+        wants_dense_jacobian,
+    );
 
     return .{
         .table = table,

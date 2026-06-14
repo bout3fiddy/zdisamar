@@ -32,14 +32,14 @@ test "SessionMemory layout matches named owner composition" {
     };
     const expected_layout = switch (builtin.mode) {
         .Debug => ExpectedLayout{
-            .size = 424,
-            .worker_pool_offset = 272,
-            .transport_workers_offset = 408,
+            .size = 448,
+            .worker_pool_offset = 296,
+            .transport_workers_offset = 432,
         },
         else => ExpectedLayout{
-            .size = 392,
-            .worker_pool_offset = 264,
-            .transport_workers_offset = 376,
+            .size = 416,
+            .worker_pool_offset = 288,
+            .transport_workers_offset = 400,
         },
     };
 
@@ -47,8 +47,8 @@ test "SessionMemory layout matches named owner composition" {
     try std.testing.expectEqual(@as(usize, 8), @alignOf(session_memory.SessionMemory));
     try std.testing.expectEqual(@as(usize, 0), @offsetOf(session_memory.SessionMemory, "spectrum"));
     try std.testing.expectEqual(@as(usize, 56), @offsetOf(session_memory.SessionMemory, "radiance"));
-    try std.testing.expectEqual(@as(usize, 168), @offsetOf(session_memory.SessionMemory, "profile_lines"));
-    try std.testing.expectEqual(@as(usize, 232), @offsetOf(session_memory.SessionMemory, "solar_irradiance"));
+    try std.testing.expectEqual(@as(usize, 192), @offsetOf(session_memory.SessionMemory, "profile_lines"));
+    try std.testing.expectEqual(@as(usize, 256), @offsetOf(session_memory.SessionMemory, "solar_irradiance"));
 
     try std.testing.expectEqual(
         @as(usize, expected_layout.worker_pool_offset),

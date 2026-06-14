@@ -427,8 +427,10 @@ test "runForwardSpectrum matches canonical full spectrum" {
     );
     try std.testing.expectEqual(@as(usize, 3874), dense_count);
 
-    const dense = try allocator.alloc(radiance_results.RadianceResult, dense_count);
-    defer allocator.free(dense);
+    const dense_radiance = try allocator.alloc(f64, dense_count);
+    defer allocator.free(dense_radiance);
+    const dense_jacobian = try allocator.alloc(jacobian_states.Vector, dense_count);
+    defer allocator.free(dense_jacobian);
     const product_wavelengths = try allocator.alloc(f64, product_count);
     defer allocator.free(product_wavelengths);
     const raw_radiance = try allocator.alloc(radiance_results.RadianceResult, product_count);
@@ -498,7 +500,10 @@ test "runForwardSpectrum matches canonical full spectrum" {
         null,
         worker_count,
         .{
-            .dense_radiance = dense,
+            .dense_radiance = .{
+                .radiance = dense_radiance,
+                .jacobian = dense_jacobian,
+            },
             .wavelengths_nm = product_wavelengths,
             .raw_radiance = raw_radiance,
             .raw_irradiance = raw_irradiance,
@@ -610,7 +615,7 @@ test "runForwardSpectrum assembles direct-route product reflectance across worke
     const expected_layers = try allocator.alloc(layer_depths.LayerOptics, layer_count);
     defer allocator.free(expected_layers);
 
-    var dense: [2]radiance_results.RadianceResult = undefined;
+    var dense_radiance: [2]f64 = undefined;
     var product_wavelengths: [2]f64 = undefined;
     var raw_radiance: [2]radiance_results.RadianceResult = undefined;
     var raw_irradiance: [2]f64 = undefined;
@@ -659,7 +664,7 @@ test "runForwardSpectrum assembles direct-route product reflectance across worke
         2,
         true,
         .{
-            .dense_radiance = dense[0..],
+            .dense_radiance = .{ .radiance = dense_radiance[0..] },
             .wavelengths_nm = product_wavelengths[0..],
             .raw_radiance = raw_radiance[0..],
             .raw_irradiance = raw_irradiance[0..],
@@ -758,10 +763,11 @@ test "gatherProductRows gathers radiance irradiance and active Jacobian lanes" {
         .{ .start = 0 },
         .{ .start = 1 },
     };
-    var dense = [_]radiance_results.RadianceResult{
-        .{ .radiance = 10.0, .jacobian = .{ 1.0, 100.0 } },
-        .{ .radiance = 20.0, .jacobian = .{ 2.0, 200.0 } },
-        .{ .radiance = 30.0, .jacobian = .{ 3.0, 300.0 } },
+    var dense_radiance = [_]f64{ 10.0, 20.0, 30.0 };
+    var dense_jacobian = [_]jacobian_states.Vector{
+        .{ 1.0, 100.0 },
+        .{ 2.0, 200.0 },
+        .{ 3.0, 300.0 },
     };
     var solar_rows = [_]readers.SolarAssetRow{
         .{ .wavelength_nm = 759.0, .irradiance = 100.0 },
@@ -790,7 +796,10 @@ test "gatherProductRows gathers radiance irradiance and active Jacobian lanes" {
             .sample_indices = sample_indices[0..],
             .wavelengths = &.{},
         },
-        dense[0..],
+        .{
+            .radiance = dense_radiance[0..],
+            .jacobian = dense_jacobian[0..],
+        },
         solar,
         &solar_memory,
         out_wavelengths[0..],
@@ -823,7 +832,7 @@ test "gatherProductRows resets stale solar memory and rejects malformed shapes" 
     const table = sampling_table.SpectrumSamplingTable{ .rows = &rows };
     const sample_indices = [_]u32{0};
     var row_refs = [_]radiance_wavelengths.RadianceSampleIndexRef{.{ .start = 0 }};
-    var dense = [_]radiance_results.RadianceResult{.{ .radiance = 3.0 }};
+    var dense_radiance = [_]f64{3.0};
     var solar_rows = [_]readers.SolarAssetRow{
         .{ .wavelength_nm = 760.0, .irradiance = 22.0 },
     };
@@ -847,7 +856,7 @@ test "gatherProductRows resets stale solar memory and rejects malformed shapes" 
             .sample_indices = sample_indices[0..],
             .wavelengths = &.{},
         },
-        dense[0..],
+        .{ .radiance = dense_radiance[0..] },
         solar,
         &solar_memory,
         out_wavelengths[0..],
@@ -868,7 +877,7 @@ test "gatherProductRows resets stale solar memory and rejects malformed shapes" 
                 .sample_indices = sample_indices[0..],
                 .wavelengths = &.{},
             },
-            dense[0..],
+            .{ .radiance = dense_radiance[0..] },
             solar,
             &solar_memory,
             out_wavelengths[0..],
