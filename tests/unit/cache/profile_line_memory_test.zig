@@ -262,6 +262,7 @@ test "ProfileLineValues reuse stamp distinguishes line assets" {
     const baseline = internal.cache.profile_line_memory.profileLineReuseStamp(
         scene.id,
         tables.lines,
+        tables.layers.spectroscopy_profile.rows,
         wavelengths_nm[0..],
         true,
         true,
@@ -275,11 +276,48 @@ test "ProfileLineValues reuse stamp distinguishes line assets" {
     const isotope_stamp = internal.cache.profile_line_memory.profileLineReuseStamp(
         scene.id,
         isotope_tables.lines,
+        isotope_tables.layers.spectroscopy_profile.rows,
         wavelengths_nm[0..],
         true,
         true,
     );
     try std.testing.expect(!baseline.eql(isotope_stamp));
+}
+
+test "ProfileLineValues reuse stamp distinguishes spectroscopy profile thermodynamics" {
+    const allocator = std.testing.allocator;
+    var scene = o2a_scene.reference();
+    scene.spectral_grid.sample_count = profile_line_test_sample_count;
+
+    var tables = try internal.setup.run_tables.buildRunTables(allocator, scene);
+    defer tables.deinit(allocator);
+
+    const wavelengths_nm = [_]f64{760.0};
+    const baseline = internal.cache.profile_line_memory.profileLineReuseStamp(
+        scene.id,
+        tables.lines,
+        tables.layers.spectroscopy_profile.rows,
+        wavelengths_nm[0..],
+        false,
+        false,
+    );
+
+    const changed_rows = try allocator.dupe(
+        internal.assets.readers.AtmosphereProfileRow,
+        tables.layers.spectroscopy_profile.rows,
+    );
+    defer allocator.free(changed_rows);
+    changed_rows[0].temperature_k += 1.0;
+
+    const changed = internal.cache.profile_line_memory.profileLineReuseStamp(
+        scene.id,
+        tables.lines,
+        changed_rows,
+        wavelengths_nm[0..],
+        false,
+        false,
+    );
+    try std.testing.expect(!baseline.eql(changed));
 }
 
 test "ProfileLineValues disable strong-line sidecars when isotope one is inactive" {

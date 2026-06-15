@@ -1045,6 +1045,7 @@ fn prepareSessionRows(
     const profile_stamp = profile_lines.profileLineReuseStamp(
         prepared.scene.id,
         prepared.tables.lines,
+        prepared.tables.layers.spectroscopy_profile.rows,
         exact_wavelengths,
         build_layer_values,
         needs_temperature_derivatives,

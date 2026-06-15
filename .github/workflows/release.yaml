@@ -129,7 +129,7 @@ jobs:
           uv pip install --python "${smoke_venv}/venv/bin/python" dist/*.whl
           cd /tmp
           "${smoke_venv}/venv/bin/python" \
-            "${GITHUB_WORKSPACE}/tests/python/wheel_install_smoke_test.py" \
+            "${GITHUB_WORKSPACE}/tests/python/test_wheel_install_smoke.py" \
             --forbid-path "${GITHUB_WORKSPACE}"
 
   publish:
