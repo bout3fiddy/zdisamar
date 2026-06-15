@@ -133,9 +133,9 @@ channel is an average over sharper oxygen absorption structure at higher
 spectral resolution:
 
 ```text
-low-overhead prepare_o2a       0.057692 s
-low-overhead forward elapsed   1.328534 s
-ztracy forward elapsed         2.443697 s
+low-overhead prepare_o2a       0.057938 s
+low-overhead forward elapsed   1.108574 s
+phase-timed forward elapsed    1.192873 s
 output wavelengths                  701
 high-resolution radiance samples  3,874
 LABOS Fourier terms             120,390
@@ -145,7 +145,7 @@ doubling steps                8,389,666
 
 The low-overhead evidence is
 [`scaffolding/instrumentation/trace/evidence/lauka-forward/forward-run/summary.json`](./scaffolding/instrumentation/trace/evidence/lauka-forward/forward-run/summary.json).
-The timeline trace summary is
+The phase-timing summary is
 [`scaffolding/instrumentation/trace/evidence/labos-bottleneck/summary.json`](./scaffolding/instrumentation/trace/evidence/labos-bottleneck/summary.json).
 The detailed performance notes live in
 [`scaffolding/reports/performance/forward/`](./scaffolding/reports/performance/forward/).
@@ -181,15 +181,15 @@ measurement grid, then uses that result as the starting state for one sparse
 full-physics forward model plus Jacobian update.
 
 ```text
-zdisamar fullmode: 100/100 converged, median 1.807 s, mean 1.763 s
-zdisamar fastmode: 100/100 converged, median 0.420 s, mean 0.411 s
+zdisamar fullmode: 100/100 converged, median 1.965 s, mean 1.942 s
+zdisamar fastmode: 100/100 converged, median 0.511 s, mean 0.505 s
 ```
 
 ![Fastmode retrieved-state comparison](./validation/outputs/optimal_estimation/paired_oe_retrieved_fast_scatter.png)
 
 The retained fastmode sweep uses 12 fast-stage wavelengths and 4 full-physics
 correction wavelengths on the validation measurement grid. Median speedup versus
-fullmode is `+1.393 s`. The maximum fastmode-minus-fullmode deltas are
+fullmode is `+1.476 s`. The maximum fastmode-minus-fullmode deltas are
 `4.182e-04` aerosol optical depth and `0.551 hPa` aerosol mid pressure.
 These timings are wall-clock durations around the public retrieval call. They
 include session/cache creation, native case load and preparation, native OE work,
@@ -198,19 +198,19 @@ simulated measurement construction, CSV writing, or plot rendering.
 The technical note is
 [`scaffolding/reports/performance/retrieval/fastmode-final-correction.md`](./scaffolding/reports/performance/retrieval/fastmode-final-correction.md).
 
-The retained local benchmark was refreshed on 2026-05-27 with
+The retained local benchmark was refreshed on 2026-06-14 with
 [`uv run benchmark/run_benchmark.py`](./benchmark/run_benchmark.py). It uses the
 benchmark worker cap of 2 on the 10-core local machine and separates setup from
 the timed retrieval loop:
 
 ```text
-forward no-session median                      0.976 s
-forward session cached-run median              0.263 s
-OE single session retrieval median             1.098 s
-OE single fastmode retrieval median            0.529 s
-OE 5-case session sweep retrieval median       2.491 s
-OE 5-case fastmode sweep retrieval median      0.804 s
-OE 5-case fastmode sweep retrieval total       4.368 s
+forward no-session median                      1.031 s
+forward session cached-run median              0.001 s
+OE single session retrieval median             1.151 s
+OE single fastmode retrieval median            0.535 s
+OE 5-case session sweep retrieval median       2.604 s
+OE 5-case fastmode sweep retrieval median      0.840 s
+OE 5-case fastmode sweep retrieval total       4.516 s
 ```
 
 That benchmark artifact is

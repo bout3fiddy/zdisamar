@@ -25,9 +25,10 @@ uvx --from jupyterlab jupyter lab scaffolding/reports/performance/o2a-calculatio
 
 The forward run is dominated by the high-resolution radiance calculations needed
 before the 701 output wavelengths can be produced. The current low-overhead
-forward harness reports `prepare_o2a=0.057692 s` and
-`forward elapsed time=1.328534 s`. The ztracy timeline run reports
-`forward elapsed time=2.443697 s` because instrumentation is enabled.
+forward harness reports `prepare_o2a=0.057938 s` and
+`forward elapsed time=1.108574 s`. The phase-timing timeline run reports
+`forward elapsed time=1.192873 s` (instrumentation overhead, `trace_enabled`
+false).
 
 The important count is not 701. Each output wavelength represents an instrument-weighted measurement, so the model first calculates radiance at 3,874 high-resolution wavelengths and then averages those values back to the 701 output wavelengths.
 

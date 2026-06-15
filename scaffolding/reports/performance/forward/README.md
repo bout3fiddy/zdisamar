@@ -6,9 +6,9 @@ validation route.
 The current retained trace is:
 
 ```text
-low-overhead prepare_o2a              0.057692 s
-low-overhead forward elapsed time     1.328534 s
-ztracy forward elapsed time           2.443697 s
+low-overhead prepare_o2a              0.057938 s
+low-overhead forward elapsed time     1.108574 s
+phase-timed forward elapsed time      1.192873 s
 high-resolution radiance samples  3,874
 LABOS Fourier terms             120,390
 LABOS layer visits            5,417,550

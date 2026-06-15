@@ -6,11 +6,11 @@ Current retained trace source:
 scaffolding/instrumentation/trace/evidence/labos-bottleneck/
 ```
 
-The current ztracy JSON summary is intentionally coarse. It records the
-instrumented forward wall time, while the detailed child-zone costs live in the
-`.tracy` capture opened in Tracy profiler. The detailed operation counts below
-come from the last pre-ztracy retained trace and are still the useful shape of
-the remaining work.
+The current retained summary is a phase-timing run (`trace_enabled` false). It
+records the instrumented forward wall time plus per-phase and per-LABOS-zone
+costs in `labos_phase_timing`. The detailed operation counts below come from the
+last pre-ztracy retained trace and are still the useful shape of the remaining
+work.
 
 ## LABOS Fourier Transport
 

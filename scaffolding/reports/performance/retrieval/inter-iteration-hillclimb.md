@@ -7,7 +7,7 @@ O2 A optimal-estimation path.
 
 The retained benchmark artifact is
 `validation/outputs/optimal_estimation/zdisamar_o2a_slow_rtm_jacobian_benchmark.json`.
-The current slow retained case reports:
+At that audit the slow retained case reported:
 
 - retrieval loop wall time: 3.142969 s
 - retrieval iteration RTM plus Jacobian: 3.142008 s

@@ -36,13 +36,13 @@ Slow retained zdisamar case:
 
 ```text
 source case                          paired sweep case 71
-measurement build                   1.189820 s
-direct RTM-only median              0.885744 s
-direct RTM+jacobian median          0.963766 s
-jacobian increment median           0.081561 s
-session first-use elapsed time      3.453297 s
-session reused elapsed time         3.142969 s
-lazy final evaluation when requested 1.311871 s
+measurement build                   1.001299 s
+direct RTM-only median              0.836978 s
+direct RTM+jacobian median          0.871737 s
+jacobian increment median           0.028542 s
+session first-use elapsed time      2.033844 s
+session reused elapsed time         1.772295 s
+lazy final evaluation when requested 0.864108 s
 iterations                          3
 lazy final evaluation cached        true
 ```
