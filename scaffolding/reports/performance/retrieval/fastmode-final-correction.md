@@ -193,19 +193,19 @@ Summary from
 [`validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json`](../../../validation/outputs/optimal_estimation/zdisamar_o2a_fast_mode_sweep_comparison_summary.json):
 
 ```text
-fullmode: 100/100 converged, median 1.965 s, mean 1.942 s
-fastmode: 100/100 converged, median 0.511 s, mean 0.505 s
+fullmode: 100/100 converged, median 1.766 s, mean 1.709 s
+fastmode: 100/100 converged, median 0.388 s, mean 0.381 s
 ```
 
 The validation sweep resolves 12 fast-stage wavelengths and 4 final-correction
 wavelengths for every scene.  Fastmode median speedup against the same-run
-fullmode reference is `+1.476 s`; mean speedup is `+1.437 s`.
+fullmode reference is `+1.382 s`; mean speedup is `+1.328 s`.
 
 Accuracy against the full-physics reference retrieval stayed inside the retained
 gate:
 
 ```text
-fastmode max AOD delta vs fullmode:          4.182e-04
+fastmode max AOD delta vs fullmode:          4.197e-04
 fastmode max mid-pressure delta vs fullmode: 0.551 hPa
 ```
 

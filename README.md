@@ -181,16 +181,16 @@ measurement grid, then uses that result as the starting state for one sparse
 full-physics forward model plus Jacobian update.
 
 ```text
-zdisamar fullmode: 100/100 converged, median 1.965 s, mean 1.942 s
-zdisamar fastmode: 100/100 converged, median 0.511 s, mean 0.505 s
+zdisamar fullmode: 100/100 converged, median 1.766 s, mean 1.709 s
+zdisamar fastmode: 100/100 converged, median 0.388 s, mean 0.381 s
 ```
 
 ![Fastmode retrieved-state comparison](./validation/outputs/optimal_estimation/paired_oe_retrieved_fast_scatter.png)
 
 The retained fastmode sweep uses 12 fast-stage wavelengths and 4 full-physics
 correction wavelengths on the validation measurement grid. Median speedup versus
-fullmode is `+1.476 s`. The maximum fastmode-minus-fullmode deltas are
-`4.182e-04` aerosol optical depth and `0.551 hPa` aerosol mid pressure.
+fullmode is `+1.382 s`. The maximum fastmode-minus-fullmode deltas are
+`4.197e-04` aerosol optical depth and `0.551 hPa` aerosol mid pressure.
 These timings are wall-clock durations around the public retrieval call. They
 include session/cache creation, native case load and preparation, native OE work,
 and the sparse full-physics correction; they do not include scene construction,
