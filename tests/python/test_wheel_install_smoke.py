@@ -4,11 +4,23 @@ import os
 import tempfile
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING, Protocol
 
-import pytest
+if TYPE_CHECKING:
+    import pytest
+else:
+    try:
+        import pytest
+    except ModuleNotFoundError:
+        pytest = None
 
 REFERENCE_SPECTRUM_BUDGET_S = 8.0
-pytestmark = pytest.mark.wheel
+if pytest is not None:
+    pytestmark = pytest.mark.wheel
+
+
+class PytestConfig(Protocol):
+    def getoption(self, name: str) -> Path | None: ...
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,7 +108,7 @@ def run_wheel_install_probe(forbid_path: Path | None) -> None:
             os.chdir(old_cwd)
 
 
-def test_wheel_install_probe(pytestconfig: pytest.Config) -> None:
+def test_wheel_install_probe(pytestconfig: PytestConfig) -> None:
     forbid_path = pytestconfig.getoption("--forbid-path")
     run_wheel_install_probe(forbid_path)
 
