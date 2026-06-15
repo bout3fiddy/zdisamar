@@ -87,9 +87,9 @@ Within that route the source is handled one of two ways, chosen by
    quadrature optics built in `optics/`. This is the default, and it is the only
    route that can produce the aerosol-layer-pressure Jacobian.
 
-The O2 A reference case runs multiple scattering with the integrated source on a
-flat atmosphere. Its viewing geometry is nadir, so the near-normal gate collapses
-the Fourier loop to the single `m = 0` term.
+The O2 A reference case runs multiple scattering with the integrated source and the
+pseudo-spherical correction on. Its viewing geometry is nadir, so the near-normal
+gate collapses the Fourier loop to the single `m = 0` term.
 
 ## Directions and the direct beam (`gauss_angles.zig`, `attenuation.zig`)
 
@@ -214,53 +214,69 @@ keep that affordable; the gates that skip work are covered in the next section.
 
 ### Where the time goes
 
-The cost-timing labels in the code name the measured stages: `execute` splits into
-`rt_layer_build`, `orders_total`, `attenuation_fill`, `plm_basis`, and
-`reflectance_integral`. Three of them dominate, and each carries its own gate that
-drops the work when the physics is thin.
+The cost-timing labels split `execute` into measured stages. The work below is
+listed from most to least expensive, each with what it computes, how its cost
+scales, and the gate that keeps it from running away. Items 1 and 2 are the two
+halves of the layer build (`rt_layer_build`) and together they dominate; the rest
+are comparatively cheap.
 
-Building the per-layer reflection and transmission rows
-(`fillLayerReflectTransmitRowsWithBasis`, timed as `rt_layer_build`) is usually the
-largest cost. It has two parts. The first is the phase matrix
-(`rt_layer_phase_matrix`). Every entry of the 12-by-12 matrix of stream pairs is a
-sum over the Legendre terms of the phase function, so a forward-peaked aerosol that
-needs around 150 terms costs around 150 multiply-adds in each of 144 entries, for
-every layer and every Fourier term. The per-layer Legendre limits cut this: the sum
-runs only to the highest term that still carries weight, and a layer/term pair whose
-scattering strength is below threshold is skipped before the matrix is touched. The
-second part is doubling (`rt_layer_doubling`). A layer thick enough to scatter many
-times is split into halves and rebuilt, and each split costs a 10-by-10 matrix
-inverse (the `(I - R*R)^-1`) plus a few 12-by-12 products. A layer enters this loop
-only when its effective scattering depth
-clears `threshold_doubl`, so thin layers keep their single-scatter rows and do no
-doubling work. Inside a split, a check on the reflection matrix skips the inverse and
-the product updates when the reflection is too weak to change the answer, which is
-what the `fixed_qseries_skipped` and `fixed_rd_skipped` counters record.
+1. The phase matrix (`rt_layer_phase_matrix`) is the first half of the layer build,
+   run for every layer at every retained Fourier term. Every entry of the 12-by-12
+   matrix of stream pairs is a sum over the Legendre terms of the phase function, so
+   a forward-peaked aerosol that needs around 150 terms costs around 150
+   multiply-adds in each of the 144 entries. The per-layer Legendre limit caps that
+   sum at the highest term still carrying weight, and a layer/term pair whose
+   scattering strength is below threshold is skipped before the matrix is touched.
 
-The scattering-order recurrence (`solveOrdersWithActive`, timed as `orders_total`) is
-the second cost. Each order multiplies every layer's `R` and `T` against the previous
-order's fields to build new local sources, then sweeps that order up and down the
-level grid, so the work is roughly the order count times the number of levels. The
-order count is capped from the column's scattering optical depth (`tau_scatter +
-15`), so an optically thick wavelength runs more orders than a thin one. The loop
-also stops the moment the newest order's strongest upward value falls below the
-convergence threshold (`threshold_conv_first`, then `threshold_conv_mult`), so most
-wavelengths finish in far fewer orders than the cap allows. Layers with no scattering
-signal are flagged in `rt_active` and skipped in both the source build and the
-sweeps.
+2. Doubling (`rt_layer_doubling`) is the second half, and it runs only for a layer
+   thick enough to scatter many times. Such a layer is split into halves and
+   rebuilt; the number of splits grows with the logarithm of the layer's effective
+   scattering depth, and each split costs a 10-by-10 matrix inverse (the
+   `(I - R*R)^-1`) plus a few 12-by-12 products. A layer enters this loop only when
+   its effective scattering depth clears `threshold_doubl`, so thin layers keep their
+   single-scatter rows and do no doubling work at all. Inside a split, a check on the
+   reflection matrix skips the inverse and the product updates when the reflection is
+   too weak to change the answer, which the `fixed_qseries_skipped` and
+   `fixed_rd_skipped` counters record. This is what makes an optically thick, hazy
+   layer the worst case for the stage.
 
-The direct-beam fill (`attenuation_fill`) is cheap on a flat atmosphere: one
-exponential per stream per level. It grows expensive only under the pseudo-spherical
-correction, which integrates the curved sun-path samples for each stream and level.
-The O2 A reference case runs flat, so this fill stays cheap.
+3. The scattering-order recurrence (`orders_total`, from `solveOrdersWithActive`) is
+   the next cost. Each order is one more bounce of light through the column: it
+   multiplies every layer's `R` and `T` against the previous order's fields to build
+   new local sources, then sweeps those sources up and down the level grid. The work
+   is roughly the order count times the number of levels. The order count is capped
+   from the column's scattering optical depth (`tau_scatter + 15`), so a thick
+   wavelength is allowed more bounces than a thin one. In practice the loop stops
+   well before the cap: as soon as the newest order's strongest upward value falls
+   below the convergence threshold (`threshold_conv_first` for the first order, then
+   `threshold_conv_mult`), it ends. A clear, thin atmosphere settles in one or two
+   orders; a thick, hazy one needs many. Layers with no scattering signal are flagged
+   in `rt_active` and skipped in both the source build and the sweeps.
 
-Two stages cost less than they look. The Legendre basis (`plm_basis`) is a recurrence
-over streams and terms, but it is cached on the geometry and reused across every
-wavelength of the same sun/view pair, so it is built a handful of times over the
-whole dense grid rather than once per wavelength. And the whole Fourier loop
-collapses to its first term (`m = 0`) whenever either direction is within `1e-5` of
-normal, which the nadir reference case does, so everything above runs once per
-wavelength rather than once per Fourier term.
+4. The direct-beam fill (`attenuation_fill`) runs once per wavelength, before the
+   Fourier loop. On a plane-parallel atmosphere it is one exponential per stream per
+   level. The O2 A reference case turns the pseudo-spherical correction on, so the
+   fill instead integrates the curved sun-path samples for each stream and level;
+   that costs more than the flat case, but it is still a single pass, small next to
+   the layer build and the order recurrence.
+
+5. The Legendre basis (`plm_basis`) is a recurrence over streams and terms, which
+   looks like per-wavelength work but is not. It depends only on the geometry, so it
+   is cached and rebuilt only when the stream count or either direction cosine
+   changes. Across the dense grid the geometry rarely moves, so the basis is built a
+   handful of times over the whole pass rather than once per wavelength.
+
+6. The reflectance integral (`reflectance_integral`) combines the converged field
+   into the coefficient `rho_m` and folds it into the azimuth sum. It is a few dot
+   products per level, small next to the order recurrence that produced the field,
+   and the tail-break gate can end the azimuth sum before the configured maximum.
+
+One factor sits above the whole list: the Fourier loop reruns the per-layer build,
+the order recurrence, the basis, and the reflectance integral once per retained term
+`m` (the direct-beam fill is done once, before the loop). Whenever either direction
+is within `1e-5` of normal, the near-normal gate collapses that loop to the single
+`m = 0` term. The nadir reference case takes this path, so for it the whole list
+above runs once per wavelength instead of once per Fourier term.
 
 ## Where to start
 
