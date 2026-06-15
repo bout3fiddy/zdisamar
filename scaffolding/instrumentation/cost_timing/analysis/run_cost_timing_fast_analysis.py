@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fast cost-timing analysis gate for the enabled O2 A forward smoke."""
+"""Fast cost-timing analysis gate for one enabled O2 A forward run."""
 
 import re
 import subprocess
@@ -29,7 +29,7 @@ class Counter:
 def main() -> int:
     if len(sys.argv) != 2:
         print(
-            "usage: run_cost_timing_fast_analysis.py <cost-timing-forward-smoke>",
+            "usage: run_cost_timing_fast_analysis.py <cost-timing-forward-analysis>",
             file=sys.stderr,
         )
         return 2
@@ -56,7 +56,8 @@ def main() -> int:
     if completed.returncode != 0:
         print(output, end="")
         print(
-            f"cost_timing_fast_analysis status=fail reason=smoke_exit code={completed.returncode}",
+            "cost_timing_fast_analysis status=fail "
+            f"reason=analysis_exit code={completed.returncode}",
             file=sys.stderr,
         )
         return completed.returncode
@@ -113,7 +114,7 @@ def parse_counters(row: str) -> dict[str, Counter]:
 
 
 def parse_samples(output: str) -> int | None:
-    match = re.search(r"cost_timing_forward_smoke samples=(\d+)", output)
+    match = re.search(r"cost_timing_forward_analysis samples=(\d+)", output)
     if match is None:
         return None
     return int(match.group(1))

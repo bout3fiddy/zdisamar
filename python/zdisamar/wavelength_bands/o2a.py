@@ -27,14 +27,13 @@ from ..input import (
     VerticalInterval,
 )
 from ..input.wavelength_band.o2a import Scene as Scene
+from ..input.wavelength_band.o2a_default import default_o2a_scene as default_o2a_scene
 
 
 def reference_scene() -> Scene:
     """Return the packaged DISAMAR-family O2 A reference case."""
 
-    from ..rtm.run import reference_scene
-
-    return reference_scene()
+    return default_o2a_scene()
 
 
 __all__ = [
@@ -63,5 +62,6 @@ __all__ = [
     "SpectralGrid",
     "Surface",
     "VerticalInterval",
+    "default_o2a_scene",
     "reference_scene",
 ]

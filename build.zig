@@ -291,7 +291,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     const run_c_api_tests = b.addRunArtifact(c_api_tests);
-    b.step("test-api-c", "Run fast C ABI smoke tests").dependOn(&run_c_api_tests.step);
+    b.step("test-api-c", "Run fast C ABI boundary tests").dependOn(&run_c_api_tests.step);
 
     const c_api_retained_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -319,36 +319,38 @@ pub fn build(b: *std.Build) void {
         "Run retained C ABI tests with the default O2 A product case",
     ).dependOn(&run_c_api_retained_tests.step);
 
-    const cost_timing_smoke_module = addSourceModule(
-        b,
-        target,
-        optimize,
-        enabled_instrumentation,
-        "src/root.zig",
-    );
-    const cost_timing_smoke = b.addExecutable(.{
-        .name = "cost-timing-forward-smoke",
+    const cost_timing_o2a_scene_module = b.createModule(.{
+        .root_source_file = b.path("tests/unit/support/o2a_scene.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "internal", .module = enabled_internal_module },
+        },
+    });
+    const cost_timing_analysis = b.addExecutable(.{
+        .name = "cost-timing-forward-analysis",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("scaffolding/instrumentation/cost_timing/zig/cost_timing_forward_smoke.zig"),
+            .root_source_file = b.path("scaffolding/instrumentation/cost_timing/zig/cost_timing_forward_analysis.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "zdisamar", .module = cost_timing_smoke_module },
+                .{ .name = "internal", .module = enabled_internal_module },
+                .{ .name = "o2a_scene", .module = cost_timing_o2a_scene_module },
             },
         }),
     });
-    const run_cost_timing_smoke = b.addRunArtifact(cost_timing_smoke);
+    const run_cost_timing_analysis = b.addRunArtifact(cost_timing_analysis);
     b.step(
-        "cost-timing-forward-smoke",
-        "Run one enabled O2 A forward and emit merged cost timing",
-    ).dependOn(&run_cost_timing_smoke.step);
+        "cost-timing-forward-analysis",
+        "Run one enabled O2 A forward analysis and emit merged cost timing",
+    ).dependOn(&run_cost_timing_analysis.step);
     const run_cost_timing_fast_analysis = b.addSystemCommand(&.{
         "uv",
         "run",
         "python",
         "scaffolding/instrumentation/cost_timing/analysis/run_cost_timing_fast_analysis.py",
     });
-    run_cost_timing_fast_analysis.addArtifactArg(cost_timing_smoke);
+    run_cost_timing_fast_analysis.addArtifactArg(cost_timing_analysis);
     b.step(
         "cost-timing-fast-analysis",
         "Run fast cost-timing analysis gate for one enabled O2 A forward",

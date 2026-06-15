@@ -6,6 +6,10 @@
 - Keep scientific assets under `data/reference_data/`; loaders and parsers live under `src/input/reference_data/`.
 - No parsed control may be silently ignored. Consume it, reject it with a typed error, or document it as inert with focused coverage.
 - Do not silently drop enabled physics on unmatched identifiers, interval placements, or unsupported combinations.
+- Do not add smoke-style tests as normal correctness coverage. New tests must be
+  classified as unit, integration, golden/regression, property, fuzz,
+  packaging, or benchmark/performance, and they must assert the invariant they
+  claim to protect.
 
 ## Router
 
@@ -25,6 +29,11 @@
 
 ## Commands
 
+- Canonical verification: `./verify`.
+- When verification is needed, run `./verify` once instead of assembling
+  separate `zig build`, Python test, `prek`, Ruff, styleguide, or diff-check
+  commands. If `./verify` already passed for the current tree and no relevant
+  files changed, do not rerun verification before commit/push.
 - Fast baseline: `zig build check`.
 - Broader fast presubmit: `zig build test-fast`.
 - Full retained verification: `zig build test`.

@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const internal = @import("internal");
+const o2a_scene = @import("../support/o2a_scene.zig");
 
 const phase_table = internal.setup.phase_table;
 
@@ -23,7 +24,7 @@ test "HG phase coefficients match scalar formula" {
 }
 
 test "PhaseTable build retains reference aerosol phase support" {
-    const table = phase_table.build(internal.input.defaults.referenceScene());
+    const table = phase_table.build(o2a_scene.reference());
 
     try std.testing.expectApproxEqAbs(0.7, table.aerosol_asymmetry_factor, 0.0);
     try std.testing.expectEqual(@as(usize, 39), table.aerosol_phase_max_index);
@@ -35,7 +36,7 @@ test "PhaseTable build retains reference aerosol phase support" {
 }
 
 test "PhaseTable build consumes scene phase truncation threshold" {
-    var scene = internal.input.defaults.referenceScene();
+    var scene = o2a_scene.reference();
     scene.rtm.performance_thresholds.phase_function_truncation_threshold = 1.0e-6;
 
     const table = phase_table.build(scene);

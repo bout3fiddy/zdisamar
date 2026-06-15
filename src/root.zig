@@ -2,7 +2,6 @@ const std = @import("std");
 
 const controls = @import("rtm/controls.zig");
 const hashing = @import("common/hashing.zig");
-const defaults = @import("input/defaults.zig");
 const input_json = @import("input/json.zig");
 const input_validate = @import("input/validate.zig");
 const jacobian_states = @import("rtm/jacobian_states.zig");
@@ -39,7 +38,7 @@ pub const geometry_direction_cosine_floor: f64 = 0.05;
 // Public explicit row surface for the O2 A forward model.                                                     |
 //                                                                                                             |
 // public flow                                                                                                 |
-//   defaultScene -> prepare -> warmSessionMemory -> runForwardWithSessionMemory                               |
+//   Scene -> prepare -> warmSessionMemory -> runForwardWithSessionMemory                                      |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   The root facade owns preparation/run composition only. Setup tables, session caches, spectrum workers,    |
@@ -75,14 +74,12 @@ pub const JacobianVector = jacobian_states.Vector;
 pub const ParsedSceneJson = input_json.ParsedSceneJson;
 pub const jacobian_state_count = jacobian_states.state_count;
 
-pub const defaultScene = defaults.referenceScene;
 pub const parseSceneJson = input_json.parseSceneJson;
-pub const renderDefaultSceneJson = input_json.renderDefaultSceneJson;
 pub const buildRunTables = setup_tables.buildRunTables;
 pub const buildProfileLineValues = profile_lines.buildProfileLineValues;
 
 // Prepared ---------------------------------------------------------------------------------------------------|
-// Public owner for parsed/default O2 A controls and setup tables.                                             |
+// Public owner for parsed or caller-provided O2 A controls and setup tables.                                  |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 2728 B (2.664 KiB), align: 8                                                                          |
@@ -99,7 +96,7 @@ pub const Prepared = struct {
 
     pub fn deinit(self: *Prepared, allocator: Allocator) void {
         // Prepared.deinit ------------------------------------------------------------------------------------|
-        // Release setup tables; case strings and static/default slices are borrowed.                          |
+        // Release setup tables; case strings and slices are borrowed from caller-owned storage.               |
         // ----------------------------------------------------------------------------------------------------|
         self.tables.deinit(allocator);
         self.* = undefined;
@@ -1048,7 +1045,7 @@ fn prepareSessionRows(
     const profile_stamp = profile_lines.profileLineReuseStamp(
         prepared.scene.id,
         prepared.tables.lines,
-        prepared.tables.layers,
+        prepared.tables.layers.spectroscopy_profile.rows,
         exact_wavelengths,
         build_layer_values,
         needs_temperature_derivatives,
@@ -1063,7 +1060,8 @@ fn prepareSessionRows(
     if (!wavelength_list_matches) {
         session.radiance.takeWavelengthList(allocator, &owned_wavelengths, wavelength_list_stamp);
     }
-    try session.radiance.ensureResultCapacity(allocator, dense_count);
+    const wants_dense_jacobian = radiance_results.wantsJacobian(prepared_solve_config);
+    try session.radiance.ensureResultCapacity(allocator, dense_count, wants_dense_jacobian);
 
     const layer_count = prepared.tables.layers.layer_pressures_hpa.len;
     const support_count = prepared.tables.layers.support_mid_altitudes_km.len;
@@ -1114,7 +1112,10 @@ fn prepareSessionRows(
         prepared_solve_config,
         profile_stamp,
     );
-    const dense_radiance_results_match = session.radiance.resultsValid(dense_radiance_result_stamp);
+    const dense_radiance_results_match = session.radiance.resultsValid(
+        dense_radiance_result_stamp,
+        wants_dense_jacobian,
+    );
 
     return .{
         .table = table,

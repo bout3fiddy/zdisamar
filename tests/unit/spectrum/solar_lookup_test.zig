@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const internal = @import("internal");
+const o2a_scene = @import("../support/o2a_scene.zig");
 
 const readers = internal.assets.readers;
 const sampling_table = internal.spectrum.sampling_table;
@@ -10,7 +11,7 @@ const solar_table = internal.setup.solar_table;
 test "SolarTable prepares canonical spline state for reference solar rows" {
     var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(std.testing.allocator);
 
@@ -39,7 +40,7 @@ test "SolarTable prepares canonical spline state for reference solar rows" {
 test "irradianceAtWavelength matches operational spline and clamp behavior" {
     var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(std.testing.allocator);
 
@@ -54,7 +55,7 @@ test "irradianceAtWavelength matches operational spline and clamp behavior" {
 test "integrateIrradianceAtNominalAssumeCapacity weights cached irradiance samples" {
     var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(std.testing.allocator);
 

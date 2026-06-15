@@ -1,6 +1,7 @@
 """Wavelength-band-specific input objects."""
 
 from .o2a import Scene
+from .o2a_default import default_o2a_scene
 from .optimisation import (
     FastModeAdaptiveReferenceGrid,
     FastModeFastStageSampling,
@@ -23,5 +24,6 @@ __all__ = [
     "FastModeRadiativeTransfer",
     "FastModeWavelengthWindow",
     "Scene",
+    "default_o2a_scene",
     "Optimisation",
 ]

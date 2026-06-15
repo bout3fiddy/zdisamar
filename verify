@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "== zig retained tests"
+zig build test
+
+echo "== sync python package"
+zig build sync-python-package -Doptimize=ReleaseFast
+
+echo "== python tests"
+uv run pytest tests/python
+
+echo "== pre-commit hooks"
+uv run prek run --all-files
+
+echo "== whitespace checks"
+git diff --check
+git diff --cached --check

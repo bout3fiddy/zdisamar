@@ -1,21 +1,19 @@
-"""Smoke coverage for multi-layer aerosol-profile spectra."""
+"""Integration coverage for multi-layer aerosol-profile spectra."""
 
 import math
 from copy import deepcopy
 from unittest.mock import patch
 
+import pytest
 from zdisamar import rtm
 from zdisamar.bindings.handles import RtmHandle
 from zdisamar.inverse_method import optimal_estimation
 
+pytestmark = [pytest.mark.integration, pytest.mark.native]
 
-def main() -> None:
 
-    scene = rtm.reference_scene()
-    assert len(scene.aerosol.profile) == 1
-    assert b'"profile"' not in scene.to_json_bytes()
-
-    one_layer = rtm.AerosolProfileLayer(
+def one_layer_profile() -> rtm.AerosolProfileLayer:
+    return rtm.AerosolProfileLayer(
         top_pressure_hpa=430.0,
         bottom_pressure_hpa=510.0,
         optical_depth=0.2,
@@ -23,23 +21,10 @@ def main() -> None:
         asymmetry_factor=0.72,
         angstrom_exponent=0.4,
     )
-    one_layer_scene = deepcopy(scene)
-    one_layer_scene.set_aerosol_profile((one_layer,))
-    layer_view_scene = deepcopy(scene)
-    layer_view_scene.aerosol_optical_depth_550_nm = one_layer.optical_depth
-    layer_view_scene.aerosol.single_scatter_albedo = one_layer.single_scatter_albedo
-    layer_view_scene.aerosol.asymmetry_factor = one_layer.asymmetry_factor
-    layer_view_scene.aerosol.angstrom_exponent = one_layer.angstrom_exponent
-    layer_view_scene.aerosol_layer.thickness_hpa = (
-        one_layer.bottom_pressure_hpa - one_layer.top_pressure_hpa
-    )
-    layer_view_scene.aerosol_layer.mid_pressure_hpa = 0.5 * (
-        one_layer.top_pressure_hpa + one_layer.bottom_pressure_hpa
-    )
-    assert b'"profile"' not in one_layer_scene.to_json_bytes()
-    assert one_layer_scene.to_json_bytes() == layer_view_scene.to_json_bytes()
 
-    profile = (
+
+def multi_layer_profile() -> tuple[rtm.AerosolProfileLayer, ...]:
+    return (
         rtm.AerosolProfileLayer(
             top_pressure_hpa=430.0,
             bottom_pressure_hpa=510.0,
@@ -58,10 +43,50 @@ def main() -> None:
         ),
     )
 
-    profile_scene = deepcopy(scene)
-    profile_scene.set_aerosol_profile(profile)
-    assert b'"profile"' in profile_scene.to_json_bytes()
 
+def profile_scene(profile: tuple[rtm.AerosolProfileLayer, ...]):
+    scene = rtm.reference_scene()
+    scene.set_aerosol_profile(profile)
+    return scene
+
+
+def test_one_layer_aerosol_profile_serializes_as_legacy_layer_view() -> None:
+    scene = rtm.reference_scene()
+    assert len(scene.aerosol.profile) == 1
+    assert b'"profile"' not in scene.to_json_bytes()
+
+    one_layer = one_layer_profile()
+    one_layer_scene = deepcopy(scene)
+    one_layer_scene.set_aerosol_profile((one_layer,))
+    layer_view_scene = deepcopy(scene)
+    layer_view_scene.aerosol_optical_depth_550_nm = one_layer.optical_depth
+    layer_view_scene.aerosol.single_scatter_albedo = one_layer.single_scatter_albedo
+    layer_view_scene.aerosol.asymmetry_factor = one_layer.asymmetry_factor
+    layer_view_scene.aerosol.angstrom_exponent = one_layer.angstrom_exponent
+    layer_view_scene.aerosol_layer.thickness_hpa = (
+        one_layer.bottom_pressure_hpa - one_layer.top_pressure_hpa
+    )
+    layer_view_scene.aerosol_layer.mid_pressure_hpa = 0.5 * (
+        one_layer.top_pressure_hpa + one_layer.bottom_pressure_hpa
+    )
+    assert b'"profile"' not in one_layer_scene.to_json_bytes()
+    assert one_layer_scene.to_json_bytes() == layer_view_scene.to_json_bytes()
+
+    one_layer_spectrum = rtm.spectrum(one_layer_scene)
+    layer_view_spectrum = rtm.spectrum(layer_view_scene)
+    one_layer_delta = max(
+        abs(a - b)
+        for a, b in zip(
+            one_layer_spectrum.reflectance,
+            layer_view_spectrum.reflectance,
+            strict=True,
+        )
+    )
+    assert one_layer_delta < 1.0e-12
+
+
+def test_invalid_aerosol_profile_placements_are_rejected() -> None:
+    scene = rtm.reference_scene()
     partially_off_grid_scene = deepcopy(scene)
     partially_off_grid_scene.set_aerosol_profile(
         (
@@ -98,32 +123,27 @@ def main() -> None:
     )
     expect_spectrum_rejected(spectral_merge_scene)
 
-    baseline = rtm.spectrum(scene)
-    one_layer_spectrum = rtm.spectrum(one_layer_scene)
-    layer_view_spectrum = rtm.spectrum(layer_view_scene)
-    one_layer_delta = max(
-        abs(a - b)
-        for a, b in zip(
-            one_layer_spectrum.reflectance,
-            layer_view_spectrum.reflectance,
-            strict=True,
-        )
-    )
-    assert one_layer_delta < 1.0e-12
 
-    with rtm.SessionCache(profile_scene) as cache:
+def test_multi_layer_aerosol_profile_changes_spectrum_and_reuses_session_cache() -> None:
+    scene = rtm.reference_scene()
+    profiled_scene = profile_scene(multi_layer_profile())
+    assert b'"profile"' in profiled_scene.to_json_bytes()
+
+    baseline = rtm.spectrum(scene)
+
+    with rtm.SessionCache(profiled_scene) as cache:
         profiled = cache.spectrum()
         expect_profile_jacobian_rejected(cache)
 
         with patch.object(cache, "load", wraps=cache.load) as load_mock:
-            cached_profiled = cache.spectrum(profile_scene)
+            cached_profiled = cache.spectrum(profiled_scene)
 
     assert len(profiled.wavelength_nm) == len(baseline.wavelength_nm)
     assert len(profiled.reflectance) == len(baseline.reflectance)
     assert len(cached_profiled.reflectance) == len(profiled.reflectance)
     assert load_mock.call_count == 0
     assert all(math.isfinite(value) for value in profiled.reflectance)
-    expect_profile_oe_correction_rejected(profile_scene, profiled)
+    expect_profile_oe_correction_rejected(profiled_scene, profiled)
     assert not hasattr(cache, "aerosol_profile_spectrum")
     assert not hasattr(rtm, "aerosol_profile_spectrum")
     max_delta = max(
@@ -131,9 +151,16 @@ def main() -> None:
     )
     assert max_delta > 1.0e-8
 
+
+def test_multi_layer_aerosol_profile_is_forward_only_for_retrieval() -> None:
+    profiled_scene = profile_scene(multi_layer_profile())
+    profiled = rtm.spectrum(profiled_scene)
+
+    expect_profile_oe_correction_rejected(profiled_scene, profiled)
+
     try:
         optimal_estimation.retrieve(
-            scene=profile_scene,
+            scene=profiled_scene,
             measurement=optimal_estimation.Measurement((760.0,), (0.2,), signal_to_noise=100.0),
             state_vector=optimal_estimation.StateVector(
                 [
@@ -149,8 +176,6 @@ def main() -> None:
         assert "forward-simulation only" in str(error)
     else:
         raise AssertionError("multi-layer aerosol profile was accepted by retrieval")
-
-    print("aerosol_profile_spectrum=ok")
 
 
 def expect_spectrum_rejected(scene) -> None:
@@ -202,7 +227,3 @@ def expect_profile_oe_correction_rejected(scene, spectrum) -> None:
             assert "forward-simulation only" in str(error)
         else:
             raise AssertionError("multi-layer aerosol profile correction was accepted")
-
-
-if __name__ == "__main__":
-    main()

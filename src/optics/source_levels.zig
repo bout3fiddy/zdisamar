@@ -140,7 +140,7 @@ fn boundarySupportRowIndex(layer_grid: atmosphere_layers.LayerGrid, level_index:
     if (level_index == layer_grid.layer_pressures_hpa.len) {
         const last_layer = level_index - 1;
         return @as(usize, @intCast(layer_grid.layer_support_starts[last_layer])) +
-            @as(usize, @intCast(layer_grid.layer_support_counts[last_layer])) -
+            @as(usize, @intCast(layer_grid.layer_support_count)) -
             1;
     }
 
@@ -154,7 +154,7 @@ fn aerosolAboveSupportRowIndex(layer_grid: atmosphere_layers.LayerGrid, level_in
     if (level_index >= layer_grid.layer_pressures_hpa.len) return invalid_support_row_index;
 
     const start: usize = @intCast(layer_grid.layer_support_starts[level_index]);
-    const count: usize = @intCast(layer_grid.layer_support_counts[level_index]);
+    const count: usize = @intCast(layer_grid.layer_support_count);
     if (count <= 2) return invalid_support_row_index;
     return start + 1;
 }
@@ -167,7 +167,7 @@ fn aerosolBelowSupportRowIndex(layer_grid: atmosphere_layers.LayerGrid, level_in
 
     const below_layer = level_index - 1;
     const start: usize = @intCast(layer_grid.layer_support_starts[below_layer]);
-    const count: usize = @intCast(layer_grid.layer_support_counts[below_layer]);
+    const count: usize = @intCast(layer_grid.layer_support_count);
     if (count <= 2) return invalid_support_row_index;
     return start + count - 2;
 }

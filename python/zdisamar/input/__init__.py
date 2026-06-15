@@ -18,6 +18,7 @@ from .wavelength_band import (
     FastModeWavelengthWindow,
     Optimisation,
     Scene,
+    default_o2a_scene,
 )
 
 __all__ = [
@@ -36,6 +37,7 @@ __all__ = [
     "Geometry",
     "InstrumentResponse",
     "Scene",
+    "default_o2a_scene",
     "Optimisation",
     "LineByLine",
     "OxygenCollisionInducedAbsorption",

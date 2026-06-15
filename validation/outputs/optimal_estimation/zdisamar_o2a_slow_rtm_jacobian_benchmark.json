@@ -1,0 +1,61 @@
+{
+  "cache": {
+    "first_use_retrieval_s": 2.0338436658494174,
+    "reused_retrieval": {
+      "converged": true,
+      "iterations": 3,
+      "retrieval_plus_lazy_final_evaluation_s": 2.6364031238481402,
+      "retrieved": {
+        "aerosol_layer_mid_pressure_hpa": 329.1908899899153,
+        "aerosol_optical_depth": 1.9681945926864322
+      },
+      "state_names": [
+        "aerosol_optical_depth",
+        "aerosol_layer_mid_pressure_hpa"
+      ],
+      "wall_s": 1.7722948328591883
+    },
+    "setup_s": 0.26154883299022913
+  },
+  "direct_rtm_call_probe": {
+    "jacobian_increment_s": {
+      "max": 0.05607287539169192,
+      "mean": 0.02826509177684784,
+      "median": 0.02854224992915988,
+      "min": 0.0012989579699933529
+    },
+    "probe_runs": 5,
+    "rtm_and_jacobian_s": {
+      "max": 0.8854824588634074,
+      "mean": 0.8727185001596809,
+      "median": 0.8717372920364141,
+      "min": 0.8592467498965561
+    },
+    "rtm_only_s": {
+      "max": 0.8788419170305133,
+      "mean": 0.844453408382833,
+      "median": 0.8369777910411358,
+      "min": 0.8156644166447222
+    }
+  },
+  "lazy_final_evaluation_cached": true,
+  "lazy_final_evaluation_s": 0.8641082909889519,
+  "measurement_build_s": 1.0012989579699934,
+  "reference_case": 71,
+  "reference_cases": "validation/reference_data/optimal_estimation/disamar_oe_sweep_cases.json",
+  "regime": "Baseline O2 A per-wavelength noise; two-state aerosol retrieval (AOD, mid-pressure); retrieval_controls(); reused SessionCache for the retrieval; cold no-session forwards for direct_rtm_call_probe.",
+  "scene": {
+    "aerosol_mid_pressure_hpa": 329.192074869615,
+    "aerosol_optical_depth": 1.9681905891962788,
+    "case": 71,
+    "initial_aerosol_mid_pressure_hpa": 354.192074869615,
+    "initial_aerosol_optical_depth": 1.7420077184927254,
+    "relative_azimuth_deg": 7.0232796692031245,
+    "solar_zenith_deg": 53.76029607719826,
+    "surface_albedo": 0.19528921533381227,
+    "surface_pressure_hpa": 896.819424951348,
+    "viewing_zenith_deg": 45.71214389158657
+  },
+  "source": "Slow retained scene from shared DISAMAR OE reference sweep case 71.",
+  "validation_case": "zdisamar_o2a_slow_rtm_jacobian_latency"
+}

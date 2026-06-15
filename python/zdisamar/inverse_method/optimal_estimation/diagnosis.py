@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ... import rtm
-from ...display import NotebookDisplay, PrettyMapping
+from ...display import PrettyMapping
 from ...input.wavelength_band.o2a import Scene
 from .retrieval import Measurement, RetrievalControls
 from .state_vector import (
@@ -148,7 +148,7 @@ class BoundaryBisectionStrategy:
 
 
 @dataclass(frozen=True)
-class RetrievalDiagnosis(NotebookDisplay):
+class RetrievalDiagnosis:
     """Final states from many starts of the same inverse problem."""
 
     state_names: tuple[StateName, ...]

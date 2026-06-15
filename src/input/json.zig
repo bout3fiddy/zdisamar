@@ -1,13 +1,13 @@
 const std = @import("std");
 
-const defaults = @import("defaults.zig");
 const errors = @import("../common/errors.zig");
 const scene_input = @import("scene.zig");
 const transport_controls = @import("../rtm/controls.zig");
 const validate = @import("validate.zig");
 
 const Allocator = std.mem.Allocator;
-const default_output_isotopes = [_]usize{ 1, 2, 3 };
+pub const supported_stream_count: usize = 20;
+pub const route_fourier_term_limit: usize = 20;
 
 // json.zig ---------------------------------------------------------------------------------------------------|
 // Python-native O2 A JSON bridge.                                                                             |
@@ -15,7 +15,7 @@ const default_output_isotopes = [_]usize{ 1, 2, 3 };
 // boundary                                                                                                    |
 //   Python emits Scene.to_native_json_bytes() with resolved asset paths and a few Python bookkeeping          |
 //   fields. This parser turns that API shape into Scene, validates controls that are intentionally inert      |
-//   for this O2 A forward-only route, and rejects unsupported route changes before compute sees the case.     |
+//   for this O2 A forward-only route, and rejects unsupported route changes before compute sees the scene.    |
 //                                                                                                             |
 // JSON input normalization                                                                                    |
 //   Python's json encoder emits bare NaN for optional altitude placeholders. Zig's JSON scanner is strict,    |
@@ -31,17 +31,17 @@ const default_output_isotopes = [_]usize{ 1, 2, 3 };
 //                                                                                                             |
 // memory                                                                                                      |
 // [   0..1039] parsed: std.json.Parsed(NativeSceneJson)                                                       |
-// [1040..1743] case  : Scene                                                                                  |
+// [1040..1743] scene : Scene                                                                                  |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   case slices and strings point into parsed.arena and stay valid until deinit.                              |
+//   scene slices and strings point into parsed.arena and stay valid until deinit.                             |
 pub const ParsedSceneJson = struct {
     parsed: std.json.Parsed(NativeSceneJson),
     scene: scene_input.Scene,
 
     pub fn deinit(self: *ParsedSceneJson) void {
         // ParsedSceneJson.deinit -----------------------------------------------------------------------------|
-        // Release the JSON parser arena that backs all borrowed case strings and slices.                      |
+        // Release the JSON parser arena that backs all borrowed scene strings and slices.                     |
         // ----------------------------------------------------------------------------------------------------|
         self.parsed.deinit();
         self.* = undefined;
@@ -51,7 +51,7 @@ pub const ParsedSceneJson = struct {
 
 pub fn parseSceneJson(allocator: Allocator, raw_json: []const u8) !ParsedSceneJson {
     // parseSceneJson -----------------------------------------------------------------------------------------|
-    // Parse Python's native O2 A JSON shape and return a typed case borrowing parser-owned rows.              |
+    // Parse Python's native O2 A JSON shape and return a typed scene borrowing parser-owned rows.             |
     // --------------------------------------------------------------------------------------------------------|
     const normalized = try normalizePythonJson(allocator, raw_json);
     defer normalized.deinit(allocator);
@@ -68,18 +68,6 @@ pub fn parseSceneJson(allocator: Allocator, raw_json: []const u8) !ParsedSceneJs
     try validate.sceneControls(scene);
 
     return .{ .parsed = parsed, .scene = scene };
-}
-
-pub fn renderDefaultSceneJson(allocator: Allocator) ![]u8 {
-    // renderDefaultSceneJson ---------------------------------------------------------------------------------|
-    // Render the built-in O2 A case in the Python native JSON shape consumed by Scene.from_json.              |
-    // --------------------------------------------------------------------------------------------------------|
-    const scene = defaults.referenceScene();
-    var out: std.Io.Writer.Allocating = .init(allocator);
-    errdefer out.deinit();
-
-    try std.json.Stringify.value(outputScene(scene), .{}, &out.writer);
-    return out.toOwnedSlice();
 }
 
 fn buildScene(allocator: Allocator, native: NativeSceneJson) !scene_input.Scene {
@@ -100,7 +88,6 @@ fn buildScene(allocator: Allocator, native: NativeSceneJson) !scene_input.Scene 
     const threshold_line_sim = native.o2.threshold_line_sim orelse return errors.Error.UnsupportedJsonInput;
     const cutoff_sim_cm1 = native.o2.cutoff_sim_cm1 orelse return errors.Error.UnsupportedJsonInput;
     const cia_asset = native.o2o2.cia_asset orelse return errors.Error.UnsupportedJsonInput;
-    const rtm_defaults = defaults.referenceScene().rtm;
 
     return .{
         .id = native.scene_id,
@@ -164,7 +151,7 @@ fn buildScene(allocator: Allocator, native: NativeSceneJson) !scene_input.Scene 
 
         .rtm = .{
             .stream_count = native.rtm_controls.n_streams,
-            .fourier_term_limit = rtm_defaults.fourier_term_limit,
+            .fourier_term_limit = route_fourier_term_limit,
             .performance_thresholds = performance_thresholds,
         },
     };
@@ -213,10 +200,10 @@ fn validateRtm(
     performance_thresholds: transport_controls.PerformanceThresholds,
 ) !void {
     // validateRtm --------------------------------------------------------------------------------------------|
-    // Keep O2 A on the supported integrated-source route while consuming case-owned LABOS threshold controls. |
+    // Keep O2 A on the supported integrated-source route while consuming scene-owned LABOS threshold controls.|
     // --------------------------------------------------------------------------------------------------------|
     if (!std.mem.eql(u8, rtm.scattering, "multiple")) return errors.Error.UnsupportedJsonInput;
-    if (rtm.n_streams != defaults.referenceScene().rtm.stream_count) return errors.Error.UnsupportedJsonInput;
+    if (rtm.n_streams != supported_stream_count) return errors.Error.UnsupportedJsonInput;
     if (!rtm.integrate_source_function) return errors.Error.UnsupportedJsonInput;
     if (!rtm.renorm_phase_function) return errors.Error.UnsupportedJsonInput;
 
@@ -386,7 +373,7 @@ fn performanceThresholdsFromJson(thresholds: PerformanceThresholdsJson) !transpo
     // Convert Python-native LABOS threshold controls into the transport row consumed by root solve config.    |
     //                                                                                                         |
     // boundary                                                                                                |
-    //   Python `with_rtm_optimisation_applied()` writes fastmode RTM thresholds into the native case before   |
+    //   Python `with_rtm_optimisation_applied()` writes fastmode RTM thresholds into the native scene before  |
     //   crossing the C ABI. The parser must consume those values; accepting them and then using defaults      |
     //   would silently ignore a public forward control.                                                       |
     // --------------------------------------------------------------------------------------------------------|
@@ -426,108 +413,6 @@ fn expectAsset(asset: scene_input.Asset, id: []const u8, format: []const u8) !vo
     if (!std.mem.eql(u8, asset.id, id)) return errors.Error.UnsupportedJsonInput;
     if (!std.mem.eql(u8, asset.format, format)) return errors.Error.UnsupportedJsonInput;
     if (asset.path.len == 0) return errors.Error.InvalidControl;
-}
-
-fn outputScene(scene: scene_input.Scene) OutputSceneJson {
-    // outputScene --------------------------------------------------------------------------------------------|
-    // Build the Python-native JSON view for the built-in default product case.                                |
-    // --------------------------------------------------------------------------------------------------------|
-    const geometry_model = if (scene.geometry.pseudo_spherical) "pseudo_spherical" else "plane_parallel";
-
-    return .{
-        .metadata = .{
-            .id = "disamar_reference_o2a",
-            .storage = "disamar-reference-o2a",
-            .description = "DISAMAR O2 A reference scene for Python and validation.",
-        },
-        .plan = .{ .derivative_mode = "none" },
-
-        .inputs = .{
-            .atmosphere_profile = scene.atmosphere.profile,
-            .vendor_reference_csv = scene_input.asset(
-                "vendor_reference_csv",
-                "data/reference_data/validation/o2a_with_cia_disamar_reference.csv",
-                "disamar_o2a_reference_csv",
-            ),
-            .raw_solar_reference = scene.observation.solar_reference,
-            .airmass_factor_lut = scene_input.asset(
-                "airmass_factor_lut",
-                "data/reference_data/luts/airmass_factor_nadir_demo.csv",
-                "csv",
-            ),
-        },
-
-        .scene_id = scene.id,
-        .spectral_grid = scene.spectral_grid,
-        .layer_count = scene.atmosphere.layer_count,
-        .sublayer_divisions = scene.atmosphere.sublayer_divisions,
-        .surface_pressure_hpa = scene.atmosphere.surface_pressure_hpa,
-        .fit_interval_index_1based = scene.atmosphere.fit_interval_index_1based,
-        .intervals = scene.atmosphere.intervals,
-        .surface_albedo = scene.surface_albedo,
-
-        .geometry = .{
-            .model = geometry_model,
-            .solar_zenith_deg = scene.geometry.solar_zenith_deg,
-            .viewing_zenith_deg = scene.geometry.viewing_zenith_deg,
-            .relative_azimuth_deg = scene.geometry.relative_azimuth_deg,
-        },
-
-        .aerosol = .{
-            .optical_depth = scene.aerosol.optical_depth,
-            .single_scatter_albedo = scene.aerosol.single_scatter_albedo,
-            .asymmetry_factor = scene.aerosol.asymmetry_factor,
-            .angstrom_exponent = scene.aerosol.angstrom_exponent,
-            .reference_wavelength_nm = scene.aerosol.reference_wavelength_nm,
-            .placement = .{
-                .semantics = "explicit_interval_bounds",
-                .interval_index_1based = scene.aerosol.interval_index_1based,
-                .top_pressure_hpa = scene.aerosol.top_pressure_hpa,
-                .bottom_pressure_hpa = scene.aerosol.bottom_pressure_hpa,
-            },
-        },
-
-        .observation = .{
-            .instrument_name = scene.observation.instrument_name,
-            .regime = "nadir",
-            .sampling = "native",
-            .instrument_line_fwhm_nm = scene.observation.instrument_line_fwhm_nm,
-            .builtin_line_shape = "flat_top_n4",
-            .high_resolution_step_nm = scene.observation.high_resolution_step_nm,
-            .high_resolution_half_span_nm = scene.observation.high_resolution_half_span_nm,
-            .adaptive_reference_grid = .{
-                .points_per_fwhm = scene.observation.adaptive_points_per_fwhm,
-                .strong_line_min_divisions = scene.observation.strong_line_min_divisions,
-                .strong_line_max_divisions = scene.observation.strong_line_max_divisions,
-            },
-            .solar_reference_asset_id = scene.observation.solar_reference.id,
-            .measured_wavelengths_nm = scene.observation.measured_wavelengths_nm,
-        },
-
-        .o2 = .{
-            .line_list_asset = scene.line_gas.line_list,
-            .line_mixing_asset = scene.line_gas.line_mixing,
-            .strong_lines_asset = scene.line_gas.strong_lines,
-            .line_mixing_factor = scene.line_gas.line_mixing_factor,
-            .isotopes_sim = default_output_isotopes[0..],
-            .threshold_line_sim = scene.line_gas.threshold_line_sim,
-            .cutoff_sim_cm1 = scene.line_gas.cutoff_sim_cm1,
-        },
-
-        .o2o2 = .{
-            .enabled = scene.cia.enabled,
-            .cia_asset = scene.cia.table,
-        },
-
-        .rtm_controls = .{
-            .scattering = "multiple",
-            .n_streams = scene.rtm.stream_count,
-            .performance_thresholds = .{},
-            .use_spherical_correction = scene.geometry.pseudo_spherical,
-            .integrate_source_function = true,
-            .renorm_phase_function = true,
-        },
-    };
 }
 
 const NormalizedJson = struct {
@@ -717,16 +602,6 @@ const CiaJson = struct {
     cia_asset: ?scene_input.Asset,
 };
 
-const OutputLineGasJson = struct {
-    line_list_asset: scene_input.Asset,
-    line_mixing_asset: scene_input.Asset,
-    strong_lines_asset: scene_input.Asset,
-    line_mixing_factor: f64,
-    isotopes_sim: []const usize,
-    threshold_line_sim: f64,
-    cutoff_sim_cm1: f64,
-};
-
 const PerformanceThresholdsJson = struct {
     num_orders_max: usize = 0,
     fourier_floor_scalar: usize = 2,
@@ -765,26 +640,6 @@ const NativeSceneJson = struct {
     aerosol: AerosolJson,
     observation: ObservationJson,
     o2: LineGasJson,
-    o2o2: CiaJson,
-    rtm_controls: RtmControlsJson,
-};
-
-const OutputSceneJson = struct {
-    metadata: MetadataJson,
-    plan: PlanJson,
-    inputs: InputsJson,
-    scene_id: []const u8,
-    spectral_grid: scene_input.SpectralGrid,
-    layer_count: usize,
-    sublayer_divisions: usize,
-    surface_pressure_hpa: f64,
-    fit_interval_index_1based: usize,
-    intervals: []const scene_input.VerticalInterval,
-    surface_albedo: f64,
-    geometry: GeometryJson,
-    aerosol: AerosolJson,
-    observation: ObservationJson,
-    o2: OutputLineGasJson,
     o2o2: CiaJson,
     rtm_controls: RtmControlsJson,
 };

@@ -68,55 +68,27 @@ pub const ProfileLineValue = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// ProfileSupportLineValue ------------------------------------------------------------------------------------|
-// One total-spectroscopy value at a vendor spectroscopy-profile altitude for support-row interpolation.       |
-//                                                                                                             |
-// layout(64-bit)                                                                                              |
-// size: 64 B (0.062 KiB), align: 8 B                                                                          |
-//                                                                                                             |
-// memory                                                                                                      |
-// [ 0.. 7] wavelength_nm                    : f64                                                             |
-// [ 8..15] altitude_km                      : f64                                                             |
-// [16..23] pressure_hpa                     : f64                                                             |
-// [24..31] temperature_k                    : f64                                                             |
-// [32..39] line_sigma_cm2_per_molecule      : f64                                                             |
-// [40..47] line_mixing_sigma_cm2_per_molecule: f64                                                            |
-// [48..55] total_sigma_cm2_per_molecule     : f64                                                             |
-// [56..59] profile_node_index               : u32                                                             |
-// [60..63] trailing padding                 : 4 B                                                             |
-pub const ProfileSupportLineValue = struct {
-    wavelength_nm: f64,
-    profile_node_index: u32,
-    altitude_km: f64,
-    pressure_hpa: f64,
-    temperature_k: f64,
-    line_sigma_cm2_per_molecule: f64,
-    line_mixing_sigma_cm2_per_molecule: f64,
-    total_sigma_cm2_per_molecule: f64,
-};
-// ------------------------------------------------------------------------------------------------------------|
-
 // ProfileLineValues ------------------------------------------------------------------------------------------|
-// Owner for wavelength-major layer-node and spectroscopy-profile line-value grids.                            |
+// Owner for wavelength-major layer-node rows and support-profile total-sigma columns.                         |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 64 B (0.062 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
 // [ 0..15] values                    : []ProfileLineValue                                                     |
-// [16..31] support_profile_values    : []ProfileSupportLineValue                                              |
+// [16..31] support_profile_total_sigma_cm2_per_molecule: []f64                                                |
 // [32..39] wavelength_count          : usize                                                                  |
 // [40..47] profile_node_count        : usize                                                                  |
 // [48..55] support_profile_node_count: usize                                                                  |
 // [56..63] reuse_stamp               : ReuseStamp                                                             |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   values owns wavelength_count * profile_node_count rows. support_profile_values owns                       |
-//   wavelength_count * support_profile_node_count rows uses interpolate support-row sigma. Root spectrum      |
-//   runs may set profile_node_count to zero when diagnostics are not requested; support rows still exist.     |
+//   values owns wavelength_count * profile_node_count diagnostic rows. support_profile_total_sigma owns one   |
+//   f64 column indexed as wavelength-major, then support-profile node. Root spectrum runs may set             |
+//   profile_node_count to zero when diagnostics are not requested; support sigma rows still exist.            |
 pub const ProfileLineValues = struct {
     values: []ProfileLineValue = &.{},
-    support_profile_values: []ProfileSupportLineValue = &.{},
+    support_profile_total_sigma_cm2_per_molecule: []f64 = &.{},
     wavelength_count: usize = 0,
     profile_node_count: usize = 0,
     support_profile_node_count: usize = 0,
@@ -126,9 +98,27 @@ pub const ProfileLineValues = struct {
         // ProfileLineValues.deinit ---------------------------------------------------------------------------|
         // Release exact-route profile-line rows owned by this memory object.                                  |
         // ----------------------------------------------------------------------------------------------------|
-        allocator.free(self.support_profile_values);
+        allocator.free(self.support_profile_total_sigma_cm2_per_molecule);
         allocator.free(self.values);
         self.* = .{};
+    }
+
+    pub fn supportProfileTotalSigmaAt(
+        self: ProfileLineValues,
+        wavelength_index: usize,
+        profile_node_index: usize,
+    ) ?f64 {
+        // ProfileLineValues.supportProfileTotalSigmaAt -------------------------------------------------------|
+        // Return one retained support-profile sigma from the dense f64 column.                                |
+        // ----------------------------------------------------------------------------------------------------|
+        if (wavelength_index >= self.wavelength_count or
+            profile_node_index >= self.support_profile_node_count)
+        {
+            return null;
+        }
+        return self.support_profile_total_sigma_cm2_per_molecule[
+            wavelength_index * self.support_profile_node_count + profile_node_index
+        ];
     }
 
     pub fn fillSupportLineSigmaAtWavelengthIndex(
@@ -141,8 +131,8 @@ pub const ProfileLineValues = struct {
         // ProfileLineValues.fillSupportLineSigmaAtWavelengthIndex --------------------------------------------|
         // Sample retained canonical sigma_total profile rows onto the setup support grid.                     |
         //                                                                                                     |
-        //   The line list has already been evaluated into support_profile_values; this helper only prepares   |
-        //   endpoint-secant spline curvature and samples total_sigma_cm2_per_molecule by support altitude.    |
+        //   The line list has already been evaluated into the support-profile total-sigma column; this helper |
+        //   only prepares endpoint-secant spline curvature and samples it by support altitude.                |
         //                                                                                                     |
         // memory                                                                                              |
         //   Uses fixed stack rows capped at max_spectroscopy_profile_nodes and writes caller-owned support    |
@@ -158,30 +148,21 @@ pub const ProfileLineValues = struct {
         const timing_start = CostTiming.start(stage_cost);
         defer CostTiming.finish(stage_cost, timing_start, "profile_interp");
 
-        const rows = self.support_profile_values[wavelength_index * node_count .. (wavelength_index + 1) * node_count];
+        const start = wavelength_index * node_count;
+        const total_column = self.support_profile_total_sigma_cm2_per_molecule[start .. start + node_count];
         var altitudes_km: [max_spectroscopy_profile_nodes]f64 = undefined;
-        var line_values: [max_spectroscopy_profile_nodes]f64 = undefined;
-        var line_mixing_values: [max_spectroscopy_profile_nodes]f64 = undefined;
         var total_values: [max_spectroscopy_profile_nodes]f64 = undefined;
-        var line_second: [max_spectroscopy_profile_nodes]f64 = undefined;
-        var line_mixing_second: [max_spectroscopy_profile_nodes]f64 = undefined;
         var total_second: [max_spectroscopy_profile_nodes]f64 = undefined;
 
-        for (rows, 0..) |row_value, profile_node_index| {
-            altitudes_km[profile_node_index] = row_value.altitude_km;
-            line_values[profile_node_index] = row_value.line_sigma_cm2_per_molecule;
-            line_mixing_values[profile_node_index] = row_value.line_mixing_sigma_cm2_per_molecule;
-            total_values[profile_node_index] = row_value.total_sigma_cm2_per_molecule;
+        for (layer_grid.spectroscopy_profile.rows, total_column, 0..) |profile_row, total_sigma, profile_node_index| {
+            altitudes_km[profile_node_index] = profile_row.altitude_km;
+            total_values[profile_node_index] = total_sigma;
         }
 
         const altitudes = altitudes_km[0..node_count];
-        spline.endpointSecantSecondDerivatives3(
+        spline.endpointSecantSecondDerivatives(
             altitudes,
-            line_values[0..node_count],
-            line_mixing_values[0..node_count],
             total_values[0..node_count],
-            line_second[0..node_count],
-            line_mixing_second[0..node_count],
             total_second[0..node_count],
         ) catch return error.InvalidShape;
 
@@ -265,7 +246,7 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
     //   Output rows stay wavelength-major and preserve the input wavelength order exactly. Dense spectrum     |
     //   prefetch can therefore use its `RadianceWavelengthList` index as the ProfileLineValues index.         |
     //   `build_layer_values` keeps the O2 A diagnostic layer rows for evidence paths. The public spectrum     |
-    //   route uses only support_profile_values, so root skips preparing unused layer rows.                    |
+    //   route uses only support-profile total sigma, so root skips preparing unused layer rows.               |
     // --------------------------------------------------------------------------------------------------------|
     var layers = try atmosphere_layers.build(allocator, scene);
     defer layers.deinit(allocator);
@@ -277,11 +258,8 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
     const support_profile_node_count = layers.spectroscopy_profile.rows.len;
     const values = try allocator.alloc(ProfileLineValue, wavelength_count * profile_node_count);
     errdefer allocator.free(values);
-    const support_profile_values = try allocator.alloc(
-        ProfileSupportLineValue,
-        wavelength_count * support_profile_node_count,
-    );
-    errdefer allocator.free(support_profile_values);
+    const support_profile_total_sigma = try allocator.alloc(f64, wavelength_count * support_profile_node_count);
+    errdefer allocator.free(support_profile_total_sigma);
 
     const cutoff_grid = try prepareCutoffGrid(allocator, cutoff_grid_wavelengths_nm);
     defer cutoff_grid.deinit(allocator);
@@ -405,20 +383,20 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
         strong_states,
         support_strong_states,
         values,
-        support_profile_values,
+        support_profile_total_sigma,
         cost_timing_active,
     );
 
     return .{
         .values = values,
-        .support_profile_values = support_profile_values,
+        .support_profile_total_sigma_cm2_per_molecule = support_profile_total_sigma,
         .wavelength_count = wavelength_count,
         .profile_node_count = profile_node_count,
         .support_profile_node_count = support_profile_node_count,
         .reuse_stamp = profileLineReuseStamp(
             scene.id,
             lines,
-            layers,
+            layers.spectroscopy_profile.rows,
             wavelengths_nm,
             build_layer_values,
             include_temperature_derivatives,
@@ -458,7 +436,7 @@ const ProfileLineBuildWorker = struct {
     strong_states: []const StrongLinePreparedState,
     support_strong_states: []const StrongLinePreparedState,
     values: []ProfileLineValue,
-    support_profile_values: []ProfileSupportLineValue,
+    support_profile_total_sigma_cm2_per_molecule: []f64,
     start_index: usize,
     end_index: usize,
     worker_index: usize = 0,
@@ -523,7 +501,7 @@ fn buildProfileLineValuesByWavelength(
     strong_states: []const StrongLinePreparedState,
     support_strong_states: []const StrongLinePreparedState,
     values: []ProfileLineValue,
-    support_profile_values: []ProfileSupportLineValue,
+    support_profile_total_sigma_cm2_per_molecule: []f64,
     cost_timing_active: []const ?CostTiming.Active,
 ) !void {
     // buildProfileLineValuesByWavelength ---------------------------------------------------------------------|
@@ -540,7 +518,9 @@ fn buildProfileLineValuesByWavelength(
     const profile_node_count = if (values.len != 0) layers.layer_pressures_hpa.len else 0;
     const support_profile_node_count = layers.spectroscopy_profile.rows.len;
     if (values.len != wavelengths_nm.len * profile_node_count) return error.InvalidShape;
-    if (support_profile_values.len != wavelengths_nm.len * support_profile_node_count) return error.InvalidShape;
+    if (support_profile_total_sigma_cm2_per_molecule.len != wavelengths_nm.len * support_profile_node_count) {
+        return error.InvalidShape;
+    }
 
     // instrumentation: trace zone: profile spectroscopy cache build ----------------------------------------- |
     // captures: profile-line cache build wall time and exact-wavelength count                                 |
@@ -573,7 +553,7 @@ fn buildProfileLineValuesByWavelength(
             .strong_states = strong_states,
             .support_strong_states = support_strong_states,
             .values = values,
-            .support_profile_values = support_profile_values,
+            .support_profile_total_sigma_cm2_per_molecule = support_profile_total_sigma_cm2_per_molecule,
             .start_index = range.start,
             .end_index = range.end,
             .worker_index = worker_index,
@@ -747,16 +727,7 @@ fn fillSupportProfileLineValueRowsAtWavelength(worker: *ProfileLineBuildWorker, 
             stage_cost,
         );
         const row_index = wavelength_index * worker.support_profile_rows.len + node_index;
-        worker.support_profile_values[row_index] = .{
-            .wavelength_nm = wavelength_nm,
-            .profile_node_index = @intCast(node_index),
-            .altitude_km = profile_row.altitude_km,
-            .pressure_hpa = profile_row.pressure_hpa,
-            .temperature_k = profile_row.temperature_k,
-            .line_sigma_cm2_per_molecule = total.line_sigma_cm2_per_molecule,
-            .line_mixing_sigma_cm2_per_molecule = total.line_mixing_sigma_cm2_per_molecule,
-            .total_sigma_cm2_per_molecule = total.total_sigma_cm2_per_molecule,
-        };
+        worker.support_profile_total_sigma_cm2_per_molecule[row_index] = total.total_sigma_cm2_per_molecule;
     }
 }
 
@@ -783,20 +754,22 @@ fn preferredProfileLineStateWorkerCount(profile_count: usize) usize {
 pub fn profileLineReuseStamp(
     scene_id: []const u8,
     lines: line_tables.LineTable,
-    layers: atmosphere_layers.LayerGrid,
+    spectroscopy_profile_rows: []const readers.AtmosphereProfileRow,
     wavelengths_nm: []const f64,
     build_layer_values: bool,
     include_temperature_derivatives: bool,
 ) hashing.ReuseStamp {
     // profileLineReuseStamp ----------------------------------------------------------------------------------|
-    // Include the line/profile inputs that determine retained spectroscopy rows.                              |
+    // Hash only session-fixed inputs: scene identity, exact wavelengths, the parsed line assets, and the      |
+    // spectroscopy-profile thermodynamics. Do not hash LayerGrid support rows: profile-line values sit at     |
+    // fixed spectroscopy nodes and are resampled per pressure state downstream, so hashing support placement  |
+    // would defeat reuse across the pressure changes optimal estimation makes each iteration.                 |
     // --------------------------------------------------------------------------------------------------------|
     var hasher = std.hash.Wyhash.init(0);
     hasher.update(scene_id);
     hashF64Slice(&hasher, wavelengths_nm);
     hashLineInputs(&hasher, lines);
-    atmosphere_layers.hashAll(&hasher, layers);
-    hashAtmosphereRows(&hasher, layers.spectroscopy_profile.rows);
+    hashAtmosphereRows(&hasher, spectroscopy_profile_rows);
     hashing.updateBool(&hasher, build_layer_values);
     hashing.updateBool(&hasher, include_temperature_derivatives);
     return .{ .value = hasher.final() };

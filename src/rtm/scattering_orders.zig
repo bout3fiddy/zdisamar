@@ -1676,9 +1676,7 @@ fn dotGaussPair(
     const row_offset = row * matrix.n;
     if (gaussian_count == rows.max_gauss) {
         const data = matrix.data[row_offset..];
-        const vec0 = vector0.data;
-        const vec1 = vector1.data;
-        return dotGaussPair10(data, &vec0, &vec1);
+        return dotGaussPair10(data, &vector0.data, &vector1.data);
     }
 
     var sum0: f64 = 0.0;

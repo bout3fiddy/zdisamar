@@ -13,14 +13,14 @@ stage. This file shows how the stages fit together.
 The public functions are in [`root.zig`](root.zig) and run in this order:
 
 ```
-defaultScene  ->  prepare  ->  warmSessionMemory  ->  runForwardWithSessionMemory
-   Scene          Prepared      SessionMemory          SpectrumRunResult
- (controls)     (scene + tables)  (reused memory)        (radiance, reflectance,
-                                                          irradiance, Jacobian)
+Scene  ->  prepare  ->  warmSessionMemory  ->  runForwardWithSessionMemory
+          Prepared      SessionMemory          SpectrumRunResult
+        (scene + tables)  (reused memory)        (radiance, reflectance,
+                                                  irradiance, Jacobian)
 ```
 
-- `defaultScene`, or parsed JSON, gives a `Scene` — atmosphere,
-  geometry, surface, spectroscopy, instrument, aerosol.
+- A caller-provided or parsed JSON scene gives a `Scene` — atmosphere, geometry,
+  surface, spectroscopy, instrument, aerosol.
 - `prepare` builds the physics tables that stay fixed across runs of the same
   scene.
 - `warmSessionMemory` sets up the memory a run reuses.
@@ -39,11 +39,11 @@ Inside one forward pass, data flows one way:
 +-------+      +-------+      +--------+      +-----+      +----------+      +--------+
 ```
 
-- `input/` — read, check, and default the scene into a `Scene`.
+- `input/` — read and check the scene into a `Scene`.
 - `setup/` — build the physics tables: absorption lines, CIA, aerosol, solar, phase, layers.
 - `optics/` — optical properties at each wavelength sample: Rayleigh, CIA, curved
   sun path, source levels.
-- `rtm/` — the radiative transfer solve for each wavelength sample, with Jacobians.
+- `rtm/` — the radiative transfer for each wavelength sample, with Jacobians.
 - `spectrum/` — combine samples into radiance, average through the instrument slit.
 - `output/` — diagnostics and the written-out spectrum.
 
@@ -86,7 +86,7 @@ in, so each iteration stays cheap. `SessionMemory`
   sparsely elsewhere. It depends on the spectral grid, instrument, and line
   positions, none of which change during a retrieval, so it is built once.
 - `RadianceWavelengthList` (`cache/radiance_memory.zig`) — the dense grid the
-  transport solver loops over, derived from the sampling table. The solver
+  radiative transfer loops over, derived from the sampling table. `rtm/`
   computes a radiance at each entry before the spectrum step gathers them onto
   the output grid.
 - `ProfileLineValues` (`cache/profile_line_memory.zig`) — the O2 absorption from
@@ -97,9 +97,9 @@ in, so each iteration stays cheap. `SessionMemory`
   solar flux at each wavelength, needed to turn radiance into reflectance. It
   depends only on the grid, so it is looked up once and kept.
 - `TransportWorkArrays` (`cache/transport_worker_memory.zig`) — scratch space for
-  the solver: layer matrices, scattering orders, and Fourier terms. These are
-  large and overwritten on every sample, so they are sized once per worker thread
-  and reused instead of reallocated each solve.
+  the radiative transfer: layer matrices, scattering orders, and Fourier terms.
+  These are large and overwritten on every sample, so they are sized once per
+  worker thread and reused instead of reallocated each sample.
 
 A function in `optics/`, `rtm/`, `spectrum/`, or `retrieval/` takes the arrays it
 reads and the one it writes as arguments, so its inputs and outputs are visible
@@ -108,9 +108,8 @@ in its signature.
 ## Where to start
 
 - `root.zig` — the public functions, in call order.
-- `rtm/solve.zig` — the transport solver, the core of the model.
+- `rtm/solve.zig` — the radiative transfer, the core of the model.
 - `setup/run_tables.zig` — how a scene turns into physics tables.
 - `runOptimalEstimation` in `root.zig` — the retrieval loop.
 
 Tests reach internal symbols through `internal.zig`.
-</content>

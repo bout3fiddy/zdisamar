@@ -1,14 +1,15 @@
 const std = @import("std");
 const internal = @import("internal");
+const o2a_scene = @import("../support/o2a_scene.zig");
 
 test "RunTables match O2 A baseline table evidence" {
     var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(std.testing.allocator);
 
-    try std.testing.expectEqual(@as(usize, 2024), @sizeOf(internal.setup.run_tables.RunTables));
+    try std.testing.expectEqual(@as(usize, 2016), @sizeOf(internal.setup.run_tables.RunTables));
     try std.testing.expectEqual(@as(usize, 88), @sizeOf(internal.setup.atmosphere_layers.LayerQuadrature));
 
     try std.testing.expectEqual(@as(usize, 45), tables.layers.layer_pressures_hpa.len);
@@ -77,7 +78,7 @@ test "LayerQuadrature rows match per-call quadrature builders" {
     const allocator = std.testing.allocator;
     const gauss_legendre = internal.common.math.gauss_legendre;
 
-    const scene = internal.input.defaults.referenceScene();
+    const scene = o2a_scene.reference();
     var tables = try internal.setup.run_tables.buildRunTables(allocator, scene);
     defer tables.deinit(allocator);
 
@@ -120,7 +121,7 @@ test "LayerGrid refill from prepared profiles matches fresh builds for pressure 
     const allocator = std.testing.allocator;
     const atmosphere_layers = internal.setup.atmosphere_layers;
 
-    const base_scene = internal.input.defaults.referenceScene();
+    const base_scene = o2a_scene.reference();
     var base_tables = try internal.setup.run_tables.buildRunTables(allocator, base_scene);
     defer base_tables.deinit(allocator);
 
@@ -254,7 +255,7 @@ fn expectLayerGridEqual(
         actual.layer_interval_indices_1based,
     );
     try std.testing.expectEqualSlices(u32, expected.layer_support_starts, actual.layer_support_starts);
-    try std.testing.expectEqualSlices(u32, expected.layer_support_counts, actual.layer_support_counts);
+    try std.testing.expectEqual(expected.layer_support_count, actual.layer_support_count);
     try expectEqualF64Slices(expected.support_mid_altitudes_km, actual.support_mid_altitudes_km);
     try expectEqualF64Slices(expected.support_pressures_hpa, actual.support_pressures_hpa);
     try expectEqualF64Slices(expected.support_temperatures_k, actual.support_temperatures_k);

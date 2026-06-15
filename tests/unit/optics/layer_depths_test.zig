@@ -1,7 +1,7 @@
 const std = @import("std");
 const internal = @import("internal");
+const o2a_scene = @import("../support/o2a_scene.zig");
 
-const defaults = internal.input.defaults;
 const layer_depths = internal.optics.layer_depths;
 const setup = internal.setup.run_tables;
 const jacobian = internal.rtm.jacobian_states;
@@ -276,8 +276,9 @@ const aerosol_jacobian_layers_758 = [_]LayerJacobianEvidence{
 };
 
 test "support-row optics reproduce atmospheric-budget components at probe wavelengths" {
-    var tables = try setup.buildRunTables(allocator, defaults.referenceScene());
+    var tables = try setup.buildRunTables(allocator, o2a_scene.reference());
     defer tables.deinit(allocator);
+    const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
     var line_sigma = try allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);
     defer allocator.free(line_sigma);
@@ -298,6 +299,7 @@ test "support-row optics reproduce atmospheric-budget components at probe wavele
             expected.wavelength_nm,
             tables.layers,
             line_sigma,
+            &collision_pair_profile,
             tables.cia,
             zero_aerosol,
             support_rows,
@@ -314,8 +316,9 @@ test "support-row optics reproduce atmospheric-budget components at probe wavele
 }
 
 test "layer optics reduce active support rows and skip boundary rows" {
-    var tables = try setup.buildRunTables(allocator, defaults.referenceScene());
+    var tables = try setup.buildRunTables(allocator, o2a_scene.reference());
     defer tables.deinit(allocator);
+    const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
     var line_sigma = try allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);
     defer allocator.free(line_sigma);
@@ -336,6 +339,7 @@ test "layer optics reduce active support rows and skip boundary rows" {
         758.0,
         tables.layers,
         line_sigma,
+        &collision_pair_profile,
         tables.cia,
         zero_aerosol,
         support_rows,
@@ -356,8 +360,9 @@ test "layer optics reduce active support rows and skip boundary rows" {
 }
 
 test "layer optics place aerosol optical depth on the configured explicit interval" {
-    var tables = try setup.buildRunTables(allocator, defaults.referenceScene());
+    var tables = try setup.buildRunTables(allocator, o2a_scene.reference());
     defer tables.deinit(allocator);
+    const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
     const line_sigma = try allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);
     defer allocator.free(line_sigma);
@@ -369,6 +374,7 @@ test "layer optics place aerosol optical depth on the configured explicit interv
         758.0,
         tables.layers,
         line_sigma,
+        &collision_pair_profile,
         tables.cia,
         tables.aerosol,
         support_rows,
@@ -391,8 +397,9 @@ test "layer optics place aerosol optical depth on the configured explicit interv
 }
 
 test "layer optics fill aerosol optical-depth jacobian lanes from current route formula" {
-    var tables = try setup.buildRunTables(allocator, defaults.referenceScene());
+    var tables = try setup.buildRunTables(allocator, o2a_scene.reference());
     defer tables.deinit(allocator);
+    const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
     const line_sigma = try allocator.alloc(f64, tables.layers.support_mid_altitudes_km.len);
     defer allocator.free(line_sigma);
@@ -413,6 +420,7 @@ test "layer optics fill aerosol optical-depth jacobian lanes from current route 
         758.0,
         tables.layers,
         line_sigma,
+        &collision_pair_profile,
         tables.cia,
         tables.aerosol,
         support_rows,

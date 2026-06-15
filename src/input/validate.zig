@@ -7,7 +7,7 @@ const profile_pressure_tolerance_hpa: f64 = 1.0e-9;
 const profile_spectral_tolerance: f64 = 1.0e-12;
 
 pub fn sceneControls(scene: scene_input.Scene) !void {
-    // case ---------------------------------------------------------------------------------------------------|
+    // sceneControls ------------------------------------------------------------------------------------------|
     // Validate every control O2 A consumes so unsupported or malformed setup input cannot pass inertly.       |
     // --------------------------------------------------------------------------------------------------------|
     if (scene.spectral_grid.sample_count < 2) return errors.Error.InvalidControl;

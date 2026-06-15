@@ -108,3 +108,18 @@ def json_value(value: object) -> object:
         return {key: json_value(item) for key, item in value.items()}
 
     return value
+
+
+def native_json_value(value: object) -> object:
+    """Write inert NaN placeholders as null for the native Zig JSON boundary."""
+
+    if isinstance(value, float) and math.isnan(value):
+        return None
+
+    if isinstance(value, list):
+        return [native_json_value(item) for item in value]
+
+    if isinstance(value, dict):
+        return {key: native_json_value(item) for key, item in value.items()}
+
+    return value

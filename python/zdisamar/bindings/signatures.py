@@ -30,7 +30,6 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
 
     bind(lib, "zds_context_create", [], ctypes.c_void_p)
     bind(lib, "zds_context_destroy", [ctypes.c_void_p], None)
-    bind(lib, "zds_prepare_default_o2a", [ctypes.c_void_p], ctypes.c_int)
     bind(
         lib,
         "zds_prepare_o2a_json",
@@ -42,17 +41,6 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         lib,
         "zds_warm_o2a_optimal_estimation",
         [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t],
-        ctypes.c_int,
-    )
-    bind(
-        lib,
-        "zds_default_o2a_input_json",
-        [
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-            ctypes.c_size_t,
-            ctypes.POINTER(ctypes.c_size_t),
-        ],
         ctypes.c_int,
     )
     bind(lib, "zds_run_spectrum", [ctypes.c_void_p, ctypes.POINTER(CSpectrum)], ctypes.c_int)

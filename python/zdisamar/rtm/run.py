@@ -4,8 +4,8 @@ from array import array
 from collections.abc import Generator
 from contextlib import contextmanager
 
-from ..bindings.handles import RtmHandle
 from ..input.wavelength_band.o2a import Scene
+from ..input.wavelength_band.o2a_default import default_o2a_scene
 from .session_cache import SessionCache
 
 
@@ -145,5 +145,4 @@ def nominal_wavelengths(scene: Scene):
 def reference_scene() -> Scene:
     """Return the packaged O2 A reference case."""
 
-    with RtmHandle() as handle:
-        return handle.default_scene()
+    return default_o2a_scene()

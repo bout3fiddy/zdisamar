@@ -1,4 +1,4 @@
-"""Display helpers for notebook-facing domain objects."""
+"""Display helpers for public summary mappings."""
 
 import json
 from collections.abc import Iterator, Mapping
@@ -16,20 +16,7 @@ def pretty_json_value(value: object) -> object:
     return value
 
 
-class NotebookDisplay:
-    """Use the object's repr as its IPython pretty display."""
-
-    def _repr_pretty_(self, printer, cycle) -> None:
-
-        if cycle:
-            printer.text(f"{type(self).__name__}(...)")
-
-            return
-
-        printer.text(repr(self))
-
-
-class PrettyMapping(NotebookDisplay, Mapping[str, object]):
+class PrettyMapping(Mapping[str, object]):
     """Small display object for public summaries that would otherwise be raw dicts."""
 
     def __init__(self, title: str, data: Mapping[str, object]) -> None:

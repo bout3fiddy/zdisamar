@@ -101,7 +101,7 @@ pub const LayerQuadrature = struct {
 // Computed atmosphere layer and support-row setup arrays.                                                     |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 400 B (0.391 KiB), align: 8 B                                                                         |
+// size: 392 B (0.383 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
 // [  0.. 15] source_profile                 : AtmosphereProfileTable                                          |
@@ -111,9 +111,11 @@ pub const LayerQuadrature = struct {
 // [ 48.. 55] sublayer_divisions             : usize                                                           |
 // [ 56.. 63] surface_pressure_hpa           : f64                                                             |
 // [ 64..223] layer f64 arrays               : 10 slice headers                                                |
-// [224..271] layer u32 arrays               : 3 slice headers                                                 |
-// [272..383] support f64 arrays             : 7 slice headers                                                 |
-// [384..399] support u32 arrays             : 1 slice header                                                  |
+// [224..255] layer u32 arrays               : 2 slice headers                                                 |
+// [256..367] support f64 arrays             : 7 slice headers                                                 |
+// [368..383] support u32 arrays             : 1 slice header                                                  |
+// [384..387] layer_support_count            : u32                                                             |
+// [388..391] padding                        : 4 B                                                             |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Every array is owned. source_profile holds the canonical densified climatology used for vertical setup.   |
@@ -139,7 +141,7 @@ pub const LayerGrid = struct {
     layer_path_lengths_cm: []f64,
     layer_interval_indices_1based: []u32,
     layer_support_starts: []u32,
-    layer_support_counts: []u32,
+    layer_support_count: u32,
     support_mid_altitudes_km: []f64,
     support_pressures_hpa: []f64,
     support_temperatures_k: []f64,
@@ -167,7 +169,6 @@ pub const LayerGrid = struct {
         allocator.free(self.layer_path_lengths_cm);
         allocator.free(self.layer_interval_indices_1based);
         allocator.free(self.layer_support_starts);
-        allocator.free(self.layer_support_counts);
         allocator.free(self.support_mid_altitudes_km);
         allocator.free(self.support_pressures_hpa);
         allocator.free(self.support_temperatures_k);
@@ -191,6 +192,7 @@ pub fn hashAll(hasher: *std.hash.Wyhash, layers: LayerGrid) void {
         layers.sublayer_divisions,
     }) |value| hashing.updateValue(hasher, value);
     hashing.updateValue(hasher, layers.surface_pressure_hpa);
+    hashing.updateValue(hasher, layers.layer_support_count);
     for ([_][]const f64{
         layers.layer_top_altitudes_km,
         layers.layer_bottom_altitudes_km,
@@ -213,7 +215,6 @@ pub fn hashAll(hasher: *std.hash.Wyhash, layers: LayerGrid) void {
     for ([_][]const u32{
         layers.layer_interval_indices_1based,
         layers.layer_support_starts,
-        layers.layer_support_counts,
         layers.support_interval_indices_1based,
     }) |values| hasher.update(std.mem.sliceAsBytes(values));
 }
@@ -224,9 +225,9 @@ pub fn buildLayerQuadrature(allocator: Allocator, scene: scene_input.Scene) !Lay
     // Precompute canonical support and interval quadrature roots for one structural atmosphere shape.         |
     //                                                                                                         |
     // boundary                                                                                                |
-    //   Orders come only from case.atmosphere.sublayer_divisions and interval.altitude_divisions. Retrieval   |
+    //   Orders come only from scene.atmosphere.sublayer_divisions and interval.altitude_divisions. Retrieval  |
     //   state updates change pressure bounds, so the canonical roots and weights remain valid across every    |
-    //   OE iteration for the prepared case.                                                                   |
+    //   OE iteration for the prepared scene.                                                                  |
     // --------------------------------------------------------------------------------------------------------|
     const support_order = @max(scene.atmosphere.sublayer_divisions, @as(usize, 1));
     if (support_order > gauss_legendre.max_fixed_rule_order) return error.InvalidControl;
@@ -374,7 +375,7 @@ pub fn refillFromPreparedProfiles(
     //              allocation and overwrites every computed row slot.                                         |
     //                                                                                                         |
     // dataflow                                                                                                |
-    //   reads  : case interval boundaries, retained canonical quadrature, and grid.source_profile rows        |
+    //   reads  : scene interval boundaries, retained canonical quadrature, and grid.source_profile rows       |
     //   writes : only computed layer/support slices inside grid                                               |
     // --------------------------------------------------------------------------------------------------------|
     const shape = try layerGridShape(scene, quadrature);
@@ -461,7 +462,7 @@ fn requireGridShape(grid: LayerGrid, shape: LayerGridShape) error{InvalidControl
         grid.layer_path_lengths_cm.len == layer_count and
         grid.layer_interval_indices_1based.len == layer_count and
         grid.layer_support_starts.len == layer_count and
-        grid.layer_support_counts.len == layer_count;
+        grid.layer_support_count == shape.support_order + 2;
     const support_shape_matches =
         grid.support_mid_altitudes_km.len == support_count and
         grid.support_pressures_hpa.len == support_count and
@@ -490,6 +491,7 @@ fn fillLayerGrid(
     grid.configured_layer_count = scene.atmosphere.layer_count;
     grid.sublayer_divisions = scene.atmosphere.sublayer_divisions;
     grid.surface_pressure_hpa = scene.atmosphere.surface_pressure_hpa;
+    grid.layer_support_count = @intCast(support_order + 2);
 
     const support_nodes = quadrature.support_nodes;
     const support_weights = quadrature.support_weights;
@@ -552,7 +554,6 @@ fn fillLayerGrid(
             grid.layer_bottom_pressures_hpa[global_layer_index] = previous_boundary_pressure_hpa;
             grid.layer_interval_indices_1based[global_layer_index] = rtm_interval_index_1based;
             grid.layer_support_starts[global_layer_index] = @intCast(support_cursor);
-            grid.layer_support_counts[global_layer_index] = @intCast(support_order + 2);
 
             const layer_span_km = @max(next_boundary_altitude_km - previous_boundary_altitude_km, 0.0);
             var weighted_altitude_km: f64 = 0.0;
@@ -871,8 +872,6 @@ fn allocate(
     errdefer allocator.free(layer_interval_indices_1based);
     const layer_support_starts = try allocator.alloc(u32, layer_count);
     errdefer allocator.free(layer_support_starts);
-    const layer_support_counts = try allocator.alloc(u32, layer_count);
-    errdefer allocator.free(layer_support_counts);
     const support_mid_altitudes_km = try allocator.alloc(f64, support_count);
     errdefer allocator.free(support_mid_altitudes_km);
     const support_pressures_hpa = try allocator.alloc(f64, support_count);
@@ -909,7 +908,7 @@ fn allocate(
         .layer_path_lengths_cm = layer_path_lengths_cm,
         .layer_interval_indices_1based = layer_interval_indices_1based,
         .layer_support_starts = layer_support_starts,
-        .layer_support_counts = layer_support_counts,
+        .layer_support_count = 0,
         .support_mid_altitudes_km = support_mid_altitudes_km,
         .support_pressures_hpa = support_pressures_hpa,
         .support_temperatures_k = support_temperatures_k,

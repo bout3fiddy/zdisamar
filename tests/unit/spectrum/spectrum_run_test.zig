@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const internal = @import("internal");
+const o2a_scene = @import("../support/o2a_scene.zig");
 
 const controls = internal.rtm.controls;
 const jacobian_states = internal.rtm.jacobian_states;
@@ -29,9 +30,10 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
     const allocator = std.testing.allocator;
     var tables = try internal.setup.run_tables.buildRunTables(
         allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(allocator);
+    const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
     const support_count = tables.layers.support_mid_altitudes_km.len;
     const layer_count = tables.layers.layer_pressures_hpa.len;
@@ -57,7 +59,7 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
     defer allocator.free(curved_level_altitudes);
 
     const wavelength_nm = 760.0;
-    var scene = internal.input.defaults.referenceScene();
+    var scene = o2a_scene.reference();
     scene.spectral_grid = .{
         .start_nm = wavelength_nm,
         .end_nm = wavelength_nm,
@@ -90,6 +92,7 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
         wavelength_nm,
         tables.layers,
         line_sigma,
+        &collision_pair_profile,
         tables.cia,
         tables.aerosol,
         expected_support,
@@ -119,6 +122,7 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
         angles,
         surface_albedo,
         tables.layers,
+        &collision_pair_profile,
         profile_lines,
         tables.cia,
         tables.aerosol,
@@ -161,16 +165,17 @@ test "radianceAtWavelength checks caller-owned row shapes" {
     const allocator = std.testing.allocator;
     var tables = try internal.setup.run_tables.buildRunTables(
         allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(allocator);
+    const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
     const support_count = tables.layers.support_mid_altitudes_km.len;
     const layer_count = tables.layers.layer_pressures_hpa.len;
     const line_sigma = try allocator.alloc(f64, support_count);
     defer allocator.free(line_sigma);
     @memset(line_sigma, 0.0);
-    var scene = internal.input.defaults.referenceScene();
+    var scene = o2a_scene.reference();
     scene.spectral_grid = .{
         .start_nm = 760.0,
         .end_nm = 760.0,
@@ -203,6 +208,7 @@ test "radianceAtWavelength checks caller-owned row shapes" {
             .{ .solar_mu = 0.62, .view_mu = 0.48 },
             0.4,
             tables.layers,
+            &collision_pair_profile,
             profile_lines,
             tables.cia,
             tables.aerosol,
@@ -227,15 +233,16 @@ test "radianceAtWavelength matches canonical transport probes" {
     const allocator = std.testing.allocator;
     var tables = try internal.setup.run_tables.buildRunTables(
         allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(allocator);
+    const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
     const support_count = tables.layers.support_mid_altitudes_km.len;
     const layer_count = tables.layers.layer_pressures_hpa.len;
     var profile_lines = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengths(
         allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
         transport_probe_wavelengths_nm[0..],
     );
     defer profile_lines.deinit(allocator);
@@ -258,7 +265,7 @@ test "radianceAtWavelength matches canonical transport probes" {
     var memory = internal.cache.transport_worker_memory.TransportWorkerMemory{};
     defer memory.deinit(allocator);
 
-    const scene = internal.input.defaults.referenceScene();
+    const scene = o2a_scene.reference();
     const solar_sin = @sin(std.math.degreesToRadians(scene.geometry.solar_zenith_deg));
     const view_sin = @sin(std.math.degreesToRadians(scene.geometry.viewing_zenith_deg));
     const angles = solve.ViewAngles{
@@ -302,6 +309,7 @@ test "radianceAtWavelength matches canonical transport probes" {
             angles,
             expected.surface_albedo,
             tables.layers,
+            &collision_pair_profile,
             profile_lines,
             tables.cia,
             tables.aerosol,
@@ -369,11 +377,11 @@ test "runForwardSpectrum matches canonical full spectrum" {
 
     var tables = try internal.setup.run_tables.buildRunTables(
         allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(allocator);
 
-    const scene = internal.input.defaults.referenceScene();
+    const scene = o2a_scene.reference();
     var owned_sampling = try sampling_table.buildSpectrumSamplingTable(
         allocator,
         scene,
@@ -427,8 +435,10 @@ test "runForwardSpectrum matches canonical full spectrum" {
     );
     try std.testing.expectEqual(@as(usize, 3874), dense_count);
 
-    const dense = try allocator.alloc(radiance_results.RadianceResult, dense_count);
-    defer allocator.free(dense);
+    const dense_radiance = try allocator.alloc(f64, dense_count);
+    defer allocator.free(dense_radiance);
+    const dense_jacobian = try allocator.alloc(jacobian_states.Vector, dense_count);
+    defer allocator.free(dense_jacobian);
     const product_wavelengths = try allocator.alloc(f64, product_count);
     defer allocator.free(product_wavelengths);
     const raw_radiance = try allocator.alloc(radiance_results.RadianceResult, product_count);
@@ -497,8 +507,12 @@ test "runForwardSpectrum matches canonical full spectrum" {
         true,
         null,
         worker_count,
+        true,
         .{
-            .dense_radiance = dense,
+            .dense_radiance = .{
+                .radiance = dense_radiance,
+                .jacobian = dense_jacobian,
+            },
             .wavelengths_nm = product_wavelengths,
             .raw_radiance = raw_radiance,
             .raw_irradiance = raw_irradiance,
@@ -568,9 +582,10 @@ test "runForwardSpectrum assembles direct-route product reflectance across worke
     const allocator = std.testing.allocator;
     var tables = try internal.setup.run_tables.buildRunTables(
         allocator,
-        internal.input.defaults.referenceScene(),
+        o2a_scene.reference(),
     );
     defer tables.deinit(allocator);
+    const collision_pair_profile = layer_depths.CollisionPairProfile.init(tables.layers);
 
     var sampling_rows = [_]sampling_table.SpectrumSamplingRow{
         .{
@@ -593,7 +608,7 @@ test "runForwardSpectrum assembles direct-route product reflectance across worke
     defer wavelengths.deinit(allocator);
 
     const exact_wavelengths_nm = [_]f64{ 758.0, 760.0 };
-    const scene = internal.input.defaults.referenceScene();
+    const scene = o2a_scene.reference();
     var profile_lines = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengths(
         allocator,
         scene,
@@ -610,7 +625,7 @@ test "runForwardSpectrum assembles direct-route product reflectance across worke
     const expected_layers = try allocator.alloc(layer_depths.LayerOptics, layer_count);
     defer allocator.free(expected_layers);
 
-    var dense: [2]radiance_results.RadianceResult = undefined;
+    var dense_radiance: [2]f64 = undefined;
     var product_wavelengths: [2]f64 = undefined;
     var raw_radiance: [2]radiance_results.RadianceResult = undefined;
     var raw_irradiance: [2]f64 = undefined;
@@ -659,7 +674,7 @@ test "runForwardSpectrum assembles direct-route product reflectance across worke
         2,
         true,
         .{
-            .dense_radiance = dense[0..],
+            .dense_radiance = .{ .radiance = dense_radiance[0..] },
             .wavelengths_nm = product_wavelengths[0..],
             .raw_radiance = raw_radiance[0..],
             .raw_irradiance = raw_irradiance[0..],
@@ -684,6 +699,7 @@ test "runForwardSpectrum assembles direct-route product reflectance across worke
             wavelength_nm,
             tables.layers,
             expected_line_sigma,
+            &collision_pair_profile,
             tables.cia,
             tables.aerosol,
             expected_support,
@@ -758,10 +774,11 @@ test "gatherProductRows gathers radiance irradiance and active Jacobian lanes" {
         .{ .start = 0 },
         .{ .start = 1 },
     };
-    var dense = [_]radiance_results.RadianceResult{
-        .{ .radiance = 10.0, .jacobian = .{ 1.0, 100.0 } },
-        .{ .radiance = 20.0, .jacobian = .{ 2.0, 200.0 } },
-        .{ .radiance = 30.0, .jacobian = .{ 3.0, 300.0 } },
+    var dense_radiance = [_]f64{ 10.0, 20.0, 30.0 };
+    var dense_jacobian = [_]jacobian_states.Vector{
+        .{ 1.0, 100.0 },
+        .{ 2.0, 200.0 },
+        .{ 3.0, 300.0 },
     };
     var solar_rows = [_]readers.SolarAssetRow{
         .{ .wavelength_nm = 759.0, .irradiance = 100.0 },
@@ -790,7 +807,10 @@ test "gatherProductRows gathers radiance irradiance and active Jacobian lanes" {
             .sample_indices = sample_indices[0..],
             .wavelengths = &.{},
         },
-        dense[0..],
+        .{
+            .radiance = dense_radiance[0..],
+            .jacobian = dense_jacobian[0..],
+        },
         solar,
         &solar_memory,
         out_wavelengths[0..],
@@ -823,7 +843,7 @@ test "gatherProductRows resets stale solar memory and rejects malformed shapes" 
     const table = sampling_table.SpectrumSamplingTable{ .rows = &rows };
     const sample_indices = [_]u32{0};
     var row_refs = [_]radiance_wavelengths.RadianceSampleIndexRef{.{ .start = 0 }};
-    var dense = [_]radiance_results.RadianceResult{.{ .radiance = 3.0 }};
+    var dense_radiance = [_]f64{3.0};
     var solar_rows = [_]readers.SolarAssetRow{
         .{ .wavelength_nm = 760.0, .irradiance = 22.0 },
     };
@@ -847,7 +867,7 @@ test "gatherProductRows resets stale solar memory and rejects malformed shapes" 
             .sample_indices = sample_indices[0..],
             .wavelengths = &.{},
         },
-        dense[0..],
+        .{ .radiance = dense_radiance[0..] },
         solar,
         &solar_memory,
         out_wavelengths[0..],
@@ -868,7 +888,7 @@ test "gatherProductRows resets stale solar memory and rejects malformed shapes" 
                 .sample_indices = sample_indices[0..],
                 .wavelengths = &.{},
             },
-            dense[0..],
+            .{ .radiance = dense_radiance[0..] },
             solar,
             &solar_memory,
             out_wavelengths[0..],

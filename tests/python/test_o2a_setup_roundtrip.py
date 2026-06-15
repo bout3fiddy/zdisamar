@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+pytestmark = [pytest.mark.integration, pytest.mark.native, pytest.mark.slow]
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,6 +86,7 @@ def run_roundtrip() -> dict[str, Any]:
         perturbed_session_spectrum = cache.spectrum(jacobian=True)
         perturbed_session_rtm_s = time.perf_counter() - perturbed_session_rtm_start_s
         perturbed_session_arrays = spectrum_arrays(perturbed_session_spectrum)
+        perturbed_session_names = perturbed_session_spectrum.jacobian_state_names
         perturbed_session_jacobian = np.asarray(
             perturbed_session_spectrum.radiance_jacobian,
             dtype=np.float64,
@@ -108,6 +111,12 @@ def run_roundtrip() -> dict[str, Any]:
             cache.spectrum(jacobian=True, jacobian_state_names=())
         except ValueError:
             empty_jacobian_state_selection_rejected = True
+
+    full_state_indices = {name: index for index, name in enumerate(perturbed_session_names)}
+    selected_full_jacobian = np.stack(
+        [perturbed_session_jacobian[:, full_state_indices[name]] for name in compact_session_names],
+        axis=1,
+    )
 
     perturbed_functional_spectrum = rtm.spectrum(perturbed_scene, jacobian=True)
     perturbed_functional_arrays = spectrum_arrays(perturbed_functional_spectrum)
@@ -214,7 +223,7 @@ def run_roundtrip() -> dict[str, Any]:
         "requested_jacobian_columns_match_full_native_columns": bool(
             np.allclose(
                 compact_session_jacobian,
-                perturbed_session_jacobian[:, 1:3],
+                selected_full_jacobian,
                 atol=tolerance,
                 rtol=tolerance,
             )
@@ -286,3 +295,13 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def test_o2a_setup_roundtrip_contracts() -> None:
+    summary = run_roundtrip()
+    checks = summary["checks"]
+    excluded = {"tolerance", "typed_sample_count", "reference_sample_count"}
+
+    assert all(value for key, value in checks.items() if key not in excluded)
+    assert summary["answer"]["matches"] is True
+    assert summary["answer"]["sample_count"] == 701

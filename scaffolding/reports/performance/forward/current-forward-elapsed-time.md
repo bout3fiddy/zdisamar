@@ -9,8 +9,8 @@ scaffolding/instrumentation/trace/evidence/lauka-forward/forward-run/summary.jso
 Top-level low-overhead timing from the Lauka forward wrapper:
 
 ```text
-prepare_o2a                      0.057692 s
-forward elapsed time             1.328534 s
+prepare_o2a                      0.057938 s
+forward elapsed time             1.108574 s
 output wavelengths                     701
 high-resolution samples              3,874
 ```
@@ -30,16 +30,16 @@ The timeline trace artifact is:
 scaffolding/instrumentation/trace/evidence/labos-bottleneck/summary.json
 ```
 
-That run is built with ztracy instrumentation enabled. Its current coarse
-summary is:
+That run is built with phase-timing instrumentation only (`trace_enabled` is
+false in the retained summary). Its current coarse summary is:
 
 ```text
-prepare_o2a                      0.045665 s
-forward elapsed time             2.443697 s
+prepare_o2a                      0.062612 s
+forward elapsed time             1.192873 s
 ```
 
-Use the ztracy capture for nested timing, thread overlap, and per-zone evidence.
-Use the Lauka wrapper or a non-ztracy harness run for elapsed-time comparisons.
+Use the phase-timing summary for per-phase and per-LABOS-zone counts. Use the
+Lauka wrapper or another non-ztracy harness run for elapsed-time comparisons.
 
 The stable route shape is unchanged:
 

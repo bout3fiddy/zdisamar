@@ -7,14 +7,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Self
 
-from ...display import NotebookDisplay
 from ..aerosol import Aerosol, AerosolProfileLayer, coerce_profile_layers
 from ..assets import ReferenceAssets
 from ..atmosphere import Atmosphere
 from ..geometry import Geometry, Surface
 from ..instrument import InstrumentResponse, SpectralGrid
 from ..radiative_transfer import RadiativeTransferControls
-from ..shared import json_value, object_dict, to_float
+from ..shared import json_value, native_json_value, object_dict, to_float
 from ..spectroscopy import LineByLine, OxygenCollisionInducedAbsorption
 from .optimisation import Optimisation
 
@@ -25,7 +24,7 @@ def _object_dict(data: dict[str, object], key: str) -> dict[str, object]:
 
 
 @dataclass
-class Scene(NotebookDisplay):
+class Scene:
     """Complete O2 A wavelength-band case passed to the zdisamar RTM."""
 
     metadata: dict[str, object]
@@ -215,7 +214,7 @@ class Scene(NotebookDisplay):
         """Encode the native scene without Python-only optimisation controls."""
 
         return json.dumps(
-            json_value(self.to_native_dict()), sort_keys=True, separators=(",", ":")
+            native_json_value(self.to_native_dict()), sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
 
     def set_aerosol_profile(self, layers: object) -> None:

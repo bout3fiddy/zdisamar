@@ -21,7 +21,7 @@ const scene_input = @import("../input/scene.zig");
 // [64..79] profile                : []const AerosolProfileLayer                                               |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   profile borrows parser-owned JSON rows retained by the prepared case/context owner.                       |
+//   profile borrows parser-owned JSON rows retained by the prepared scene/context owner.                      |
 pub const AerosolLayerTable = struct {
     optical_depth: f64,
     single_scatter_albedo: f64,

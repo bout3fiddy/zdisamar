@@ -30,10 +30,10 @@ validation/outputs/optimal_estimation/zdisamar_o2a_slow_rtm_jacobian_benchmark.j
 Current key numbers:
 
 ```text
-direct RTM-only median           0.885744 s
-direct RTM+jacobian median       0.963766 s
-session reused retrieval elapsed time    3.142969 s
-lazy final evaluation when requested     1.311871 s
+direct RTM-only median           0.836978 s
+direct RTM+jacobian median       0.871737 s
+session reused retrieval elapsed time    1.772295 s
+lazy final evaluation when requested     0.864108 s
 iterations                       3
 lazy final evaluation cached     true
 ```

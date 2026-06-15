@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const c_api = @import("c_api");
+const o2a_json = @import("o2a_json.zig");
 
 test "optimal-estimation C ABI result rows keep ctypes layout" {
     try std.testing.expectEqual(@as(usize, 80), @sizeOf(c_api.ZdsOptimalEstimationStateSpec));
@@ -16,10 +17,7 @@ test "warm optimal-estimation cache accepts the two retained Jacobian states" {
     const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
     defer c_api.zds_context_destroy(ctx);
 
-    try std.testing.expectEqual(
-        @intFromEnum(c_api.ZdsStatus.ok),
-        c_api.zds_prepare_default_o2a(ctx),
-    );
+    try prepareDefault(ctx);
 
     const state_ids = [_]u8{ 0, 1 };
     try std.testing.expectEqual(
@@ -33,10 +31,7 @@ test "warm optimal-estimation cache rejects removed surface-albedo state lane" {
     const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
     defer c_api.zds_context_destroy(ctx);
 
-    try std.testing.expectEqual(
-        @intFromEnum(c_api.ZdsStatus.ok),
-        c_api.zds_prepare_default_o2a(ctx),
-    );
+    try prepareDefault(ctx);
 
     const removed_surface_albedo_id = [_]u8{2};
     try std.testing.expectEqual(
@@ -124,6 +119,14 @@ test "single-run optimal-estimation returns result handle for full-grid measurem
     try std.testing.expectEqual(@as(u8, 0), result.state_ids.?[0]);
     try std.testing.expectApproxEqAbs(0.3, result.state.?[0], 1.0e-12);
     try std.testing.expectApproxEqAbs(0.3, result.initial_state.?[0], 0.0);
+    try std.testing.expectApproxEqRel(1.3229305526174265e-7, result.posterior_covariance.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.9999867706944716, result.averaging_kernel.?[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(0.3, result.history_state.?[0], 0.0);
+    try std.testing.expectApproxEqAbs(0.0, result.history_chi2.?[0], 0.0);
+    try std.testing.expectApproxEqAbs(0.0, result.history_chi2_reflectance.?[0], 0.0);
+    try std.testing.expectApproxEqAbs(0.0, result.history_chi2_state_vector.?[0], 0.0);
+    try std.testing.expectApproxEqAbs(0.0, result.history_state_vector_convergence.?[0], 0.0);
+    try std.testing.expectEqual(@as(u8, 1), result.history_snr_normal.?[0]);
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
@@ -164,8 +167,11 @@ test "correction optimal-estimation returns one-step result handle" {
     try std.testing.expectEqual(@as(usize, 1), result.state_count);
     try std.testing.expectEqual(@as(usize, 1), result.iteration_count);
     try std.testing.expectApproxEqAbs(0.1, result.initial_state.?[0], 0.0);
-    try std.testing.expect(std.math.isFinite(result.state.?[0]));
-    try std.testing.expect(std.math.isFinite(result.history_state.?[0]));
+    try std.testing.expectApproxEqRel(0.3358862191767914, result.state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(2.3333920905514787e-7, result.posterior_covariance.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.9999766660790946, result.averaging_kernel.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.3358862191767914, result.history_state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(242005.5066494241, result.history_chi2.?[0], 1.0e-12);
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
@@ -214,8 +220,10 @@ test "batch optimal-estimation returns run-major result handle" {
     try std.testing.expectEqual(@as(usize, 1), result.iteration_count.?[1]);
     try std.testing.expectEqual(@as(u8, 1), result.status.?[0]);
     try std.testing.expectEqual(@as(u8, 1), result.status.?[1]);
-    try std.testing.expect(std.math.isFinite(result.state.?[0]));
-    try std.testing.expect(std.math.isFinite(result.state.?[1]));
+    try std.testing.expectApproxEqRel(0.3488838954119376, result.state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.3419559672154927, result.state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(result.state.?[0], result.history_state.?[0], 0.0);
+    try std.testing.expectApproxEqRel(result.state.?[1], result.history_state.?[1], 0.0);
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
@@ -286,8 +294,12 @@ test "fastmode optimal-estimation batch returns per-stage metadata" {
     try std.testing.expectEqual(@as(usize, 1), result.full_correction_iteration_count.?[0]);
     try std.testing.expectEqual(@as(u8, 1), result.status.?[0]);
     try std.testing.expectEqual(@as(u8, 1), result.status.?[1]);
-    try std.testing.expect(std.math.isFinite(result.state.?[0]));
-    try std.testing.expect(std.math.isFinite(result.state.?[1]));
+    try std.testing.expectApproxEqRel(0.3007235613338587, result.state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.30054519061204255, result.state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.3488838954119376, result.history_state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.3007235613338587, result.history_state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.3419559672154927, result.history_state.?[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.30054519061204255, result.history_state.?[3], 1.0e-12);
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(fast_ctx)));
 }
 
@@ -333,10 +345,15 @@ test "optimal-estimation pressure state requires profile rows" {
 }
 
 fn prepareDefault(ctx: *c_api.Context) !void {
+    const allocator = std.testing.allocator;
+    const rendered = try o2a_json.nativeJson(allocator);
+    defer allocator.free(rendered);
+
     try std.testing.expectEqual(
         @intFromEnum(c_api.ZdsStatus.ok),
-        c_api.zds_prepare_default_o2a(ctx),
+        c_api.zds_prepare_o2a_json(ctx, rendered.ptr, rendered.len),
     );
+    try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
 fn aerosolOpticalDepthSpec() c_api.ZdsOptimalEstimationStateSpec {
@@ -369,6 +386,23 @@ fn pressureStateWithoutProfile() c_api.ZdsOptimalEstimationStateSpec {
 
 fn expectDefaultProductSpectrum(spectrum: c_api.ZdsSpectrum) !void {
     try std.testing.expectEqual(@as(usize, 701), spectrum.len);
+    try expectProductRow(spectrum, 0, 755.0, 17800959849043.055, 480585461471192.25, 0.23273015591193758);
+    try expectProductRow(spectrum, 350, 765.5, 9257524836591.932, 475479621402183.7, 0.12233278024112049);
+    try expectProductRow(spectrum, 700, 776.0, 17690866913508.75, 475983979180662.75, 0.23352675704246348);
+}
+
+fn expectProductRow(
+    spectrum: c_api.ZdsSpectrum,
+    index: usize,
+    wavelength_nm: f64,
+    radiance: f64,
+    irradiance: f64,
+    reflectance: f64,
+) !void {
+    try std.testing.expectApproxEqAbs(wavelength_nm, spectrum.wavelength_nm[index], 0.0);
+    try std.testing.expectApproxEqRel(radiance, spectrum.radiance[index], 1.0e-13);
+    try std.testing.expectApproxEqRel(irradiance, spectrum.irradiance[index], 1.0e-13);
+    try std.testing.expectApproxEqAbs(reflectance, spectrum.reflectance[index], 1.0e-15);
 }
 
 fn singleRequest(

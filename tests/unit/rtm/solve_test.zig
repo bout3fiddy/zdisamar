@@ -161,8 +161,7 @@ test "nadir scattering route keeps scalar Fourier ceiling" {
         },
         &work,
     );
-
-    try std.testing.expect(std.math.isFinite(result.reflectance));
+    try std.testing.expectApproxEqAbs(0.28011854766306493, result.reflectance, 1.0e-15);
     try std.testing.expect(storage.plm_basis_cache_valid[0]);
     try std.testing.expect(!storage.plm_basis_cache_valid[1]);
     try std.testing.expect(!storage.plm_basis_cache_valid[2]);
@@ -299,11 +298,9 @@ test "integrated scattering route propagates aerosol AOD and pressure tangents" 
     const aod = jacobian_states.get(result.jacobian, .aerosol_optical_depth);
     const pressure = jacobian_states.get(result.jacobian, .aerosol_layer_mid_pressure_hpa);
 
-    try std.testing.expect(std.math.isFinite(result.reflectance));
-    try std.testing.expect(std.math.isFinite(aod));
-    try std.testing.expect(std.math.isFinite(pressure));
-    try std.testing.expect(@abs(aod) > 1.0e-12);
-    try std.testing.expect(@abs(pressure) > 1.0e-12);
+    try std.testing.expectApproxEqAbs(0.1977623662914089, result.reflectance, 1.0e-15);
+    try std.testing.expectApproxEqAbs(-0.15212842251966158, aod, 1.0e-14);
+    try std.testing.expectApproxEqAbs(0.00926416296449234, pressure, 1.0e-15);
 }
 
 test "scattering route propagates AOD tangent and rejects pressure lane" {

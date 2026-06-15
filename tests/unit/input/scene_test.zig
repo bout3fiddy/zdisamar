@@ -1,8 +1,9 @@
 const std = @import("std");
 const internal = @import("internal");
+const o2a_scene = @import("../support/o2a_scene.zig");
 
-test "default O2 scene consumes every O2 A setup control" {
-    const scene = internal.input.defaults.referenceScene();
+test "O2 A scene fixture consumes every setup control" {
+    const scene = o2a_scene.reference();
     try internal.input.validate.sceneControls(scene);
 
     try std.testing.expectEqual(@as(usize, 701), scene.spectral_grid.sample_count);
@@ -14,27 +15,27 @@ test "default O2 scene consumes every O2 A setup control" {
 }
 
 test "invalid controls are rejected instead of carried inertly" {
-    var scene = internal.input.defaults.referenceScene();
+    var scene = o2a_scene.reference();
     scene.observation.high_resolution_step_nm = 0.0;
     try std.testing.expectError(error.InvalidControl, internal.input.validate.sceneControls(scene));
 
-    scene = internal.input.defaults.referenceScene();
+    scene = o2a_scene.reference();
     scene.cia.enabled = false;
     try std.testing.expectError(error.InvalidControl, internal.input.validate.sceneControls(scene));
 
-    scene = internal.input.defaults.referenceScene();
+    scene = o2a_scene.reference();
     scene.surface_albedo = std.math.nan(f64);
     try std.testing.expectError(error.InvalidControl, internal.input.validate.sceneControls(scene));
 
-    scene = internal.input.defaults.referenceScene();
+    scene = o2a_scene.reference();
     scene.aerosol.asymmetry_factor = 2.0;
     try std.testing.expectError(error.InvalidControl, internal.input.validate.sceneControls(scene));
 
-    scene = internal.input.defaults.referenceScene();
+    scene = o2a_scene.reference();
     scene.aerosol.interval_index_1based = 1;
     try std.testing.expectError(error.InvalidRequest, internal.input.validate.sceneControls(scene));
 
-    scene = internal.input.defaults.referenceScene();
+    scene = o2a_scene.reference();
     var intervals = [_]internal.input.scene_input.VerticalInterval{
         scene.atmosphere.intervals[0],
         scene.atmosphere.intervals[1],
@@ -44,12 +45,12 @@ test "invalid controls are rejected instead of carried inertly" {
     scene.atmosphere.intervals = intervals[0..];
     try std.testing.expectError(error.InvalidControl, internal.input.validate.sceneControls(scene));
 
-    scene = internal.input.defaults.referenceScene();
+    scene = o2a_scene.reference();
     const invalid_isotopes = [_]u8{ 1, 0 };
     scene.line_gas.isotopes_sim = invalid_isotopes[0..];
     try std.testing.expectError(error.InvalidControl, internal.input.validate.sceneControls(scene));
 
-    scene = internal.input.defaults.referenceScene();
+    scene = o2a_scene.reference();
     scene.rtm.fourier_term_limit = 0;
     try std.testing.expectError(error.InvalidControl, internal.input.validate.sceneControls(scene));
 
@@ -62,7 +63,7 @@ test "invalid controls are rejected instead of carried inertly" {
 test "Python native O2 scene JSON round-trips into typed controls" {
     const allocator = std.testing.allocator;
 
-    const rendered = try internal.input.json.renderDefaultSceneJson(allocator);
+    const rendered = try o2a_scene.nativeJson(allocator);
     defer allocator.free(rendered);
 
     var parsed = try internal.input.json.parseSceneJson(allocator, rendered);
@@ -84,7 +85,7 @@ test "Python native O2 scene JSON round-trips into typed controls" {
 test "Python NaN altitude placeholders are normalized before typed parsing" {
     const allocator = std.testing.allocator;
 
-    const rendered = try internal.input.json.renderDefaultSceneJson(allocator);
+    const rendered = try o2a_scene.nativeJson(allocator);
     defer allocator.free(rendered);
     const with_nan = try std.mem.replaceOwned(
         u8,
@@ -105,7 +106,7 @@ test "Python NaN altitude placeholders are normalized before typed parsing" {
 test "Python native JSON rejects unknown controls while accepting null altitude placeholders" {
     const allocator = std.testing.allocator;
 
-    const rendered = try internal.input.json.renderDefaultSceneJson(allocator);
+    const rendered = try o2a_scene.nativeJson(allocator);
     defer allocator.free(rendered);
 
     const unknown_threshold = try std.mem.replaceOwned(
@@ -151,10 +152,89 @@ test "Python native JSON rejects unknown controls while accepting null altitude 
     );
 }
 
+test "Python native JSON rejects unsupported route-control mutations" {
+    const allocator = std.testing.allocator;
+
+    const rendered = try o2a_scene.nativeJson(allocator);
+    defer allocator.free(rendered);
+
+    const cases = [_]struct {
+        needle: []const u8,
+        replacement: []const u8,
+        expected_error: anyerror,
+    }{
+        .{
+            .needle = "\"derivative_mode\":\"none\"",
+            .replacement = "\"derivative_mode\":\"semi_analytical\"",
+            .expected_error = error.UnsupportedJsonInput,
+        },
+        .{
+            .needle = "\"sampling\":\"native\"",
+            .replacement = "\"sampling\":\"convolved\"",
+            .expected_error = error.UnsupportedJsonInput,
+        },
+        .{
+            .needle = "\"n_streams\":20",
+            .replacement = "\"n_streams\":8",
+            .expected_error = error.UnsupportedJsonInput,
+        },
+        .{
+            .needle = "\"high_resolution_step_nm\":0.01",
+            .replacement = "\"high_resolution_step_nm\":0.0",
+            .expected_error = error.InvalidControl,
+        },
+    };
+
+    for (cases) |case| {
+        const mutated = try std.mem.replaceOwned(
+            u8,
+            allocator,
+            rendered,
+            case.needle,
+            case.replacement,
+        );
+        defer allocator.free(mutated);
+
+        try std.testing.expectError(
+            case.expected_error,
+            internal.input.json.parseSceneJson(allocator, mutated),
+        );
+    }
+}
+
+test "Python native JSON byte fuzz corpus rejects malformed near-valid payloads" {
+    const allocator = std.testing.allocator;
+
+    const rendered = try o2a_scene.nativeJson(allocator);
+    defer allocator.free(rendered);
+
+    const corpus = [_][]const u8{
+        "{",
+        "[{}]",
+        "{\"metadata\":{\"id\":\"x\"},\"plan\":{\"derivative_mode\":NaN}}",
+        "{\"metadata\":{\"id\":\"x\"},\"rtm_controls\":{\"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\":true}}",
+        "{\"metadata\":{\"id\":\"x\\uD800\"},\"plan\":{\"derivative_mode\":\"none\"}}",
+        "\xff\xfe{\"scene_id\":\"x\"}",
+    };
+    for (corpus) |payload| {
+        try expectParseRejected(allocator, payload);
+    }
+
+    const structural_bytes = [_]u8{ '{', '}', '[', ']', ':', ',', '"' };
+    for (structural_bytes) |needle| {
+        const index = std.mem.indexOfScalar(u8, rendered, needle) orelse continue;
+        const mutated = try allocator.dupe(u8, rendered);
+        defer allocator.free(mutated);
+        mutated[index] = 0xff;
+
+        try expectParseRejected(allocator, mutated);
+    }
+}
+
 test "Python native fast RTM thresholds are consumed by solve config" {
     const allocator = std.testing.allocator;
 
-    const rendered = try internal.input.json.renderDefaultSceneJson(allocator);
+    const rendered = try o2a_scene.nativeJson(allocator);
     defer allocator.free(rendered);
     const fast_threshold = try std.mem.replaceOwned(
         u8,
@@ -179,7 +259,7 @@ test "Python native fast RTM thresholds are consumed by solve config" {
 }
 
 test "RTM Fourier term limit is consumed by solve config" {
-    var scene = internal.input.defaults.referenceScene();
+    var scene = o2a_scene.reference();
     scene.rtm.fourier_term_limit = 3;
 
     try internal.input.validate.sceneControls(scene);
@@ -198,7 +278,7 @@ test "RTM Fourier term limit is consumed by solve config" {
 test "Python native measured wavelengths are consumed as sparse product axes" {
     const allocator = std.testing.allocator;
 
-    const rendered = try internal.input.json.renderDefaultSceneJson(allocator);
+    const rendered = try o2a_scene.nativeJson(allocator);
     defer allocator.free(rendered);
 
     const sparse_count = try std.mem.replaceOwned(
@@ -247,7 +327,7 @@ test "Python native measured wavelengths are consumed as sparse product axes" {
 test "Python native aerosol profile JSON validates explicit multi-layer rows" {
     const allocator = std.testing.allocator;
 
-    const rendered = try internal.input.json.renderDefaultSceneJson(allocator);
+    const rendered = try o2a_scene.nativeJson(allocator);
     defer allocator.free(rendered);
 
     const valid_profile = try jsonWithAerosolProfile(allocator, rendered,
@@ -273,7 +353,7 @@ test "Python native aerosol profile JSON validates explicit multi-layer rows" {
 test "Python native aerosol profile JSON rejects unsupported pressure and merge shapes" {
     const allocator = std.testing.allocator;
 
-    const rendered = try internal.input.json.renderDefaultSceneJson(allocator);
+    const rendered = try o2a_scene.nativeJson(allocator);
     defer allocator.free(rendered);
 
     const off_grid_profile = try jsonWithAerosolProfile(allocator, rendered,
@@ -319,4 +399,15 @@ fn jsonWithAerosolProfile(
     defer allocator.free(replacement);
 
     return std.mem.replaceOwned(u8, allocator, rendered, "\"profile\":[]", replacement);
+}
+
+fn expectParseRejected(allocator: std.mem.Allocator, payload: []const u8) !void {
+    // expectParseRejected ------------------------------------------------------------------------------------|
+    // Bounded byte-corpus parser guard: malformed native JSON must reject without leaking owned parse state.  |
+    // --------------------------------------------------------------------------------------------------------|
+    if (internal.input.json.parseSceneJson(allocator, payload)) |parsed| {
+        var owned = parsed;
+        owned.deinit();
+        return error.MalformedJsonAccepted;
+    } else |_| {}
 }
