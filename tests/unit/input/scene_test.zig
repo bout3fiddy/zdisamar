@@ -152,6 +152,85 @@ test "Python native JSON rejects unknown controls while accepting null altitude 
     );
 }
 
+test "Python native JSON rejects unsupported route-control mutations" {
+    const allocator = std.testing.allocator;
+
+    const rendered = try o2a_scene.nativeJson(allocator);
+    defer allocator.free(rendered);
+
+    const cases = [_]struct {
+        needle: []const u8,
+        replacement: []const u8,
+        expected_error: anyerror,
+    }{
+        .{
+            .needle = "\"derivative_mode\":\"none\"",
+            .replacement = "\"derivative_mode\":\"semi_analytical\"",
+            .expected_error = error.UnsupportedJsonInput,
+        },
+        .{
+            .needle = "\"sampling\":\"native\"",
+            .replacement = "\"sampling\":\"convolved\"",
+            .expected_error = error.UnsupportedJsonInput,
+        },
+        .{
+            .needle = "\"n_streams\":20",
+            .replacement = "\"n_streams\":8",
+            .expected_error = error.UnsupportedJsonInput,
+        },
+        .{
+            .needle = "\"high_resolution_step_nm\":0.01",
+            .replacement = "\"high_resolution_step_nm\":0.0",
+            .expected_error = error.InvalidControl,
+        },
+    };
+
+    for (cases) |case| {
+        const mutated = try std.mem.replaceOwned(
+            u8,
+            allocator,
+            rendered,
+            case.needle,
+            case.replacement,
+        );
+        defer allocator.free(mutated);
+
+        try std.testing.expectError(
+            case.expected_error,
+            internal.input.json.parseSceneJson(allocator, mutated),
+        );
+    }
+}
+
+test "Python native JSON byte fuzz corpus rejects malformed near-valid payloads" {
+    const allocator = std.testing.allocator;
+
+    const rendered = try o2a_scene.nativeJson(allocator);
+    defer allocator.free(rendered);
+
+    const corpus = [_][]const u8{
+        "{",
+        "[{}]",
+        "{\"metadata\":{\"id\":\"x\"},\"plan\":{\"derivative_mode\":NaN}}",
+        "{\"metadata\":{\"id\":\"x\"},\"rtm_controls\":{\"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\":true}}",
+        "{\"metadata\":{\"id\":\"x\\uD800\"},\"plan\":{\"derivative_mode\":\"none\"}}",
+        "\xff\xfe{\"scene_id\":\"x\"}",
+    };
+    for (corpus) |payload| {
+        try expectParseRejected(allocator, payload);
+    }
+
+    const structural_bytes = [_]u8{ '{', '}', '[', ']', ':', ',', '"' };
+    for (structural_bytes) |needle| {
+        const index = std.mem.indexOfScalar(u8, rendered, needle) orelse continue;
+        const mutated = try allocator.dupe(u8, rendered);
+        defer allocator.free(mutated);
+        mutated[index] = 0xff;
+
+        try expectParseRejected(allocator, mutated);
+    }
+}
+
 test "Python native fast RTM thresholds are consumed by solve config" {
     const allocator = std.testing.allocator;
 
@@ -320,4 +399,15 @@ fn jsonWithAerosolProfile(
     defer allocator.free(replacement);
 
     return std.mem.replaceOwned(u8, allocator, rendered, "\"profile\":[]", replacement);
+}
+
+fn expectParseRejected(allocator: std.mem.Allocator, payload: []const u8) !void {
+    // expectParseRejected ------------------------------------------------------------------------------------|
+    // Bounded byte-corpus parser guard: malformed native JSON must reject without leaking owned parse state.  |
+    // --------------------------------------------------------------------------------------------------------|
+    if (internal.input.json.parseSceneJson(allocator, payload)) |parsed| {
+        var owned = parsed;
+        owned.deinit();
+        return error.MalformedJsonAccepted;
+    } else |_| {}
 }

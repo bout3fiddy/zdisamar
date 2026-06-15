@@ -6,6 +6,10 @@
 - Keep scientific assets under `data/reference_data/`; loaders and parsers live under `src/input/reference_data/`.
 - No parsed control may be silently ignored. Consume it, reject it with a typed error, or document it as inert with focused coverage.
 - Do not silently drop enabled physics on unmatched identifiers, interval placements, or unsupported combinations.
+- Do not add smoke-style tests as normal correctness coverage. New tests must be
+  classified as unit, integration, golden/regression, property, fuzz,
+  packaging, or benchmark/performance, and they must assert the invariant they
+  claim to protect.
 
 ## Router
 

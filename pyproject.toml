@@ -42,9 +42,11 @@ dev = [
     "altair>=6",
     "basedpyright>=1.22",
     "hatchling>=1.29",
+    "hypothesis>=6.148",
     "numpy>=2.0,<3",
     "pandas>=2.3",
     "polars>=1.36",
+    "pytest>=9",
     "ruff>=0.15",
     "ty>=0.0.1a1",
 ]
@@ -92,4 +94,17 @@ select = [
     "UP",  # pyupgrade
     "B",   # bugbear
     "SIM", # flake8-simplify
+]
+
+[tool.pytest.ini_options]
+pythonpath = [
+    ".",
+    "python",
+]
+markers = [
+    "integration: crosses source-level subsystem boundaries or touches real assets",
+    "native: crosses the Python native binding boundary",
+    "property: property-based invariant tests",
+    "slow: retained source-level tests that are too heavy for small focused runs",
+    "wheel: packaging/install probes that require an installed wheel",
 ]

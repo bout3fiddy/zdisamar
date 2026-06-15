@@ -50,10 +50,13 @@ for entry in "${images[@]}"; do
         sh -lc '
             set -e
             "${ZDISAMAR_DOCKER_PYTHON}" -m venv /tmp/zdisamar-smoke
-            /tmp/zdisamar-smoke/bin/python -m pip install --no-cache-dir "/dist/${ZDISAMAR_WHEEL_NAME}"
+            /tmp/zdisamar-smoke/bin/python -m pip install --no-cache-dir \
+                pytest \
+                "/dist/${ZDISAMAR_WHEEL_NAME}"
             cd /tmp
-            /tmp/zdisamar-smoke/bin/python \
-                /workspace/tests/python/wheel_install_smoke_test.py \
-                --forbid-path /workspace
+            /tmp/zdisamar-smoke/bin/python -m pytest \
+                --run-wheel \
+                --forbid-path /workspace \
+                /workspace/tests/python/test_wheel_install_smoke.py \
         '
 done

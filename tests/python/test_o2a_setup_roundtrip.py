@@ -7,8 +7,10 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+pytestmark = [pytest.mark.integration, pytest.mark.native, pytest.mark.slow]
 
 
 def parse_args() -> argparse.Namespace:
@@ -293,3 +295,13 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+def test_o2a_setup_roundtrip_contracts() -> None:
+    summary = run_roundtrip()
+    checks = summary["checks"]
+    excluded = {"tolerance", "typed_sample_count", "reference_sample_count"}
+
+    assert all(value for key, value in checks.items() if key not in excluded)
+    assert summary["answer"]["matches"] is True
+    assert summary["answer"]["sample_count"] == 701

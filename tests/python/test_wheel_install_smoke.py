@@ -5,7 +5,10 @@ import tempfile
 import time
 from pathlib import Path
 
+import pytest
+
 REFERENCE_SPECTRUM_BUDGET_S = 8.0
+pytestmark = pytest.mark.wheel
 
 
 def parse_args() -> argparse.Namespace:
@@ -20,10 +23,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-
-    args = parse_args()
-
+def run_wheel_install_probe(forbid_path: Path | None) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         old_cwd = Path.cwd()
 
@@ -37,8 +37,8 @@ def main() -> int:
 
             package_file = Path(zdisamar.__file__).resolve()
 
-            if args.forbid_path is not None:
-                forbidden = args.forbid_path.resolve()
+            if forbid_path is not None:
+                forbidden = forbid_path.resolve()
 
                 if package_file.is_relative_to(forbidden):
                     raise AssertionError(f"zdisamar imported from source tree: {package_file}")
@@ -95,8 +95,16 @@ def main() -> int:
         finally:
             os.chdir(old_cwd)
 
-    print("wheel_install_smoke=ok")
 
+def test_wheel_install_probe(pytestconfig: pytest.Config) -> None:
+    forbid_path = pytestconfig.getoption("--forbid-path")
+    run_wheel_install_probe(forbid_path)
+
+
+def main() -> int:
+    args = parse_args()
+    run_wheel_install_probe(args.forbid_path)
+    print("wheel_install_smoke=ok")
     return 0
 
 

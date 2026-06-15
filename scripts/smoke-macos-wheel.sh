@@ -24,9 +24,11 @@ for python_version in "${python_versions[@]}"; do
     python_path="${venv_dir}/venv-${python_version}/bin/python"
 
     uv venv --python "${python_version}" "${venv_dir}/venv-${python_version}"
-    uv pip install --python "${python_path}" "${wheel_path}"
+    uv pip install --python "${python_path}" pytest "${wheel_path}"
 
     cd /tmp
-    "${python_path}" "${repo_root}/tests/python/wheel_install_smoke_test.py" \
-        --forbid-path "${repo_root}"
+    "${python_path}" -m pytest \
+        --run-wheel \
+        --forbid-path "${repo_root}" \
+        "${repo_root}/tests/python/test_wheel_install_smoke.py"
 done

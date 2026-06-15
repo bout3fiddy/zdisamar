@@ -70,8 +70,7 @@ def build_result() -> Result:
     )
 
 
-def main() -> int:
-
+def test_optimal_estimation_plot_specs_use_expected_layout() -> None:
     result = build_result()
 
     convergence = result.plot.convergence().to_dict()
@@ -151,6 +150,10 @@ def main() -> int:
     assert "Reflectance jacobian" not in jacobian_spec
     assert "dR/d\\u03c4" in jacobian_spec
     assert "dR/dp (hPa\\u207b\\u00b9)" in jacobian_spec
+
+
+def test_svg_renderer_filters_nonfinite_values_and_saves_empty_figures() -> None:
+    result = build_result()
 
     tiny_panel = SvgPanel(
         title="Tiny",
@@ -244,6 +247,8 @@ def main() -> int:
         empty_plot.save(empty_path)
         assert "<svg" in empty_path.read_text()
 
+
+def test_interval_profile_rows_drop_missing_vertical_axis() -> None:
     empty_profile = interval_profile_rows(
         [
             {
@@ -258,11 +263,3 @@ def main() -> int:
         vertical_axis="altitude_km",
     )
     assert empty_profile == []
-
-    print("optimal_estimation_plot=ok")
-
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

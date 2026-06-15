@@ -507,6 +507,7 @@ test "runForwardSpectrum matches canonical full spectrum" {
         true,
         null,
         worker_count,
+        true,
         .{
             .dense_radiance = .{
                 .radiance = dense_radiance,

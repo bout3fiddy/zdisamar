@@ -96,9 +96,32 @@ test "RadianceMemory owns optional dense Jacobian result rows" {
     try std.testing.expect(!memory.resultsValid(stamp, true));
 }
 
+test "RadianceMemory dense result allocation cleans up across allocation failures" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        buildTinyDenseRadianceMemory,
+        .{},
+    );
+}
+
 test "RadianceMemory layout matches retained owner contract" {
     try std.testing.expectEqual(@as(usize, 136), @sizeOf(radiance_memory.RadianceMemory));
     try std.testing.expectEqual(@as(usize, 40), @sizeOf(radiance_memory.RadianceMemoryActive));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(radiance_results.RadianceResult));
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(radiance_results.DenseRadianceResults));
+}
+
+fn buildTinyDenseRadianceMemory(allocator: std.mem.Allocator) !void {
+    var memory = radiance_memory.RadianceMemory{};
+    defer memory.deinit(allocator);
+
+    memory.active.wavelength_count = 3;
+    try memory.ensureResultCapacity(allocator, 3, true);
+    const rows = memory.resultRows();
+    try rows.set(0, .{ .radiance = 1.0, .jacobian = .{ 1.0, 2.0 } });
+    try rows.set(1, .{ .radiance = 2.0, .jacobian = .{ 3.0, 4.0 } });
+    try rows.set(2, .{ .radiance = 3.0, .jacobian = .{ 5.0, 6.0 } });
+
+    try std.testing.expectEqual(@as(usize, 3), rows.radiance.len);
+    try std.testing.expectApproxEqAbs(6.0, rows.jacobian[2][1], 0.0);
 }
