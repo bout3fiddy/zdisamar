@@ -49,14 +49,18 @@ for entry in "${images[@]}"; do
         "${image}" \
         sh -lc '
             set -e
+            test_dir="$(mktemp -d /tmp/zdisamar-wheel-test.XXXXXX)"
+            cp /workspace/tests/python/conftest.py "${test_dir}/conftest.py"
+            cp /workspace/tests/python/test_wheel_install_smoke.py "${test_dir}/test_wheel_install_smoke.py"
             "${ZDISAMAR_DOCKER_PYTHON}" -m venv /tmp/zdisamar-smoke
             /tmp/zdisamar-smoke/bin/python -m pip install --no-cache-dir \
                 pytest \
                 "/dist/${ZDISAMAR_WHEEL_NAME}"
             cd /tmp
             /tmp/zdisamar-smoke/bin/python -m pytest \
+                --rootdir "${test_dir}" \
                 --run-wheel \
                 --forbid-path /workspace \
-                /workspace/tests/python/test_wheel_install_smoke.py \
+                "${test_dir}/test_wheel_install_smoke.py" \
         '
 done

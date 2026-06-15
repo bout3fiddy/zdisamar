@@ -3,6 +3,13 @@ from pathlib import Path
 import pytest
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers",
+        "wheel: packaging/install probes that require an installed wheel",
+    )
+
+
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
         "--run-wheel",

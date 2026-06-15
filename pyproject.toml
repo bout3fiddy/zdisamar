@@ -46,6 +46,7 @@ dev = [
     "numpy>=2.0,<3",
     "pandas>=2.3",
     "polars>=1.36",
+    "prek>=0.4.5",
     "pytest>=9",
     "ruff>=0.15",
     "ty>=0.0.1a1",
