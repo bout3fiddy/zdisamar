@@ -117,7 +117,7 @@ class AerosolProfileLayer:
 
 @dataclass
 class Aerosol:
-    """Aerosol optical properties for the O2 A scene."""
+    """Aerosol optical properties for the scene."""
 
     optical_depth_550_nm: float
     single_scatter_albedo: float

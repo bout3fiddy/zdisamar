@@ -10,12 +10,12 @@ pub const supported_stream_count: usize = 20;
 pub const route_fourier_term_limit: usize = 20;
 
 // json.zig ---------------------------------------------------------------------------------------------------|
-// Python-native O2 A JSON bridge.                                                                             |
+// Python-native JSON bridge.                                                                             |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   Python emits Scene.to_native_json_bytes() with resolved asset paths and a few Python bookkeeping          |
 //   fields. This parser turns that API shape into Scene, validates controls that are intentionally inert      |
-//   for this O2 A forward-only route, and rejects unsupported route changes before compute sees the scene.    |
+//   for this forward-only route, and rejects unsupported route changes before compute sees the scene.    |
 //                                                                                                             |
 // JSON input normalization                                                                                    |
 //   Python's json encoder emits bare NaN for optional altitude placeholders. Zig's JSON scanner is strict,    |
@@ -51,7 +51,7 @@ pub const ParsedSceneJson = struct {
 
 pub fn parseSceneJson(allocator: Allocator, raw_json: []const u8) !ParsedSceneJson {
     // parseSceneJson -----------------------------------------------------------------------------------------|
-    // Parse Python's native O2 A JSON shape and return a typed scene borrowing parser-owned rows.             |
+    // Parse Python's native JSON shape and return a typed scene borrowing parser-owned rows.             |
     // --------------------------------------------------------------------------------------------------------|
     const normalized = try normalizePythonJson(allocator, raw_json);
     defer normalized.deinit(allocator);
@@ -184,7 +184,7 @@ fn validateAssets(inputs: InputsJson) !void {
 
 fn validateObservation(observation: ObservationJson, solar_reference_asset_id: []const u8) !void {
     // validateObservation ------------------------------------------------------------------------------------|
-    // Accept the current O2 A instrument route and pass explicit sparse product axes to Scene validation.     |
+    // Accept the current instrument route and pass explicit sparse product axes to Scene validation.     |
     // --------------------------------------------------------------------------------------------------------|
     if (!std.mem.eql(u8, observation.regime, "nadir")) return errors.Error.UnsupportedJsonInput;
     if (!std.mem.eql(u8, observation.sampling, "native")) return errors.Error.UnsupportedJsonInput;
@@ -200,7 +200,7 @@ fn validateRtm(
     performance_thresholds: transport_controls.PerformanceThresholds,
 ) !void {
     // validateRtm --------------------------------------------------------------------------------------------|
-    // Keep O2 A on the supported integrated-source route while consuming scene-owned LABOS threshold controls.|
+    // Keep on the supported integrated-source route while consuming scene-owned LABOS threshold controls.|
     // --------------------------------------------------------------------------------------------------------|
     if (!std.mem.eql(u8, rtm.scattering, "multiple")) return errors.Error.UnsupportedJsonInput;
     if (rtm.n_streams != supported_stream_count) return errors.Error.UnsupportedJsonInput;
@@ -217,7 +217,7 @@ fn validateRtm(
 
 fn validateAerosol(aerosol: AerosolJson) !void {
     // validateAerosol ----------------------------------------------------------------------------------------|
-    // Accept scalar placement and explicit multi-layer profile payloads on the proven O2 A route.             |
+    // Accept scalar placement and explicit multi-layer profile payloads on the proven route.             |
     // --------------------------------------------------------------------------------------------------------|
     if (!std.mem.eql(u8, aerosol.placement.semantics, "explicit_interval_bounds")) {
         return errors.Error.UnsupportedJsonInput;
@@ -290,7 +290,7 @@ fn aerosolProfileLayerFromJson(row: AerosolProfileLayerJson) scene_input.Aerosol
 
 fn validateInertAltitudePlaceholder(value: ?f64) !void {
     // validateInertAltitudePlaceholder -----------------------------------------------------------------------|
-    // Native O2 A uses pressure bounds; finite altitude bounds would be silently inert on this route.         |
+    // Native uses pressure bounds; finite altitude bounds would be silently inert on this route.         |
     // --------------------------------------------------------------------------------------------------------|
     if (value) |resolved| {
         if (!std.math.isNan(resolved)) return errors.Error.UnsupportedJsonInput;
@@ -299,7 +299,7 @@ fn validateInertAltitudePlaceholder(value: ?f64) !void {
 
 fn validateInertPressureVariance(value: f64) !void {
     // validateInertPressureVariance --------------------------------------------------------------------------|
-    // Native O2 A consumes deterministic pressure bounds; non-zero pressure variances would be inert here.    |
+    // Native consumes deterministic pressure bounds; non-zero pressure variances would be inert here.    |
     // --------------------------------------------------------------------------------------------------------|
     if (!std.math.isFinite(value) or value != 0.0) return errors.Error.UnsupportedJsonInput;
 }

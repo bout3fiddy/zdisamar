@@ -24,7 +24,7 @@ Several aspects of the literature matter directly for this repository.
 
 The 2022 GMD model description presents DISAMAR as both a radiative-transfer
 model and a retrieval system. That context matters even while this repository's
-retained public runtime is centered on O2 A RTM execution.
+retained public runtime is centered on O2A RTM execution.
 
 ### Operational oxygen A-band work
 
@@ -83,11 +83,11 @@ The RTM runtime is separate from DISMAS retrieval execution.
 
 ## Why This Matters For `zdisamar`
 
-The current implementation is organized around O2 A wavelength-band cases, RTM
+The current implementation is organized around wavelength-band scenes, RTM
 execution, and inverse methods.
 
 - `src/input/` carries the typed scene and observation description.
-- `python/zdisamar/wavelength_bands/` carries wavelength-band case surfaces.
+- `python/zdisamar/wavelength_bands/` carries wavelength-band scene surfaces.
 - `python/zdisamar/rtm/` carries packaged RTM execution helpers.
 - `src/input/reference_data/` carries the scientific input surfaces needed to prepare execution without letting file I/O leak into numerical routines.
 - the Zig numerical tree carries optical-property construction, radiative
@@ -115,5 +115,5 @@ For the present codebase, that means the implementation has to satisfy three con
 
 After this overview:
 
-1. Read [O2 A RTM](./o2a-rtm.md) for the retained public runtime path.
+1. Read [O2A RTM](./o2a-rtm.md) for the retained public runtime path.
 2. Read [Reference Data And Bundles](./reference-data-and-bundles.md) for the data-loading boundary.

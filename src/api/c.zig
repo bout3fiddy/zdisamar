@@ -13,9 +13,9 @@ pub const links_libc = builtin.link_libc;
 //   python/zdisamar/bindings/signatures.py binds the exported `zds_*` symbols with ctypes.                    |
 //                                                                                                             |
 // boundary                                                                                                    |
-//   Context owns prepared setup tables, reusable O2 session memory, returned spectrum handles, and error      |
+//   Context owns prepared setup tables, reusable session memory, returned spectrum handles, and error      |
 //   text. Compute receives only the public root inputs: Prepared, SessionMemory, and SolveConfig.             |
-//   JSON parsing, diagnostic tables, retrieval, and fastmode return typed failures until their O2 A/O2 A      |
+//   JSON parsing, diagnostic tables, retrieval, and fastmode return typed failures until they land      |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const ZdsStatus = enum(c_int) {
@@ -547,7 +547,7 @@ pub export fn zds_context_destroy(ctx: ?*Context) void {
 
 pub export fn zds_prepare_o2a_json(ctx: ?*Context, json_ptr: ?[*]const u8, json_len: usize) c_int {
     // zds_prepare_o2a_json -----------------------------------------------------------------------------------|
-    // Parse Python's native O2 A JSON shape and prepare the resulting typed case.                             |
+    // Parse Python's native JSON shape and prepare the resulting typed scene.                             |
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
 
@@ -583,7 +583,7 @@ pub export fn zds_prepare_o2a_json(ctx: ?*Context, json_ptr: ?[*]const u8, json_
 
 export fn zds_warm_o2a_session(ctx: ?*Context) c_int {
     // zds_warm_o2a_session -----------------------------------------------------------------------------------|
-    // Build retained session rows for the prepared O2 A case.                                                 |
+    // Build retained session rows for the prepared scene.                                                 |
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
 
@@ -641,14 +641,14 @@ pub export fn zds_warm_o2a_optimal_estimation(
 
 pub export fn zds_run_spectrum(ctx: ?*Context, out: ?*ZdsSpectrum) c_int {
     // zds_run_spectrum ---------------------------------------------------------------------------------------|
-    // Run the prepared case without returning Jacobian columns.                                               |
+    // Run the prepared scene without returning Jacobian columns.                                               |
     // --------------------------------------------------------------------------------------------------------|
     return runSpectrum(ctx, out, false);
 }
 
 export fn zds_run_spectrum_jacobian(ctx: ?*Context, out: ?*ZdsSpectrum) c_int {
     // zds_run_spectrum_jacobian ------------------------------------------------------------------------------|
-    // Run the prepared case with all fixed Jacobian columns in public order.                                  |
+    // Run the prepared scene with all fixed Jacobian columns in public order.                                  |
     // --------------------------------------------------------------------------------------------------------|
     return runSpectrum(ctx, out, true);
 }
@@ -917,7 +917,7 @@ pub export fn zds_run_o2a_optimal_estimation_correction(
     out: ?*ZdsOptimalEstimationResult,
 ) c_int {
     // zds_run_o2a_optimal_estimation_correction --------------------------------------------------------------|
-    // Run one prepared-case full-physics correction step and return a Context-owned result handle.            |
+    // Run one prepared-scene full-physics correction step and return a Context-owned result handle.            |
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
 

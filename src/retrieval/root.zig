@@ -23,11 +23,11 @@ comptime {
 }
 
 // root.zig ---------------------------------------------------------------------------------------------------|
-// Retrieval value layer, fixed state-space scratch, and retained result owners for O2 A O2 A release.         |
+// Retrieval value layer, fixed state-space scratch, and retained result owners for release.         |
 //                                                                                                             |
 // route map                                                                                                   |
 //   api/c.zig converts Python/C request rows into RetrievalState, MeasuredReflectanceRows, and result owners. |
-//   Future O2 A solver slices mutate these retrieval values and call root.zig forward functions with updated  |
+//   Future solver slices mutate these retrieval values and call root.zig forward functions with updated  |
 //   aerosol/scalar state, while session memory stays warm.                                                    |
 //                                                                                                             |
 // primary paths                                                                                               |
@@ -85,7 +85,7 @@ pub const PressureState = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // RetrievalState ---------------------------------------------------------------------------------------------|
-// Complete fixed two-lane O2 A OE state, in public Jacobian order.                                            |
+// Complete fixed two-lane OE state, in public Jacobian order.                                            |
 // ------------------------------------------------------------------------------------------------------------|
 pub const RetrievalState = struct {
     aerosol_optical_depth: StateScalar,
@@ -1008,7 +1008,7 @@ fn transformedChange(next: Vector, previous: Vector) f64 {
 
 pub fn validateRetrievalState(retrieval_state: RetrievalState) Error!void {
     // validateRetrievalState ---------------------------------------------------------------------------------|
-    // Validate the fixed two-lane OE state before the solver mutates the O2 A case.                           |
+    // Validate the fixed two-lane OE state before the solver mutates the scene.                           |
     // --------------------------------------------------------------------------------------------------------|
     try validateStateScalar(retrieval_state.aerosol_optical_depth);
     try validateStateScalar(retrieval_state.aerosol_layer_mid_pressure.scalar);

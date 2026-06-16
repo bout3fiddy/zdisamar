@@ -1,6 +1,6 @@
-# Slow OE Case
+# Slow OE Scene
 
-The slow retained zdisamar OE case comes from paired sweep case 71.
+The slow retained zdisamar OE scene comes from paired sweep case 71.
 
 Scene:
 
@@ -38,4 +38,4 @@ iterations                       3
 lazy final evaluation cached     true
 ```
 
-Use this case for focused latency work before scaling up broad paired sweeps.
+Use this scene for focused latency work before scaling up broad paired sweeps.

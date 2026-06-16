@@ -2,7 +2,7 @@ const std = @import("std");
 const transport_controls = @import("../rtm/controls.zig");
 
 // scene.zig ----------------------------------------------------------------------------------------------    |
-// Typed O2 A product-scene controls consumed by setup tables and forward runs.                                |
+// Typed product-scene controls consumed by setup tables and forward runs.                                |
 //                                                                                                             |
 // runtime boundary                                                                                            |
 //   These rows are setup inputs only. Asset paths and text formats are resolved by src/assets; setup tables   |
@@ -271,7 +271,7 @@ pub const RtmControls = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // Scene ------------------------------------------------------------------------------------------------------|
-// Borrowed O2 A setup row.                                                                                    |
+// Borrowed setup row.                                                                                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 704 B (0.688 KiB), align: 8 B                                                                         |

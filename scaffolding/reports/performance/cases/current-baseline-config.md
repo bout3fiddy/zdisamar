@@ -1,6 +1,6 @@
 # Current Baseline Config
 
-The validation baseline is the DISAMAR-style O2 A aerosol case used by the
+The validation baseline is the DISAMAR-style aerosol scene used by the
 current scripts and tracked outputs.
 
 Rules:

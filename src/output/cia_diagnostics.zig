@@ -5,7 +5,7 @@ const atmospheric_budget = @import("atmospheric_budget.zig");
 const Allocator = std.mem.Allocator;
 
 // cia_diagnostics.zig ----------------------------------------------------------------------------------------|
-// O2-O2 collision-induced absorption diagnostic rows for the explicit O2 A route.                             |
+// O2-O2 collision-induced absorption diagnostic rows for the explicit route.                             |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   The builder projects the already-public atmospheric-budget rows into the fixed Python C ABI row order.    |

@@ -1,4 +1,4 @@
-"""Shared O2 A optimal-estimation reference sweep cases."""
+"""Shared optimal-estimation reference sweep scenes."""
 
 import json
 from typing import Any
@@ -44,7 +44,7 @@ def truth_scenes(*, count: int | None = None) -> list[dict[str, float]]:
 
     if requested > available:
         raise ValueError(
-            f"requested {requested} OE reference cases but manifest only samples {available}"
+            f"requested {requested} OE reference scenes but manifest only samples {available}"
         )
 
     return oe_setup.sampled_scenes(available, int(payload["seed"]))[:requested]

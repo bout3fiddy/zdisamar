@@ -26,7 +26,7 @@ pub const Error = controls.PrepareError || attenuation.Error || gauss_angles.Err
 };
 
 // solve.zig ------------------------------------------------------------------------------------------------- |
-// Transport-solve dispatch for explicit O2 A optical rows.                                                    |
+// Transport-solve dispatch for explicit optical rows.                                                    |
 //                                                                                                             |
 //   `directSurfaceOnly`, geometry setup, attenuation fill, RT layer build, scattering-order propagation,      |
 //   Fourier weighting, tail stop, public clamp, and aerosol tangents.                                         |
@@ -652,7 +652,7 @@ fn resolvedFourierMax(
     //                                                                                                         |
     // tradeoff: near-normal scalar Fourier route                                                              |
     //   When either direction cosine is within 1.0e-5 of normal, LABOS evaluates only m=0.                    |
-    //   The O2 A reference case exercises this route because the viewing angle is nadir.                      |
+    //   The reference scene exercises this route because the viewing angle is nadir.                      |
     // --------------------------------------------------------------------------------------------------------|
     if (layer_count == 0) return 0;
     if ((1.0 - view_mu) < near_normal_mu_delta or

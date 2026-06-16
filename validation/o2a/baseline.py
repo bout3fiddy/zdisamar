@@ -1,4 +1,4 @@
-"""Shared O2 A optimal-estimation retrieval baseline settings."""
+"""Shared optimal-estimation retrieval baseline settings."""
 
 WAVELENGTH_START_NM = 758.0
 WAVELENGTH_END_NM = 770.0
@@ -30,7 +30,7 @@ IRRADIANCE_SNR_MAX = 5000.0
 
 
 def configure_case(case) -> None:
-    """Apply the retrieval baseline to a mutable zdisamar O2 A case."""
+    """Apply the retrieval baseline to a mutable zdisamar scene."""
 
     case.spectral_grid.start_nm = WAVELENGTH_START_NM
     case.spectral_grid.end_nm = WAVELENGTH_END_NM

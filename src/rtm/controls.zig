@@ -3,7 +3,7 @@ const std = @import("std");
 const jacobian_states = @import("jacobian_states.zig");
 
 // controls.zig ---------------------------------------------------------------------------------------------- |
-// Validated RTM control rows for the O2 A LABOS transport implementation.                                     |
+// Validated RTM control rows for the LABOS transport implementation.                                     |
 //                                                                                                             |
 //   The Jacobian mask field uses the state order in `rtm/jacobian_states.zig`.                                |
 // ------------------------------------------------------------------------------------------------------------|

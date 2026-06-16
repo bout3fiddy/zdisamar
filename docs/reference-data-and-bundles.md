@@ -60,7 +60,7 @@ These structures are not bookkeeping wrappers. They are the physical data surfac
 
 ## Runtime Preparation Path
 
-The default O2 A execution path is:
+The default execution path is:
 
 1. `Input` records the spectral grid, geometry, surface, atmosphere, and instrument controls.
 2. `ReferenceData` loads the reference datasets needed for that input.
@@ -90,7 +90,7 @@ runs without turning the entire codebase into a mission-specific file reader.
 Reference data matters only if a result can state which dataset family it used.
 
 For that reason the current implementation records dataset identity, hashes,
-case settings, radiative-transfer method, and report provenance.
+scene settings, radiative-transfer method, and report provenance.
 
 The result is that a stored artifact can be tied back to both a scientific configuration and a concrete set of reference data.
 

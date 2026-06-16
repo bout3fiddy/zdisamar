@@ -1,4 +1,4 @@
-"""Shared axis and O2 A wavelength helpers."""
+"""Shared axis and wavelength helpers."""
 
 import math
 
@@ -12,7 +12,7 @@ def label(name: str) -> str:
 
 
 def marker_values(values) -> list[float]:
-    """Draw fixed O2 A reference wavelengths only inside the plotted band."""
+    """Draw fixed reference wavelengths only inside the plotted band."""
 
     finite = finite_values(values)
 

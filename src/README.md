@@ -1,4 +1,4 @@
-# `src/` — O2 A forward model and retrieval
+# `src/` — forward model and retrieval
 
 `zdisamar` computes the top-of-atmosphere reflectance spectrum across the oxygen
 A band (about 755–775 nm) and fits it for aerosol parameters, specifically the
@@ -80,7 +80,7 @@ the flow:
 - `assets/` — readers for the packaged reference data: HITRAN O2 line lists,
   O2–O2 CIA tables, solar spectra, and atmosphere profiles.
 - `api/` — the C entry points the Python package calls.
-- `validation/` — O2 A band metrics.
+- `validation/` — band metrics.
 - `instrumentation/` — tracing and telemetry hooks, off by default.
 
 ## Reused memory

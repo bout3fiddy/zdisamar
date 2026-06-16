@@ -9,7 +9,7 @@ work.
 Source links:
 
 - DISAMAR
-  - [Layer loop shape](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/LabosModule.f90#L1832-L1870): enters the general layer-building loop before the O2 A path can avoid all no-contribution work.
+  - [Layer loop shape](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/LabosModule.f90#L1832-L1870): enters the general layer-building loop before the path can avoid all no-contribution work.
 - zdisamar
   - [Layer checks](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/radiative_transfer/labos/layers.zig#L321-L344): proves cheap no-contribution cases before building phase matrices or doubled layers.
   - [Orders activity use](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/radiative_transfer/labos/orders.zig#L432-L441): carries the same inactive-layer decision into later scattering-order work.

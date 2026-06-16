@@ -28,7 +28,7 @@ def spectrum(
     jacobian: bool = False,
     include_scene: bool = False,
 ):
-    """Run radiative transfer for one wavelength-band case."""
+    """Run radiative transfer for one wavelength-band scene."""
 
     if cache is not None:
         return cache.spectrum(
@@ -105,7 +105,7 @@ def o2_line_contributions(
     max_rows: int = 50_000,
     cache: SessionCache | None = None,
 ):
-    """Return line-by-line O2 evidence rows."""
+    """Return line-by-line evidence rows."""
 
     if cache is not None:
         cache.load(scene)
@@ -117,7 +117,7 @@ def o2_line_contributions(
 
 
 def nominal_wavelengths(scene: Scene):
-    """Recreate the nominal spectrum grid from a wavelength-band case."""
+    """Recreate the nominal spectrum grid from a wavelength-band scene."""
 
     count = int(scene.spectral_grid.sample_count)
 
@@ -140,6 +140,6 @@ def nominal_wavelengths(scene: Scene):
 
 
 def reference_scene() -> Scene:
-    """Return the packaged O2 A reference case."""
+    """Return the packaged reference scene."""
 
     return default_o2a_scene()

@@ -89,7 +89,7 @@ Within that route the source is handled one of two ways, chosen by
    quadrature optics built in `optics/`. This is the default, and it is the only
    route that can produce the aerosol-layer-pressure Jacobian.
 
-The O2 A reference case runs multiple scattering with the integrated source and the
+The reference scene runs multiple scattering with the integrated source and the
 pseudo-spherical correction on. Its viewing geometry is nadir, so the near-normal
 gate collapses the Fourier loop to the single `m = 0` term.
 
@@ -257,7 +257,7 @@ are comparatively cheap.
 
 4. The direct-beam fill (`attenuation_fill`) runs once per wavelength, before the
    Fourier loop. On a plane-parallel atmosphere it is one exponential per stream per
-   level. The O2 A reference case turns the pseudo-spherical correction on, so the
+   level. The reference scene turns the pseudo-spherical correction on, so the
    fill instead integrates the curved sun-path samples for each stream and level;
    that costs more than the flat case, but it is still a single pass, small next to
    the layer build and the order recurrence.
@@ -277,7 +277,7 @@ One factor sits above the whole list: the Fourier loop reruns the per-layer buil
 the order recurrence, the basis, and the reflectance integral once per retained term
 `m` (the direct-beam fill is done once, before the loop). Whenever either direction
 is within `1e-5` of normal, the near-normal gate collapses that loop to the single
-`m = 0` term. The nadir reference case takes this path, so for it the whole list
+`m = 0` term. The nadir reference scene takes this path, so for it the whole list
 above runs once per wavelength instead of once per Fourier term.
 
 ## Where to start

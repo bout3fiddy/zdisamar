@@ -1,4 +1,4 @@
-"""Benchmark case construction."""
+"""Benchmark scene construction."""
 
 import copy
 import json

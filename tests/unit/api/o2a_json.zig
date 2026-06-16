@@ -80,7 +80,7 @@ const native_json =
     \\  ],
     \\  "layer_count": 3,
     \\  "metadata": {
-    \\    "description": "DISAMAR O2 A reference scene defined in Python.",
+    \\    "description": "DISAMAR O2A reference scene defined in Python.",
     \\    "id": "disamar_reference_o2a",
     \\    "storage": "disamar-reference-o2a"
     \\  },

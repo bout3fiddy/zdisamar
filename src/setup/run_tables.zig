@@ -61,7 +61,7 @@ pub const RunTables = struct {
 
 pub fn buildRunTables(allocator: Allocator, scene: scene_input.Scene) !RunTables {
     // buildRunTables -----------------------------------------------------------------------------------------|
-    // Validate the O2 A scene and build every physical setup table.                                           |
+    // Validate the scene and build every physical setup table.                                           |
     // --------------------------------------------------------------------------------------------------------|
     try validate.sceneControls(scene);
 

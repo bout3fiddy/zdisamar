@@ -9,7 +9,7 @@ const profile_line_memory = @import("../cache/profile_line_memory.zig");
 const Allocator = std.mem.Allocator;
 
 // atmospheric_budget.zig -------------------------------------------------------------------------------------|
-// Public atmospheric support-row diagnostic table for the explicit O2 A route.                                |
+// Public atmospheric support-row diagnostic table for the explicit route.                                    |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   The builder projects existing setup/profile-line/optics rows into the fixed Python C ABI row order. It    |

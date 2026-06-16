@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fast cost-timing analysis gate for one enabled O2 A forward run."""
+"""Fast cost-timing analysis gate for one enabled forward run."""
 
 import re
 import subprocess

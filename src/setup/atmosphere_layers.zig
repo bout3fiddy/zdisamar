@@ -671,7 +671,7 @@ fn densifyVendorPressureGrid(
     surface_pressure_hpa: f64,
 ) ![]readers.AtmosphereProfileRow {
     // densifyVendorPressureGrid ------------------------------------------------------------------------------|
-    // Build the O2 A setup profile used before layer/support placement.                                       |
+    // Build the setup profile used before layer/support placement.                                       |
     //                                                                                                         |
     //   ClimatologyProfile.densifyVendorPressureGrid before state_build vertical setup.                       |
     //                                                                                                         |
@@ -929,7 +929,7 @@ fn fillSupportRow(
     // fillSupportRow -----------------------------------------------------------------------------------------|
     // Fill one boundary or active support row from the DISAMAR profile thermodynamics route.                  |
     //                                                                                                         |
-    //   reference O2 A route, so support pressure and temperature come from profile spline sampling at the    |
+    //   reference route, so support pressure and temperature come from profile spline sampling at the    |
     //   support altitude. The geometric-mean pressure fallback is for non-canonical interval grids.           |
     // --------------------------------------------------------------------------------------------------------|
     const pressure_hpa = profile.interpolatePressureLogSpline(altitude_km);

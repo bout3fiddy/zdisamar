@@ -4,18 +4,18 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 // forward_worker_pool.zig ------------------------------------------------------------------------------------|
-// Session-retained helper-thread owner for O2 A forward prefetch phases.                                      |
+// Session-retained helper-thread owner for forward prefetch phases.                                      |
 //                                                                                                             |
 //   Helper threads stay on product/session storage, reuse unchanged helper counts, and return null on pool    |
 //   init failure so callers use the raw-spawn path.                                                           |
 //                                                                                                             |
 // ownership boundary                                                                                          |
-//   This owner stores threads and an optional borrowed shared pool only. It stores no case, wavelength,       |
+//   This owner stores threads and an optional borrowed shared pool only. It stores no scene, wavelength,      |
 //   layer, optical, RTM, or output state, so worker scheduling cannot become a hidden physics input.          |
 // ------------------------------------------------------------------------------------------------------------|
 
 // ForwardWorkerPool ------------------------------------------------------------------------------------------|
-// Owned-or-borrowed thread-pool selector retained by one O2 session.                                          |
+// Owned-or-borrowed thread-pool selector retained by one session.                                            |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // Debug build: size 136 B (0.133 KiB), align: 8 B                                                             |

@@ -1,7 +1,7 @@
 # Source Tree
 
 - `src/input/` owns typed atmosphere, geometry, surface, spectroscopy, instrument, and reference-data input structures, plus JSON, defaults, and validation.
-- `src/setup/` builds the named physics tables consumed by the hot path: atmosphere layers, line, CIA, aerosol, instrument, solar, phase, and O2 run tables.
+- `src/setup/` builds the named physics tables consumed by the hot path: atmosphere layers, line, CIA, aerosol, instrument, solar, phase, and run tables.
 - `src/optics/` owns per-sample optical properties: layer depths, Rayleigh, CIA absorption, curved sun path, and source levels.
 - `src/rtm/` owns radiative transfer: controls, gauss angles, attenuation, phase basis, scattering orders, layer reflect/transmit, reflectance, and the `solve` entry point.
 - `src/spectrum/` owns spectral assembly: sampling table, line physics, solar lookup, radiance wavelengths/results, instrument averaging, and the `spectrum_run` driver.
@@ -10,7 +10,7 @@
 - `src/cache/` owns retained, named memory owners (session, profile-line, radiance, solar-irradiance, spectrum, transport-worker, worker-pool). These are the borrowed write targets the hot path threads through.
 - `src/common/` is shared support code only: errors, hashing, math, units, memory, worker partition.
 - `src/assets/` owns embedded asset readers.
-- `src/validation/` owns validation-only code that consumes the typed O2 A baseline.
+- `src/validation/` owns validation-only code that consumes the typed baseline.
 - `src/instrumentation/` owns narrow no-op-by-default facades for trace, telemetry, and sensitivity hooks. Retained sinks, capture scripts, and reports live under `scaffolding/`.
 
 ## Rules

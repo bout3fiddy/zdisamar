@@ -65,7 +65,7 @@ and no reallocation.
 
 ## Gas absorption (`line_tables.zig`, `cia_table.zig`)
 
-These hold the spectroscopy of the O2 A band. `line_tables.zig` loads the HITRAN
+These hold the spectroscopy of the O2A band. `line_tables.zig` loads the HITRAN
 line parameters together with the LISA line-mixing relaxation matrix and the
 strong-line sidecar, and carries the runtime line-filter controls (isotopes,
 strength threshold, wavenumber cutoff, mixing factor). It does not compute

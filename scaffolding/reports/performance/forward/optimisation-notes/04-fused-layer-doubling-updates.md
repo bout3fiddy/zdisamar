@@ -11,7 +11,7 @@ Source links:
 - DISAMAR
   - [Doubling recurrence](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/LabosModule.f90#L1857-L1895): expresses the exact layer-doubling math in a general matrix-update style with repeated intermediate traffic.
 - zdisamar
-  - [Doubling loop](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/radiative_transfer/labos/layers.zig#L228-L284): keeps the same recurrence but fuses common O2 A update shapes inside the repeated loop.
+  - [Doubling loop](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/radiative_transfer/labos/layers.zig#L228-L284): keeps the same recurrence but fuses common update shapes inside the repeated loop.
 
 Layer doubling updates reflection and transmission matrices many times. The
 naive shape materializes intermediate arrays and then combines them in later

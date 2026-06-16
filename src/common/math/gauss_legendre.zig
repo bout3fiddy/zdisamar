@@ -24,7 +24,7 @@ const fixed_rules = buildFixedRules();
 // route choice                                                                                                |
 //   Small ordinary orders use rule() when the caller wants a fixed table. Larger ordinary orders use Newton   |
 //   root solves. DISAMAR canonical paths build a tridiagonal system and diagonalize it with                   |
-//   gausq2DisamarImpl because last-bit node differences are visible in steep O2 A high-resolution support     |
+//   gausq2DisamarImpl because last-bit node differences are visible in steep high-resolution support     |
 //   samples. Callers that reuse layer shapes should retain canonical rows by order and rescale them only.     |
 //                                                                                                             |
 // hot path                                                                                                    |

@@ -127,7 +127,7 @@ pub const LayerOptics = struct {
 // [ 520..1031] log_complex_vmr_fraction : [64]f64                                                             |
 // [1032..1543] second                   : [64]f64                                                             |
 //                                                                                                             |
-//   vertical setup profile. The O2 A diagnostic cross-section rows prove this cache is active for the O2 A    |
+//   vertical setup profile. The O2A diagnostic cross-section rows prove this cache is active for the         |
 //   reference scene.                                                                                          |
 pub const CollisionPairProfile = struct {
     node_count: usize = 0,

@@ -1,4 +1,4 @@
-"""O2 A wavelength-band case API."""
+"""Wavelength-band scene API."""
 
 from ..input import (
     Aerosol,
@@ -31,7 +31,7 @@ from ..input.wavelength_band.o2a_default import default_o2a_scene as default_o2a
 
 
 def reference_scene() -> Scene:
-    """Return the packaged DISAMAR-family O2 A reference case."""
+    """Return the packaged DISAMAR-family reference scene."""
 
     return default_o2a_scene()
 

@@ -1,25 +1,25 @@
 # Fastmode Session Overhead Log
 
-Goal: reduce overhead around one 10-worker O2 A fastmode OE retrieval without
+Goal: reduce overhead around one 10-worker fastmode OE retrieval without
 changing the retrieval result or the fastmode accuracy contract.
 
 Boundary:
 
 - public Python `o2a.retrieve(...)`;
 - `ZDISAMAR_WORKER_LIMIT=10`;
-- baseline fastmode case;
+- baseline fastmode scene;
 - measurement construction outside the timed block;
 - no lazy final-state spectrum evaluation.
 
 ## 2026-05-27 Pressure Profile Resolution
 
 Finding: resolving pressure metadata for `AerosolLayerMidPressure` used the
-original full measurement case before the fast-stage case was loaded. That
+original full measurement scene before the fast-stage scene was loaded. That
 created a temporary 301-sample native prepare even though the pressure-altitude
 profile is independent of the sparse wavelength subset.
 
 Change: resolve the state vector against the already loaded sparse fast-stage
-case, using the session cache's atmospheric budget table.
+scene, using the session cache's atmospheric budget table.
 
 Correctness check:
 
@@ -45,10 +45,10 @@ Accepted: removes the full-grid pressure-profile prepare from the timed
 
 ## 2026-05-27 Preserve Caller-Owned Sparse Cache
 
-Finding: a caller can preload and warm the sparse fast-stage case before timing,
-but the final correction loaded its 4-sample full-physics case into that same
+Finding: a caller can preload and warm the sparse fast-stage scene before timing,
+but the final correction loaded its 4-sample full-physics scene into that same
 cache. The first call stayed fast; repeated calls with the same sparse cache
-then reloaded the fast-stage case and moved warmup work back into the
+then reloaded the fast-stage scene and moved warmup work back into the
 invocation.
 
 Scratch comparison for five repeated calls with one caller-owned sparse cache:
@@ -60,7 +60,7 @@ states_equal: true
 ```
 
 Change: when the caller supplies a cache to fastmode OE, keep that cache loaded
-with the fast-stage case and run the final correction on a temporary native
+with the fast-stage scene and run the final correction on a temporary native
 handle. The `cache=None` one-shot path keeps the previous single-handle shape.
 
 Timing evidence after the change:
@@ -76,9 +76,9 @@ converged: true
 Accepted: preserves the warmed sparse fast-stage session across repeated calls
 without changing the returned state.
 
-## 2026-05-27 Case-Owned Controls And Repeated Starts
+## 2026-05-27 Scene-Owned Controls And Repeated Starts
 
-The canonical repeated-start shape keeps controls in the case and passes only
+The canonical repeated-start shape keeps controls in the scene and passes only
 the varying state vector through the public retrieval call:
 
 ```python
@@ -114,13 +114,13 @@ calls reuse the same fast-stage cache; the final correction does not replace it.
 ## 2026-05-27 Duplicate Cache-Match Checks
 
 Finding: after `retrieve()` had already established that the supplied cache held
-the sparse fast-stage case, pressure-profile resolution called the generic
-`has_loaded_case` path again.  That path fingerprints the case by rebuilding the
+the sparse fast-stage scene, pressure-profile resolution called the generic
+`has_loaded_case` path again.  That path fingerprints the scene by rebuilding the
 native JSON payload.
 
 Change: use a loaded-cache pressure-profile path once stale-cache protection has
 already run at the retrieval boundary.  The caller-supplied cache still performs
-one `has_loaded_case(fast_case)` check per retrieval so case or measurement
+one `has_loaded_case(fast_case)` check per retrieval so scene or measurement
 changes reload the cache correctly.
 
 Timing evidence from the repeated-start probe:
@@ -149,12 +149,12 @@ load samples_4.fast_False:
 ```
 
 The current correction C entrypoint consumes a fully prepared `PreparedO2A`.
-`correctPreparedO2A` copies that prepared case, switches derivative mode, and
+`correctPreparedO2A` copies that prepared scene, switches derivative mode, and
 simulates the RTM/Jacobian from `prepared.scene` and `prepared.prepared`.
 It does not apply the correction initial state to a base scene and rebuild
 state-dependent optical properties.
 
-Rejected for this pass: simply keeping a prepared correction case alive in
+Rejected for this pass: simply keeping a prepared correction scene alive in
 Python.  That would reuse optics prepared at the wrong aerosol optical depth or
 layer pressure for later starts.
 
@@ -372,7 +372,7 @@ static 3-worker iteration sums: [132, 131, 151]
 
 Change: keep the inner native forward-prefetch policy unchanged, but let the
 outer native OE batch workers claim one start at a time from `ChunkQueue`.
-Each worker still owns its prepared case and product storage; the queue only
+Each worker still owns its prepared scene and product storage; the queue only
 balances which start index is run next.
 
 Timing evidence on the same scene-008 100-start boundary:
@@ -454,9 +454,9 @@ the 100-start scene-008 fast-stage-only boundary to `19.607 s`, but moved the
 retrieved state by `7.17e-4` AOD and `1.15 hPa` versus the retained fastmode
 default, outside the retained validation pressure gate.
 
-Change: set the case-owned fastmode OE
+Change: set the scene-owned fastmode OE
 `state_vector_convergence_threshold` to `10.0` and make retained validation
-callers omit explicit controls so they exercise the same case-owned fastmode
+callers omit explicit controls so they exercise the same scene-owned fastmode
 path as public `retrieve(..., controls=None)` and `Result.diagnose()`.
 
 Scene-008 fast-stage-only timing evidence:
@@ -469,7 +469,7 @@ all 100 starts converged
 ```
 
 Retained fastmode-vs-reference validation was regenerated with the fullmode
-rows unchanged and the fastmode rows rerun under the new case-owned controls:
+rows unchanged and the fastmode rows rerun under the new scene-owned controls:
 
 ```text
 fastmode rows: 100
@@ -499,7 +499,7 @@ iteration histogram: {2: 3, 3: 20, 4: 42, 5: 31, 6: 3, 7: 1}
 ```
 
 Change: `runO2AFastmodeBatch` now gives each native batch worker both the
-fast-stage prepared case and the sparse correction prepared case.  Each worker
+fast-stage prepared scene and the sparse correction prepared scene.  Each worker
 runs its assigned starts end-to-end, avoiding the intermediate `BatchResult`
 state table and the second batch/thread handoff between fast-stage and
 correction solves.
@@ -527,7 +527,7 @@ model speedup.
 ## 2026-05-28 Prefetch-Mode Boundary Check
 
 The retained `~175 ms` figure comes from the steady repeated-start public API
-path: one caller-owned empty `SessionCache()`, fixed case and measurement,
+path: one caller-owned empty `SessionCache()`, fixed scene and measurement,
 `ZDISAMAR_WORKER_LIMIT=10`, omitted controls, and only the starting state vector
 changing after an initial warm call.  It is a valid prefetch-session number, but
 it should not be multiplied across the scene-008 basin grid without rechecking
@@ -629,12 +629,12 @@ measured boundary.
 ## 2026-05-28 Fast-Stage Convergence Retune
 
 Finding: the sparse full-physics correction absorbs a modestly looser
-fast-stage convergence threshold on the retained 100-case fastmode validation
+fast-stage convergence threshold on the retained 100-scene fastmode validation
 boundary.  Aggressive thresholds were rejected: `50` and above preserved
 convergence but moved at least one corrected state by `0.00618` AOD and
 `3.16 hPa` against the retained fullmode reference.
 
-Retained fastmode-only 100-case probes against the tracked fullmode reference:
+Retained fastmode-only 100-scene probes against the tracked fullmode reference:
 
 ```text
 threshold 15: median 0.384 s, max delta 4.18164e-4 AOD / 0.545859 hPa
@@ -642,7 +642,7 @@ threshold 20: median 0.356 s, max delta 4.18164e-4 AOD / 0.545859 hPa
 threshold 30: median 0.349 s, max delta 4.18164e-4 AOD / 0.545859 hPa
 ```
 
-Decision: do not carry `30.0` as the case-owned fastmode OE default.  It kept
+Decision: do not carry `30.0` as the scene-owned fastmode OE default.  It kept
 the retained fastmode/reference max-delta gate unchanged in this probe, but
 `40.0` failed the retained validation gate below.  Keeping the public default at
 `1.0` leaves the diagnosis work on the established accuracy contract instead of
@@ -651,7 +651,7 @@ shipping a near-boundary speed retune as part of the batch API change.
 ## 2026-05-28 Prefetch Boundary Recheck After Retune
 
 Rechecked the user-facing prefetch-session shape after the threshold retune:
-one empty caller-owned `SessionCache()`, fixed scene/case/measurement,
+one empty caller-owned `SessionCache()`, fixed scene/measurement,
 `ZDISAMAR_WORKER_LIMIT=10`, omitted controls, one warm call, varying only the
 state-vector initial/prior values, and no access to `result.final_evaluation`
 inside the timed loop.
@@ -811,7 +811,7 @@ Sampling and convergence probes:
 
 state_vector_convergence_threshold=40:
   scene-008 diagnosis improved only 30.300 s -> 29.795 s
-  retained 100-case validation failed:
+  retained 100-scene validation failed:
     AOD max_abs_delta=9.155e-04 > 5.500e-04
     pressure max_abs_delta=1.444 hPa > 0.700 hPa
 

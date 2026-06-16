@@ -81,7 +81,7 @@ pub fn scale(vector: Vector, factor: f64) Vector {
     // scale ------------------------------------------------------------------------------------------------- |
     // Multiply every fixed derivative lane by one scalar.                                                     |
     //                                                                                                         |
-    //   fixed-vector scale over the retained two O2 A retrieval lanes.                                        |
+    //   fixed-vector scale over the retained two retrieval lanes.                                              |
     //                                                                                                         |
     // math                                                                                                    |
     //   result_i = factor * vector_i                                                                          |

@@ -5,22 +5,22 @@ pub const Error = error{
 };
 
 // band_metrics.zig -------------------------------------------------------------------------------------      |
-// Validation-only O2 A spectrum comparison metrics.                                                           |
+// Validation-only spectrum comparison metrics.                                                           |
 //                                                                                                             |
-//   Replaces the removed broad runtime-case metrics helper with explicit validation vectors.                  |
-//   Runtime-case wrappers stay out of O2 A because they depend on broad pre-refactor owner shapes.            |
+//   Replaces the removed broad runtime-scene metrics helper with explicit validation vectors.                  |
+//   Runtime-scene wrappers stay out because they depend on broad pre-refactor owner shapes.            |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   Callers pass explicit wavelength/reflectance vectors and reference rows. This module performs no file     |
 //   I/O, imports no RTM/product modules, and stores no retained state.                                        |
 //                                                                                                             |
-// O2 A windows                                                                                                |
+// O2A windows                                                                                                |
 //   blue wing 755.0..758.5 nm; trough 760.2..761.1 nm; rebound 761.8..762.4 nm; mid band 763.8..765.5 nm;     |
 //   red wing 769.5..771.0 nm.                                                                                 |
 // ----------------------------------------------------------------------------------------------------------- |
 
 // ReferenceSample ------------------------------------------------------------------------------------------  |
-// One retained O2 A reference reflectance sample.                                                             |
+// One retained O2A reference reflectance sample.                                                             |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 16 B (0.016 KiB), align: 8 B                                                                          |
@@ -50,7 +50,7 @@ pub const RangeExtremum = struct {
 // ----------------------------------------------------------------------------------------------------------- |
 
 // ComparisonMetrics ----------------------------------------------------------------------------------------  |
-// Scalar residual, correlation, and O2 A morphology metrics for one generated/reference comparison.           |
+// Scalar residual, correlation, and morphology metrics for one generated/reference comparison.           |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 120 B (0.117 KiB), align: 8 B                                                                         |
@@ -460,7 +460,7 @@ pub fn computeComparisonMetrics(
     zero_tolerance_abs: f64,
 ) Error!ComparisonMetrics {
     // computeComparisonMetrics -----------------------------------------------------------------------------  |
-    // Compare generated reflectance to reference rows using the residual and O2 A morphology metrics.         |
+    // Compare generated reflectance to reference rows using the residual and morphology metrics.         |
     // ------------------------------------------------------------------------------------------------------- |
     if (wavelengths_nm.len != reflectance.len) return error.ShapeMismatch;
 

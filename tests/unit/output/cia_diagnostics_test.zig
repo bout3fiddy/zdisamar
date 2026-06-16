@@ -7,7 +7,7 @@ const cia_diagnostics = internal.output.cia_diagnostics;
 const allocator = std.testing.allocator;
 
 // RowEvidence ------------------------------------------------------------------------------------------------|
-// Test-local public O2-O2 CIA evidence from O2 A baseline artifact:                                           |
+// Test-local public O2-O2 CIA evidence from baseline artifact:                                                |
 // Canonical expected values owned by this repository.                                                         |
 // public-python-baseline.json .diagnostics.collision_induced_absorption.rows.                                 |
 //                                                                                                             |
@@ -131,7 +131,7 @@ const expected_cia_rows = [_]RowEvidence{
     },
 };
 
-test "O2-O2 CIA diagnostics match O2 A public Python evidence at probe wavelengths" {
+test "O2-O2 CIA diagnostics match public Python evidence at probe wavelengths" {
     var prepared = try internal.public.prepare(allocator, o2a_scene.reference());
     defer prepared.deinit(allocator);
 
@@ -175,7 +175,7 @@ fn expectRowEqual(expected: cia_diagnostics.CiaRow, actual: cia_diagnostics.CiaR
 
 fn expectF64Bits(expected: f64, actual: f64) !void {
     // expectF64Bits ------------------------------------------------------------------------------------------|
-    // Enforce exact f64 bits for O2 A JSON values that round-trip without local derived math.                 |
+    // Enforce exact f64 bits for JSON values that round-trip without local derived math.                 |
     // --------------------------------------------------------------------------------------------------------|
     const expected_bits: u64 = @bitCast(expected);
     const actual_bits: u64 = @bitCast(actual);

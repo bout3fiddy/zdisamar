@@ -62,9 +62,9 @@ test "RadianceWavelengthList deduplicates only exact f64 bit keys" {
     try std.testing.expectEqual(@as(u32, 2), list.sample_indices[4]);
 }
 
-test "RadianceWavelengthList evidence anchors keep O2 A exact-key route shape" {
+test "RadianceWavelengthList evidence anchors keep exact-key route shape" {
 
-    // Source: canonical O2 A radiance-wavelength evidence fixtures.
+    // Source: canonical radiance-wavelength evidence fixtures.
     // Canonical expected values owned by this repository.
 
     try std.testing.expectEqual(@as(usize, 3874), radiance_wavelength_evidence.count);
@@ -83,7 +83,7 @@ test "RadianceWavelengthList evidence anchors keep O2 A exact-key route shape" {
 }
 
 // RadianceWavelengthEvidence -------------------------------------------------------------------------------- |
-// Exact-key canonical radiance wavelength evidence from the O2 A internal dump.                               |
+// Exact-key canonical radiance wavelength evidence from the internal dump.                               |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 40 B (0.039 KiB), align: 8 B                                                                          |

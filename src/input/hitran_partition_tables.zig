@@ -5,7 +5,7 @@ const CostTiming = @import("../instrumentation/cost_timing.zig");
 // hitran_partition_tables.zig ------------------------------------------------------------------------------- |
 // Embedded HITRAN TIPS partition-sum tables used by line-strength temperature scaling.                        |
 //                                                                                                             |
-//   temperature grids and partition sums for isotopologues used by the O2 A line route. The q_* names follow  |
+//   temperature grids and partition sums for isotopologues used by the line route. The q_* names follow  |
 //   HITRAN isotopologue codes: H2O uses 161/181/171/162/182/172, CO2 uses 626/636/628/627/638/637, and O2     |
 //   uses 66/68/67. Codes are the same compact gas-isotope identifiers produced by the spectroscopy            |
 //   `deriveIsotopologueCode` helper.                                                                          |

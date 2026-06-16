@@ -2,7 +2,7 @@ const std = @import("std");
 const internal = @import("internal");
 const o2a_scene = @import("../support/o2a_scene.zig");
 
-test "O2 A scene fixture consumes every setup control" {
+test "scene fixture consumes every setup control" {
     const scene = o2a_scene.reference();
     try internal.input.validate.sceneControls(scene);
 
@@ -60,7 +60,7 @@ test "invalid controls are rejected instead of carried inertly" {
     );
 }
 
-test "Python native O2 scene JSON round-trips into typed controls" {
+test "Python native scene JSON round-trips into typed controls" {
     const allocator = std.testing.allocator;
 
     const rendered = try o2a_scene.nativeJson(allocator);

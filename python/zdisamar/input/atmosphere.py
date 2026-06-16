@@ -58,7 +58,7 @@ class VerticalInterval:
 
 @dataclass
 class Atmosphere:
-    """Layer grid and fit interval used to build the O2 A atmosphere."""
+    """Layer grid and fit interval used to build the O2A atmosphere."""
 
     layer_count: int
     sublayer_divisions: int

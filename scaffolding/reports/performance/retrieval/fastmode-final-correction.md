@@ -1,15 +1,15 @@
 # Fastmode Sampling And Final Correction
 
-Fastmode is a case-owned optimisation mode, not a separate retrieval API.  A
-normal O2 A case remains the full-physics reference case.  Fastmode is enabled
-on that same case:
+Fastmode is a scene-owned optimisation mode, not a separate retrieval API.  A
+normal scene remains the full-physics reference scene.  Fastmode is enabled
+on that same scene:
 
 ```python
 case.optimisation.fastmode.enabled = True
 ```
 
-The case keeps the optimisation settings visible.  The execution path resolves
-those settings before loading the native RTM case, so callers can inspect the
+The scene keeps the optimisation settings visible.  The execution path resolves
+those settings before loading the native RTM scene, so callers can inspect the
 actual knobs, fast-stage wavelengths, and final-correction wavelengths:
 
 ```python
@@ -30,7 +30,7 @@ The default fastmode configuration changes:
 ## API Knobs
 
 Fastmode is configured by editing fields under `case.optimisation.fastmode`.
-The defaults are intended to be usable directly, but the fields are ordinary case
+The defaults are intended to be usable directly, but the fields are ordinary scene
 data and can be changed before calling `disamar_oe`.
 
 ```python
@@ -89,24 +89,24 @@ measurement vectors.
 The retained OE path uses one public `disamar_oe` call:
 
 ```text
-1. The input case has fastmode enabled.
+1. The input scene has fastmode enabled.
 2. Fastmode resolves sparse fast-stage wavelengths on the measurement grid.
-3. The native session loads that sparse case with fastmode RTM controls resolved.
+3. The native session loads that sparse scene with fastmode RTM controls resolved.
 4. OE runs to convergence on the sparse fast-stage measurement vector.
 5. If final correction is enabled, zdisamar disables fastmode on the original
-   full measurement case copy.
+   full measurement scene copy.
 6. The correction keeps explicit sparse wavelengths on the measurement grid.
 7. For a one-shot `cache=None` call, the same temporary session handle loads
-   that sparse full-physics correction case.  For a caller-supplied cache, the
-   correction uses a temporary handle so the warmed sparse fast-stage case
+   that sparse full-physics correction scene.  For a caller-supplied cache, the
+   correction uses a temporary handle so the warmed sparse fast-stage scene
    remains reusable.
 8. Native OE computes one full-physics forward model, Jacobian, and update.
 9. The result returns the corrected state plus fast-stage correction diagnostics.
 ```
 
-There is no public correction case and no public spectral-branch object.  The
+There is no public correction scene and no public spectral-branch object.  The
 default sparse selectors are just windows and counts that resolve to concrete
-wavelengths on the case sampling:
+wavelengths on the scene sampling:
 
 ```text
 fast stage:
@@ -140,7 +140,7 @@ case.optimisation.fastmode.oe.final_correction.wavelengths_nm = (
 
 ## Dimension Shape
 
-The fast solve and the correction solve each clip the measurement and RTM case
+The fast solve and the correction solve each clip the measurement and RTM scene
 to their own explicit wavelength grid.  The dimensions therefore match inside
 each OE boundary:
 
@@ -158,7 +158,7 @@ K_sparse^T S_e_sparse^-1 K_sparse       n_state x n_state
 K_sparse^T S_e_sparse^-1 (y - F(x))     n_state
 ```
 
-The solve is still a state-vector solve.  For the retained two-state O2 A
+The solve is still a state-vector solve.  For the retained two-state
 retrieval, `n_state = 2` for aerosol optical depth and aerosol layer mid
 pressure.  Sparse wavelengths change the number of Jacobian rows, not the
 number of retrieved state dimensions.
@@ -171,8 +171,8 @@ construction, plotting, or the lazy final-state spectrum evaluation.  It does
 include:
 
 - the fastmode OE retrieval call;
-- native case load/prepare for the sparse fast-stage case;
-- native case load/prepare for the sparse full-physics correction;
+- native scene load/prepare for the sparse fast-stage scene;
+- native scene load/prepare for the sparse full-physics correction;
 - one exact full-physics forward model and Jacobian on that sparse grid;
 - one native OE correction solve;
 - copying the result back through the Python binding.
@@ -183,7 +183,7 @@ and residual inspection can ask for it later, but it is not part of
 
 ## Retained Evidence
 
-Regenerate the retained 100-case fastmode sweep with:
+Regenerate the retained 100-scene fastmode sweep with:
 
 ```sh
 uv run validation/optimal_estimation/sweep_fast_mode_optimal_estimation.py
@@ -212,7 +212,7 @@ fastmode max mid-pressure delta vs fullmode: 0.551 hPa
 The sweep compares:
 
 - `reference`: normal full-physics zdisamar OE;
-- `fastmode`: case-owned fastmode with sparse fast-stage sampling and the default
+- `fastmode`: scene-owned fastmode with sparse fast-stage sampling and the default
   sparse full-physics final correction.
 
 The tracked outputs are:
@@ -258,6 +258,6 @@ Open questions:
 - rank candidate wavelengths by Jacobian information for the retrieved state
   dimensions;
 - keep a held-out validation set so sparse defaults do not overfit the retained
-  100 cases;
+  100 scenes;
 - measure correction-only timing separately from fast-stage timing;
 - revisit uncertainty scaling for sparse windows.

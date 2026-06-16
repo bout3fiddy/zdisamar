@@ -9,7 +9,7 @@ const jacobian = internal.rtm.jacobian_states;
 const allocator = std.testing.allocator;
 
 // SupportEvidence ------------------------------------------------------------------------------------------- |
-// Test-local support-row optics evidence from O2 A baseline artifact:                                         |
+// Test-local support-row optics evidence from baseline artifact:                                         |
 // Canonical expected values owned by this repository.                                                         |
 // public-python-baseline.json .diagnostics.atmospheric_budget.rows.                                           |
 //                                                                                                             |
@@ -168,7 +168,7 @@ const layer_zero_758_rows = [_]SupportEvidence{
 };
 
 // LayerAerosolEvidence ---------------------------------------------------------------------------------------|
-// Test-local aerosol layer evidence from O2 A baseline artifact:                                              |
+// Test-local aerosol layer evidence from baseline artifact:                                              |
 // Canonical expected values owned by this repository.                                                         |
 // internal-dump-baseline.json .probe_forward_inputs[0].layers.                                                |
 //                                                                                                             |

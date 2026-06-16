@@ -3,7 +3,7 @@ const internal = @import("internal");
 const o2a_scene = @import("../support/o2a_scene.zig");
 const CountingAllocator = @import("../support/counting_allocator.zig").CountingAllocator;
 
-test "RunTables match O2 A baseline table evidence" {
+test "RunTables match baseline table evidence" {
     var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
         o2a_scene.reference(),

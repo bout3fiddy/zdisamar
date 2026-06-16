@@ -25,7 +25,7 @@ const lu_diagonal_floor: f64 = 1.0e-30;
 //                                                                                                             |
 // hot path                                                                                                    |
 //   layer_reflect_transmit.zig calls these kernels inside every retained layer-doubling step. The fixed       |
-//   n=12, n_gauss=10 path is the O2 A LABOS route; generic n exists for unsupported or test geometries that   |
+//   n=12, n_gauss=10 path is the LABOS route; generic n exists for unsupported or test geometries that   |
 //   still use the same algebra. Caller-owned `Into` variants keep temporary Mat values under the layer code   |
 //   owner so the hot path does not allocate or copy through heap storage.                                     |
 //                                                                                                             |
@@ -95,7 +95,7 @@ pub fn smul(n: usize, n_gauss: usize, threshold_mul: f64, a: *const Mat, b: *con
         // tradeoff: fixed small-multiply trace gate                                                           |
         // Return zero when abs(trace(A_gg) * trace(B_gg)) <= threshold_mul.                                   |
         // ----------------------------------------------------------------------------------------------------|
-        // LABOS layers pass threshold_mul = 1.0e-12 by generic default and 1.0e-8 in O2 A. This skips a       |
+        // LABOS layers pass threshold_mul = 1.0e-12 by generic default and 1.0e-8 in O2A. This skips a       |
         // full 12x10 product when the Gaussian trace estimate says the product is too small to matter.        |
         if (@abs(tra * trb) <= threshold_mul) return Mat.zero(n);
         // end tradeoff: fixed small-multiply trace gate ------------------------------------------------------|
@@ -2377,7 +2377,7 @@ fn smulAddSemul3_12KnownTracesInto(
     // tradeoff: fixed fused-product trace gate                                                                |
     // Skip A*C when abs(trace(A_gg) * trace(C_gg)) <= threshold_mul.                                          |
     // --------------------------------------------------------------------------------------------------------|
-    // LABOS layers pass threshold_mul = 1.0e-12 by generic default and 1.0e-8 in O2 A. The skipped path       |
+    // LABOS layers pass threshold_mul = 1.0e-12 by generic default and 1.0e-8 in O2A. The skipped path       |
     // keeps the base C + A*diag(e) term and drops only the small Gaussian product contribution.               |
     if (@abs(tra * trc) <= threshold_mul) {
         // Product skipped ------------------------------------------------------------------------------------|

@@ -515,7 +515,7 @@ const SupportLineSigmaEvidence = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // Canonical expected values owned by this repository.
-// public-python-baseline.json .diagnostics.atmospheric_budget.rows, support row 1 at the five O2 A probes.
+// public-python-baseline.json .diagnostics.atmospheric_budget.rows, support row 1 at the five probes.
 const support_line_sigma_evidence = [_]SupportLineSigmaEvidence{
     .{
         .wavelength_nm = 758.0,
@@ -575,8 +575,8 @@ const ProfileLineTotalProbeEvidence = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// Source: canonical O2 A profile-line evidence fixtures.
-// The O2 A artifacts do not expose per-profile-node total line sidecar rows, so this table is derived by running
+// Source: canonical profile-line evidence fixtures.
+// The artifacts do not expose per-profile-node total line sidecar rows, so this table is derived by running
 // nodes at the five diagnostic wavelengths used by public-python-baseline.json.
 const profile_line_total_probe_evidence = [_]ProfileLineTotalProbeEvidence{
     .{
@@ -699,8 +699,8 @@ fn findProfileLineProbeEvidence(
     return null;
 }
 
-// Source: canonical O2 A profile-line evidence fixtures.
-// The O2 A public artifacts contain diagnostic optical depths, not per-layer line-cache rows, so this table is
+// Source: canonical profile-line evidence fixtures.
+// The public artifacts contain diagnostic optical depths, not per-layer line-cache rows, so this table is
 // wavelengths used by public-python-baseline.json.
 const profile_line_probe_evidence = [_]ProfileLineProbeEvidence{
     .{

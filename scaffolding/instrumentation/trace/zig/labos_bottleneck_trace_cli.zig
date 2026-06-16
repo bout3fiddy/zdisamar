@@ -321,7 +321,7 @@ fn runDerivativeSweep(
     try summary_writer.interface.flush();
 
     std.debug.print(
-        "wrote O2 A Jacobian trace sweep summary to {s} (variants={})\n",
+        "wrote Jacobian trace sweep summary to {s} (variants={})\n",
         .{ output_dir, derivative_variants.len },
     );
 }

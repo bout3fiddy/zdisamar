@@ -1060,7 +1060,7 @@ test "postprocessAndAssembleProductRows rejects inconsistent product shapes" {
 }
 
 // TransportProbeEvidence -------------------------------------------------------------------------------------|
-// One-wavelength transport result at one O2 A probe wavelength.                                               |
+// One-wavelength transport result at one probe wavelength.                                               |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 64 B (0.062 KiB), align: 8 B                                                                          |
@@ -1168,7 +1168,7 @@ fn expectFullSpectrumApproxAbs(
 }
 
 // PublicPythonBaselineEvidence -------------------------------------------------------------------------------|
-// Minimal typed view of the O2 A public Python baseline JSON used by the full-spectrum canonical test.        |
+// Minimal typed view of the public Python baseline JSON used by the full-spectrum canonical test.        |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 312 B (0.305 KiB), align: 8 B                                                                         |
@@ -1181,7 +1181,7 @@ const PublicPythonBaselineEvidence = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // PublicPythonSpectrumEvidence -------------------------------------------------------------------------------|
-// Spectrum run variants recorded by the O2 A public Python baseline.                                          |
+// Spectrum run variants recorded by the public Python baseline.                                          |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 312 B (0.305 KiB), align: 8 B                                                                         |
@@ -1221,7 +1221,7 @@ const FullSpectrumEvidence = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // FullSpectrumReflectanceJacobianEvidence --------------------------------------------------------------------|
-// Two reflectance-space Jacobian columns requested by the O2 A public baseline capture.                       |
+// Two reflectance-space Jacobian columns requested by the public baseline capture.                       |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 32 B (0.031 KiB), align: 8 B                                                                          |

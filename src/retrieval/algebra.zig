@@ -7,7 +7,7 @@ pub const Matrix = [max_state_count][max_state_count]f64;
 pub const Vector = [max_state_count]f64;
 
 // algebra.zig ------------------------------------------------------------------------------------------------|
-// Fixed-size state-space algebra for native O2 A optimal estimation.                                          |
+// Fixed-size state-space algebra for native optimal estimation.                                          |
 //                                                                                                             |
 // route map                                                                                                   |
 //   root.zig builds the retrieval value layer and later solver slices on top of these fixed arrays.           |
@@ -19,7 +19,7 @@ pub const Vector = [max_state_count]f64;
 //   aerosol-layer mid-pressure.                                                                               |
 //                                                                                                             |
 // retrieval math                                                                                              |
-//   Later O2 A solver code builds the Rodgers normal system and update in these arrays:                       |
+//   Later solver code builds the Rodgers normal system and update in these arrays:                       |
 //                                                                                                             |
 //     G = sqrt(Sa) * Jt * Se^-1 * J * sqrt(Sa)                                                                |
 //     b = sqrt(Sa) * Jt * Se^-1 * residual                                                                    |

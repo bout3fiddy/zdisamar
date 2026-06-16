@@ -1,4 +1,4 @@
-"""Shared O2 A optimal-estimation validation setup."""
+"""Shared optimal-estimation validation setup."""
 
 import copy
 import math

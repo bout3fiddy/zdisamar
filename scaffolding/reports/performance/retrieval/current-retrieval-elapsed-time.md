@@ -32,7 +32,7 @@ zdisamar:
   max mid-pressure error 0.608 hPa
 ```
 
-Slow retained zdisamar case:
+Slow retained zdisamar scene:
 
 ```text
 source case                          paired sweep case 71

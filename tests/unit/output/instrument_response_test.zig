@@ -8,7 +8,7 @@ const allocator = std.testing.allocator;
 
 // RowEvidence ------------------------------------------------------------------------------------------------|
 // `rtm.instrument_response(o2a.reference_scene(), [758.0, 760.0, 765.0, 767.0, 776.0])`.                      |
-// The O2 A public artifact records no instrument-response rows, so this canonical probe is the source oracle. |
+// The public artifact records no instrument-response rows, so this canonical probe is the source oracle. |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 104 B (0.102 KiB), align: 8 B                                                                         |

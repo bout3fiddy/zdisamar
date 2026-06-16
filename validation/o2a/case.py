@@ -1,10 +1,10 @@
-"""Canonical O2 A validation scene construction."""
+"""Canonical validation scene construction."""
 
 from dataclasses import replace
 
 
 def build_o2a_case(band, *, jacobian_reference_layer: bool = False):
-    """Return the packaged O2 A case, with optional Jacobian-validation geometry."""
+    """Return the packaged scene, with optional Jacobian-validation geometry."""
 
     case = band.reference_scene()
 
@@ -75,7 +75,7 @@ def build_o2a_case(band, *, jacobian_reference_layer: bool = False):
 
 
 def build_o2a_jacobian_case(band):
-    """Return the O2 A validation case used by retained Jacobian comparisons."""
+    """Return the validation scene used by retained Jacobian comparisons."""
 
     case = build_o2a_case(band, jacobian_reference_layer=True)
 
@@ -84,7 +84,7 @@ def build_o2a_jacobian_case(band):
         metadata={
             "id": "disamar_reference_o2a_jacobian_validation",
             "storage": "disamar-reference-o2a-jacobian-validation",
-            "description": "DISAMAR O2 A Jacobian validation case.",
+            "description": "DISAMAR O2A Jacobian validation case.",
         },
         scene_id="o2a_disamar_reference_jacobian_validation",
         instrument_response=replace(

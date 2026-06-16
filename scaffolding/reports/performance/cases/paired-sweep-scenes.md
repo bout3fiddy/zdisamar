@@ -9,9 +9,9 @@ RNG_SEED = 20260507
 ```
 
 The script runs the first `RUN_COUNT` scenes from the 500-scene pool. This keeps
-the first 100 cases stable if the sweep is later expanded.
+the first 100 scenes stable if the sweep is later expanded.
 
-The varied scene parameters follow the ranges used in the AMT 2019 O2 A
+The varied scene parameters follow the ranges used in the AMT 2019
 aerosol-height retrieval study, `https://doi.org/10.5194/amt-12-6619-2019`,
 narrowed to sensible cloud-free aerosol-only validation ranges.
 

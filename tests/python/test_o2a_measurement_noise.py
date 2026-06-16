@@ -1,4 +1,4 @@
-"""Check retained O2 A baseline measurement-noise scaling."""
+"""Check retained baseline measurement-noise scaling."""
 
 import math
 import sys

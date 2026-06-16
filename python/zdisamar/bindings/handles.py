@@ -136,17 +136,17 @@ class RtmHandle:
 
     @property
     def input(self) -> Scene | None:
-        """Return the wavelength-band case loaded into this handle."""
+        """Return the wavelength-band scene loaded into this handle."""
 
         return None if self._scene is None else copy.deepcopy(self._scene)
 
     def default_scene(self) -> Scene:
-        """Return the packaged O2 A reference case."""
+        """Return the packaged reference scene."""
 
         return default_o2a_scene()
 
     def load_scene(self, scene: Scene, *, copy_scene: bool = True) -> None:
-        """Load one O2 A wavelength-band case into the RTM handle."""
+        """Load one wavelength-band scene into the RTM handle."""
 
         rtm_scene = scene.with_rtm_optimisation_applied()
         resolved = rtm_scene.with_resolved_asset_resolver(reference_data.resolve_asset_path)
@@ -164,11 +164,11 @@ class RtmHandle:
         self._solar_mu0 = rtm_scene.geometry.solar_mu0
 
     def loaded_scene_matches(self, scene: Scene) -> bool:
-        """Return whether the native handle already owns this prepared case.
+        """Return whether the native handle already owns this prepared scene.
 
         The fingerprint uses the resolved deterministic payload passed to Zig.
         That lets session users avoid a duplicate prepare without retaining a
-        Python case copy solely for invalidation.
+        Python scene copy solely for invalidation.
         """
 
         if self._scene_fingerprint is None:
@@ -201,7 +201,7 @@ class RtmHandle:
         jacobian: bool = False,
         include_scene: bool = False,
     ) -> Spectrum:
-        """Run the loaded wavelength-band case and return copied spectral arrays."""
+        """Run the loaded wavelength-band scene and return copied spectral arrays."""
 
         raw = CSpectrum()
 
@@ -230,7 +230,7 @@ class RtmHandle:
         return AtmosphericBudget(self._copied_rows(raw, self._lib.zds_atmospheric_budget_free))
 
     def o2_line_contributions(self, wavelengths_nm, max_rows: int = 50_000) -> O2LineContributions:
-        """Return copied line-by-line O2 evidence rows."""
+        """Return copied line-by-line evidence rows."""
 
         wavelengths = contiguous_wavelengths(wavelengths_nm)
 
@@ -302,7 +302,7 @@ class RtmHandle:
         )
 
     def optimal_estimation(self, *, measurement, state_vector, controls):
-        """Run native O2 A optimal estimation for the loaded case."""
+        """Run native optimal estimation for the loaded scene."""
 
         return self._run_optimal_estimation(
             "zds_run_o2a_optimal_estimation",
@@ -312,7 +312,7 @@ class RtmHandle:
         )
 
     def optimal_estimation_correction(self, *, measurement, state_vector, controls):
-        """Run one native OE correction for the loaded prepared O2 A case."""
+        """Run one native OE correction for the loaded prepared scene."""
 
         return self._run_optimal_estimation(
             "zds_run_o2a_optimal_estimation_correction",
@@ -331,7 +331,7 @@ class RtmHandle:
         controls,
         batch_workers=1,
     ):
-        """Run many native O2 A retrievals against one loaded case and measurement."""
+        """Run many native retrievals against one loaded scene and measurement."""
 
         request, buffers = self._optimal_estimation_batch_request(
             measurement=measurement,

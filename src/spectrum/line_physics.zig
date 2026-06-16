@@ -431,7 +431,7 @@ fn usesVendorStrongLinePartition(
     strong_lines: []const readers.StrongLineAssetRow,
 ) bool {
     // usesVendorStrongLinePartition ------------------------------------------------------------------------- |
-    // Detect the O2 A sidecar partition from retained HITRAN branch metadata.                                 |
+    // Detect the sidecar partition from retained HITRAN branch metadata.                                 |
     // --------------------------------------------------------------------------------------------------------|
     if (strong_lines.len == 0) return false;
 

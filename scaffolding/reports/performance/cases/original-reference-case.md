@@ -1,11 +1,11 @@
-# Original Reference Case
+# Original Reference Scene
 
-Some older forward-performance numbers came from an earlier O2 A reference case
+Some older forward-performance numbers came from an earlier reference scene
 or from historical commits in the checkpoint series.
 
 Those values are kept as historical optimization evidence, not as current
 benchmarks. This matters because a later retained trace can use a different
-baseline case and still be correct.
+baseline scene and still be correct.
 
 When referencing old numbers, use historical wording:
 

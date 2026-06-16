@@ -8,7 +8,7 @@ const profile_spectral_tolerance: f64 = 1.0e-12;
 
 pub fn sceneControls(scene: scene_input.Scene) !void {
     // sceneControls ------------------------------------------------------------------------------------------|
-    // Validate every control O2 A consumes so unsupported or malformed setup input cannot pass inertly.       |
+    // Validate every control consumed so unsupported or malformed setup input cannot pass inertly.       |
     // --------------------------------------------------------------------------------------------------------|
     if (scene.spectral_grid.sample_count < 2) return errors.Error.InvalidControl;
 

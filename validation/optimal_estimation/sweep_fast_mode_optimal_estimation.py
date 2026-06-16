@@ -9,7 +9,7 @@
 # ]
 # ///
 
-"""Run retained O2 A fastmode optimal-estimation sweep outputs."""
+"""Run retained fastmode optimal-estimation sweep outputs."""
 
 import copy
 import math
@@ -376,9 +376,9 @@ def build_summary(data: pd.DataFrame) -> dict[str, Any]:
             "method": "case.optimisation.fastmode.enabled = True",
             "defaults": fastmode_defaults(),
             "note": (
-                "Reference and fastmode rows use the same deterministic zdisamar O2 A "
-                "optimal-estimation sweep cases, measurement vectors, priors, and initial "
-                "states. Fastmode enables case-owned RTM controls, sparse fast-stage OE "
+                "Reference and fastmode rows use the same deterministic zdisamar "
+                "optimal-estimation sweep scenes, measurement vectors, priors, and initial "
+                "states. Fastmode enables scene-owned RTM controls, sparse fast-stage OE "
                 "wavelength sampling, and the default sparse full-physics OE correction."
             ),
         },
@@ -1020,7 +1020,7 @@ def create_plot(data: pd.DataFrame, output_path: Path) -> None:
         spacing=34,
     ).properties(
         title={
-            "text": "O2A Optimal-Estimation Sweep: zdisamar Fullmode and Fastmode",
+            "text": "Optimal-Estimation Sweep: zdisamar Fullmode and Fastmode",
             "subtitle": (
                 "Each paired scene uses identical measurements, priors, and initial states; "
                 "error bars are posterior 1-sigma for retrieved states and combined "

@@ -3,17 +3,17 @@
 Historical checkpoint: `cd03a91^ -> cd03a91`, where the trace harness moved
 from `prepare_o2a=0.177154 s` to `prepare_o2a=0.044454 s`.
 
-In short: build independent O2 A setup products in parallel before the repeated
+In short: build independent setup products in parallel before the repeated
 LABOS transport work begins.
 
 Source links:
 
 - DISAMAR
   - No direct Fortran analogue is used here. This is a zdisamar setup-boundary
-    optimization around the typed O2 A baseline.
+    optimization around the typed baseline.
 - zdisamar
   - [Wavelength sampling](https://github.com/bout3fiddy/zdisamar/blob/cd03a913b49cf1d65b8f6d6c3fed5074843122b6/src/forward_model/instrument_grid/grid_calculation/wavelength_sampling.zig): parallelizes instrument support and forward-miss preparation.
-  - [Absorber setup](https://github.com/bout3fiddy/zdisamar/blob/cd03a913b49cf1d65b8f6d6c3fed5074843122b6/src/forward_model/optical_properties/state_build/absorbers.zig): prepares fixed absorber state for the O2 A case.
+  - [Absorber setup](https://github.com/bout3fiddy/zdisamar/blob/cd03a913b49cf1d65b8f6d6c3fed5074843122b6/src/forward_model/optical_properties/state_build/absorbers.zig): prepares fixed absorber state for the scene.
   - [Layer accumulation](https://github.com/bout3fiddy/zdisamar/blob/cd03a913b49cf1d65b8f6d6c3fed5074843122b6/src/forward_model/optical_properties/state_build/layer_accumulation.zig): splits independent layer accumulation work across workers.
 
 The forward calculation needs several setup products before it can enter the

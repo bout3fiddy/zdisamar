@@ -1,6 +1,6 @@
 # Fastmode Sub-100 ms Search
 
-Goal: find fastmode control settings that bring O2 A optimal-estimation
+Goal: find fastmode control settings that bring optimal-estimation
 retrieval below 0.1 s on a 10-worker CPU cap without increasing the retained
 fastmode accuracy loss against fullmode.
 
@@ -58,7 +58,7 @@ current fastmode error envelope.
 Append each run with:
 
 - candidate name and changed knobs;
-- case subset;
+- scene subset;
 - median/min/max retrieval time;
 - max AOD and pressure deltas vs fullmode;
 - convergence count;
@@ -67,7 +67,7 @@ Append each run with:
 
 ## 2026-05-27 Results
 
-Exploratory subset: retained stress cases `1, 2, 3, 8, 20, 48, 74, 86, 93`
+Exploratory subset: retained stress scenes `1, 2, 3, 8, 20, 48, 74, 86, 93`
 with `ZDISAMAR_WORKER_LIMIT=10`.
 
 Rejected paths:
@@ -77,7 +77,7 @@ Rejected paths:
 - `max_iterations = 1`, no correction, 8-38 fast wavelengths: median
   `0.170-0.176 s`, still above 0.1 s and with `~2e-2` AOD / `>11 hPa` pressure
   deltas.
-- `max_iterations = 2`: median `0.453 s`; full 100-case follow-up with 24 fast
+- `max_iterations = 2`: median `0.453 s`; full 100-scene follow-up with 24 fast
   wavelengths and 4 correction wavelengths had median `0.411 s`, but only
   `23/100` fast stages converged.
 - Lower stream counts, spherical/source/renormalization switches, matrix
@@ -87,7 +87,7 @@ Rejected paths:
 Accepted partial win:
 
 - `fastmode.oe.final_correction.wavelength_count = 4`
-- retained 100-case sweep command:
+- retained 100-scene sweep command:
   `ZDISAMAR_WORKER_LIMIT=10 uv run validation/optimal_estimation/sweep_fast_mode_optimal_estimation.py`
 - convergence: `100/100` fastmode and `100/100` fast-stage convergence
 - fastmode median/mean retrieval: `0.500 s` / `0.483 s`
@@ -112,12 +112,12 @@ Method:
 - treat the fast-stage and correction wavelength sets as the Jacobian-row
   sparsity knobs;
 - compute weighted two-column Jacobian rows on the full measurement grid for
-  retained stress cases;
+  retained stress scenes;
 - greedily select rows by a small Fisher-information objective;
 - validate each candidate by running real fastmode retrievals against fullmode
   references, not by trusting the information metric.
 
-Stress subset: retained cases `1, 2, 3, 8, 20, 48, 74, 86, 93`.
+Stress subset: retained scenes `1, 2, 3, 8, 20, 48, 74, 86, 93`.
 
 Previous 38-row default on the same stress run:
 
@@ -140,7 +140,7 @@ Best stress candidate:
 
 Interpretation so far: the 38-row fast-stage grid is not the minimum useful
 Jacobian-row set. A sensitivity-selected 12-row set preserved the retained
-stress-case envelope and reduced the stress median by about `19%`. This is a
+stress-scene envelope and reduced the stress median by about `19%`. This is a
 real lead.
 
 Other stress observations:
@@ -150,14 +150,14 @@ Other stress observations:
 - two-row final correction was not enough (`~8.8e-03` AOD / `~9.6 hPa` on the
   default fast-stage run);
 - three-row and greedy four-row final-correction sets could stay accurate on
-  stress cases, but were slower than the existing four-row correction in this
-  noisy run, likely because the selected endpoints widened expensive O2 A
+  stress scenes, but were slower than the existing four-row correction in this
+  noisy run, likely because the selected endpoints widened expensive O2A
   structure rather than just reducing sample count;
-- evenly spaced 12-row fast-stage sampling was accurate on stress cases but
+- evenly spaced 12-row fast-stage sampling was accurate on stress scenes but
   slower than the greedy 12-row set, so row placement matters more than count
   alone.
 
-Retained 100-case follow-up after promoting the 12-row set as the default:
+Retained 100-scene follow-up after promoting the 12-row set as the default:
 
 - command:
   `ZDISAMAR_WORKER_LIMIT=10 uv run validation/optimal_estimation/sweep_fast_mode_optimal_estimation.py`
@@ -177,6 +177,6 @@ Retained 100-case follow-up after promoting the 12-row set as the default:
   `0.815 s`.
 
 Conclusion: the fast-stage Jacobian does not need the old 38 rows for the
-retained two-state O2 A retrieval.  A 12-row sensitivity-selected set is a
+retained two-state retrieval.  A 12-row sensitivity-selected set is a
 validated default improvement: it is faster and stays inside the existing
 retrieval accuracy envelope.

@@ -10,7 +10,7 @@ const source_levels = internal.optics.source_levels;
 const allocator = std.testing.allocator;
 
 // SourceLevelEvidence ----------------------------------------------------------------------------------------|
-// Test-local RTM source-level evidence from O2 A baseline artifact:                                           |
+// Test-local RTM source-level evidence from baseline artifact:                                           |
 // Canonical expected values owned by this repository.                                                         |
 // internal-dump-baseline.json .probe_forward_inputs[].rtm_quadrature_levels.                                  |
 //                                                                                                             |

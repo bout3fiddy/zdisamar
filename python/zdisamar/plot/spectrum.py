@@ -11,7 +11,7 @@ from .svg import SvgFigure, SvgSeries, line_panel
 
 
 class SpectrumPlot(PlotAccessor):
-    """Plots for the spectral quantities returned by one O2 A run."""
+    """Plots for the spectral quantities returned by one run."""
 
     def __init__(self, spectrum):
 

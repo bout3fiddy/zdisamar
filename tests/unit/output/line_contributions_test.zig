@@ -7,7 +7,7 @@ const line_contributions = internal.output.line_contributions;
 const allocator = std.testing.allocator;
 
 // RowEvidence ------------------------------------------------------------------------------------------------|
-// Test-local O2 line-contribution evidence from O2 A baseline artifact:                                       |
+// Test-local O2 line-contribution evidence from baseline artifact:                                       |
 // Canonical expected values owned by this repository.                                                         |
 // public-python-baseline.json .diagnostics.line_contributions.rows.                                           |
 //                                                                                                             |
@@ -176,7 +176,7 @@ const expected_rows = [_]RowEvidence{
     },
 };
 
-test "O2 line contributions match O2 A public Python evidence at probe wavelengths" {
+test "O2 line contributions match public Python evidence at probe wavelengths" {
     var prepared = try internal.public.prepare(allocator, o2a_scene.reference());
     defer prepared.deinit(allocator);
 
@@ -238,7 +238,7 @@ fn expectRowEqual(
 
 fn expectF64Bits(expected: f64, actual: f64) !void {
     // expectF64Bits ------------------------------------------------------------------------------------------|
-    // Enforce exact f64 bits for O2 A JSON values that round-trip without local derived-math exceptions.      |
+    // Enforce exact f64 bits for JSON values that round-trip without local derived-math exceptions.      |
     // --------------------------------------------------------------------------------------------------------|
     const expected_bits: u64 = @bitCast(expected);
     const actual_bits: u64 = @bitCast(actual);

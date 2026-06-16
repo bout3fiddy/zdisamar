@@ -155,7 +155,7 @@ def main() -> int:
         "validation_case": "zdisamar_o2a_slow_rtm_jacobian_latency",
         "source": "Slow retained scene from shared DISAMAR OE reference sweep case 71.",
         "regime": (
-            "Baseline O2 A per-wavelength noise; two-state aerosol retrieval "
+            "Baseline per-wavelength noise; two-state aerosol retrieval "
             "(AOD, mid-pressure); retrieval_controls(); reused SessionCache for "
             "the retrieval; cold no-session forwards for direct_rtm_call_probe."
         ),

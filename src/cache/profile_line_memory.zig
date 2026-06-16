@@ -30,7 +30,7 @@ const min_hitran_temperature_k = line_physics.min_hitran_temperature_k;
 // Retained weak-line cross-section values for exact setup wavelengths and layer profile nodes.                |
 //                                                                                                             |
 // setup boundary                                                                                              |
-//   O2 A builds a preparation-time line-value grid from the parsed HITRAN rows and the computed layer grid.   |
+//   builds a preparation-time line-value grid from the parsed HITRAN rows and the computed layer grid.   |
 //   Rows are indexed as wavelength-major, then layer-node minor, so later optics code can read a contiguous   |
 //   profile column for each exact wavelength without rebuilding weak-line Voigt terms.                        |
 // ------------------------------------------------------------------------------------------------------------|
@@ -186,7 +186,7 @@ pub fn buildProfileLineValues(
     scene: scene_input.Scene,
 ) !ProfileLineValues {
     // buildProfileLineValues ---------------------------------------------------------------------------------|
-    // Build line values over the case's evenly spaced setup wavelengths.                                      |
+    // Build line values over the scene's evenly spaced setup wavelengths.                                      |
     // --------------------------------------------------------------------------------------------------------|
     const wavelength_count = scene.spectral_grid.sample_count;
     const wavelengths_nm = try allocator.alloc(f64, wavelength_count);
@@ -245,7 +245,7 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
     // row contract                                                                                            |
     //   Output rows stay wavelength-major and preserve the input wavelength order exactly. Dense spectrum     |
     //   prefetch can therefore use its `RadianceWavelengthList` index as the ProfileLineValues index.         |
-    //   `build_layer_values` keeps the O2 A diagnostic layer rows for evidence paths. The public spectrum     |
+    //   `build_layer_values` keeps the diagnostic layer rows for evidence paths. The public spectrum     |
     //   route uses only support-profile total sigma, so root skips preparing unused layer rows.               |
     // --------------------------------------------------------------------------------------------------------|
     var build_arena = std.heap.ArenaAllocator.init(allocator);
@@ -313,7 +313,7 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
         );
     }
 
-    // The canonical temperature derivative is a centered finite difference at T +/- 0.5 K. The public O2 A
+    // The canonical temperature derivative is a centered finite difference at T +/- 0.5 K. The public
     // Jacobian states are surface/aerosol controls, so root spectrum runs do not read d_sigma/dT and skip
     // these two full weak-line state families. Explicit profile-line canonical builders still request the rows
     // directly, and the reuse stamp records the choice so mismatched session caches cannot mix.
@@ -511,7 +511,7 @@ fn buildProfileLineValuesByWavelength(
 
     // instrumentation: trace zone: profile spectroscopy cache build ----------------------------------------- |
     // captures: profile-line cache build wall time and exact-wavelength count                                 |
-    // why: shows setup cost that O2 A compares before forward prefetch starts.                                |
+    // why: shows setup cost that compares before forward prefetch starts.                                |
     const zone = Trace.staticZone(@src(), "profile_spectroscopy_cache.build");
     zone.value(@intCast(wavelengths_nm.len));
     defer zone.end();
@@ -1359,7 +1359,7 @@ fn activeLine(
     line_strength_threshold: f64,
 ) bool {
     // activeLine ---------------------------------------------------------------------------------------------|
-    // Apply the O2 A line-gas isotope and weak-line threshold controls to one parsed HITRAN row.              |
+    // Apply the line-gas isotope and weak-line threshold controls to one parsed HITRAN row.              |
     // --------------------------------------------------------------------------------------------------------|
     if (line.gas_index != 7) return false;
 

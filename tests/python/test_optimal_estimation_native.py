@@ -121,7 +121,7 @@ def test_native_oe_reuses_matching_supplied_cache() -> None:
 
         def load(self, scene, *, copy_scene: bool = True) -> None:
 
-            raise AssertionError("matching OE cache reloaded its prepared case")
+            raise AssertionError("matching OE cache reloaded its prepared scene")
 
         def warm_optimal_estimation(self, state_names: tuple[str, ...]) -> None:
 

@@ -15,7 +15,7 @@ pub const Error = error{
 // gauss_angles.zig ------------------------------------------------------------------------------------------ |
 // LABOS stream direction geometry for one solar/viewing angle pair.                                           |
 //                                                                                                             |
-//   The Gauss nodes come from the O2 A DISAMAR division-point helper.                                         |
+//   The Gauss nodes come from the DISAMAR division-point helper.                                         |
 //                                                                                                             |
 // numerical guards                                                                                            |
 //   direction_pair_floor = 1.0e-12 keeps plus/same-stream denominators finite.                                |

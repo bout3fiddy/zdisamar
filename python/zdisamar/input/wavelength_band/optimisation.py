@@ -1,4 +1,4 @@
-"""Case-owned optimisation settings for wavelength-band inputs."""
+"""Scene-owned optimisation settings for wavelength-band inputs."""
 
 import math
 from bisect import bisect_left
@@ -163,7 +163,7 @@ class FastModeWavelengthWindow:
 
 
 def default_fast_stage_wavelength_windows() -> tuple[FastModeWavelengthWindow, ...]:
-    """Return the tuned sparse fast-stage O2 A row selectors used by fastmode."""
+    """Return the tuned sparse fast-stage row selectors used by fastmode."""
 
     return (
         FastModeWavelengthWindow((758.0, 758.08), 2),
@@ -177,9 +177,9 @@ def default_fast_stage_wavelength_windows() -> tuple[FastModeWavelengthWindow, .
 
 @dataclass
 class FastModeRadiativeTransfer:
-    """RTM work-reduction controls applied when O2 A fastmode is enabled.
+    """RTM work-reduction controls applied when fastmode is enabled.
 
-    These fields are a case-owned view onto the LABOS performance thresholds.
+    These fields are a scene-owned view onto the LABOS performance thresholds.
     They do not change the physical scene, measurement grid, aerosol state, or
     instrument model.  They change how much radiative-transfer work is done
     before a term is treated as small enough to skip.
@@ -227,7 +227,7 @@ class FastModeRadiativeTransfer:
         )
 
     def apply_to(self, thresholds: object) -> None:
-        """Apply the fastmode threshold overrides to a case copy."""
+        """Apply the fastmode threshold overrides to a scene copy."""
 
         for key, value in self.to_dict().items():
             if not hasattr(thresholds, key):
@@ -250,13 +250,13 @@ class FastModeAdaptiveReferenceGrid:
     """High-resolution O2 line-grid controls changed by fastmode.
 
     These knobs reduce work before convolution to the instrument grid.  Lower
-    values produce fewer high-resolution samples around O2 A lines, so they can
+    values produce fewer high-resolution samples around O2A lines, so they can
     speed up the forward model but may under-resolve narrow line structure.
 
     `points_per_fwhm` controls the nominal high-resolution sampling density per
     instrument-line FWHM.  `strong_line_min_divisions` and
     `strong_line_max_divisions` bound the extra subdivisions around strong line
-    cores, where most of the O2 A information lives.
+    cores, where most of the information lives.
     """
 
     points_per_fwhm: int = 28
@@ -285,7 +285,7 @@ class FastModeAdaptiveReferenceGrid:
         )
 
     def apply_to(self, grid: dict[str, int]) -> None:
-        """Apply fastmode adaptive-grid overrides to a case copy."""
+        """Apply fastmode adaptive-grid overrides to a scene copy."""
 
         for key, value in self.to_dict().items():
             if key not in grid:
@@ -458,7 +458,7 @@ class FastModeFastStageSampling:
 
     Fastmode can trade retrieval speed against information content only through
     this explicit OE setting.  The default keeps a blue continuum window plus
-    sparse samples across the O2 A P branch, then the final-correction settings
+    sparse samples across the O2A P branch, then the final-correction settings
     run one full-physics update on their own sparse wavelength set.
 
     `windows` selects evenly spaced samples from one or more measured wavelength
@@ -635,12 +635,12 @@ class FastModeOe:
 
 @dataclass
 class FastModeOptimisation:
-    """Inspectable O2 A fastmode settings owned by the case.
+    """Inspectable fastmode settings owned by the scene.
 
-    Enabling this section does not mutate the physical case immediately.  The
-    RTM and adaptive-grid overrides are applied to a copied native case at load
+    Enabling this section does not mutate the physical scene immediately.  The
+    RTM and adaptive-grid overrides are applied to a copied native scene at load
     time, while OE controls and final-correction settings stay on the Python
-    case so `retrieve` can run the complete fastmode retrieval in one session.
+    scene so `retrieve` can run the complete fastmode retrieval in one session.
     """
 
     enabled: bool = False
@@ -673,7 +673,7 @@ class FastModeOptimisation:
         )
 
     def apply_to_scene(self, scene: FastModeApplicationScene) -> None:
-        """Apply fastmode RTM controls to a copied wavelength-band case."""
+        """Apply fastmode RTM controls to a copied wavelength-band scene."""
 
         self.radiative_transfer.apply_to(scene.radiative_transfer.performance_thresholds)
         self.adaptive_reference_grid.apply_to(scene.instrument_response.adaptive_reference_grid)
@@ -700,9 +700,9 @@ class FastModeOptimisation:
 
 @dataclass
 class Optimisation:
-    """Case-owned optimisation modes for O2 A workflows.
+    """Scene-owned optimisation modes for workflows.
 
-    The public flow remains one O2 A case and one OE entrypoint.  Optimisation
+    The public flow remains one scene and one OE entrypoint.  Optimisation
     settings live beside the physical inputs so they can be serialized and
     rejected if unknown fields are parsed.
     """
@@ -713,7 +713,7 @@ class Optimisation:
     def from_dict(cls, data: dict[str, object]) -> Self:
 
         allowed = {"fastmode"}
-        reject_unknown_fields(data, allowed, "O2 A optimisation")
+        reject_unknown_fields(data, allowed, "optimisation")
 
         return cls(fastmode=FastModeOptimisation.from_dict(object_dict(data.get("fastmode", {}))))
 

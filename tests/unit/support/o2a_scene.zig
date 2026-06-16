@@ -29,7 +29,7 @@ const output_isotopes = [_]usize{ 1, 2, 3 };
 
 pub fn reference() scene_input.Scene {
     // reference --------------------------------------------------------------------------------------------- |
-    // Test fixture matching the Python-owned O2 A default scene. Product code must receive scenes as input.   |
+    // Test fixture matching the Python-owned default scene. Product code must receive scenes as input.   |
     // --------------------------------------------------------------------------------------------------------|
     return .{
         .id = "o2a_disamar_reference_python",
@@ -138,7 +138,7 @@ fn nativeJsonPayload(scene: scene_input.Scene) NativeSceneJson {
         .metadata = .{
             .id = "disamar_reference_o2a",
             .storage = "disamar-reference-o2a",
-            .description = "DISAMAR O2 A reference scene defined in Python.",
+            .description = "DISAMAR O2A reference scene defined in Python.",
         },
         .plan = .{ .derivative_mode = "none" },
 

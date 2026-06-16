@@ -35,7 +35,7 @@ const Allocator = std.mem.Allocator;
 pub const geometry_direction_cosine_floor: f64 = 0.05;
 
 // root.zig ---------------------------------------------------------------------------------------------------|
-// Public explicit row surface for the O2 A forward model.                                                     |
+// Public explicit row surface for the forward model.                                                     |
 //                                                                                                             |
 // public flow                                                                                                 |
 //   Scene -> prepare -> warmSessionMemory -> runForwardWithSessionMemory                                      |
@@ -81,24 +81,24 @@ pub const buildRunTables = setup_tables.buildRunTables;
 pub const buildProfileLineValues = profile_lines.buildProfileLineValues;
 
 // Prepared ---------------------------------------------------------------------------------------------------|
-// Public owner for parsed or caller-provided O2 A controls and setup tables.                                  |
+// Public owner for parsed or caller-provided controls and setup tables.                                  |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 2728 B (2.664 KiB), align: 8                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [   0.. 703] case  : Scene                                                                                  |
+// [   0.. 703] scene : Scene                                                                                  |
 // [ 704..2727] tables: RunTables                                                                              |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   case borrows control strings/slices. tables owns loaded physical setup arrays and scalar tables.          |
+//   scene borrows control strings/slices. tables owns loaded physical setup arrays and scalar tables.          |
 pub const Prepared = struct {
     scene: Scene,
     tables: RunTables,
 
     pub fn deinit(self: *Prepared, allocator: Allocator) void {
         // Prepared.deinit ------------------------------------------------------------------------------------|
-        // Release setup tables; case strings and slices are borrowed from caller-owned storage.               |
+        // Release setup tables; scene strings and slices are borrowed from caller-owned storage.               |
         // ----------------------------------------------------------------------------------------------------|
         self.tables.deinit(allocator);
         self.* = undefined;
@@ -108,14 +108,14 @@ pub const Prepared = struct {
 
 pub fn initSessionMemory(allocator: Allocator) SessionMemory {
     // initSessionMemory --------------------------------------------------------------------------------------|
-    // Create an empty reusable O2 A session cache.                                                            |
+    // Create an empty reusable session cache.                                                            |
     // --------------------------------------------------------------------------------------------------------|
     return SessionMemory.init(allocator);
 }
 
 pub fn prepare(allocator: Allocator, scene: Scene) !Prepared {
     // prepare ------------------------------------------------------------------------------------------------|
-    // Build the O2 A setup tables retained across forward runs.                                               |
+    // Build the setup tables retained across forward runs.                                               |
     // --------------------------------------------------------------------------------------------------------|
     return .{
         .scene = scene,
@@ -130,7 +130,7 @@ pub fn warmSessionMemory(
     solve_config: SolveConfig,
 ) !void {
     // warmSessionMemory --------------------------------------------------------------------------------------|
-    // Materialize reusable spectrum, radiance, profile-line, solar, and transport memory for one case.        |
+    // Materialize reusable spectrum, radiance, profile-line, solar, and transport memory for one scene.        |
     // --------------------------------------------------------------------------------------------------------|
     const prepared_solve_config = try controls.prepareSolveConfig(solve_config);
     _ = try prepareSessionRows(allocator, session, prepared, prepared_solve_config);
@@ -143,7 +143,7 @@ pub fn runForwardWithSessionMemory(
     solve_config: SolveConfig,
 ) !SpectrumRunResult {
     // runForwardWithSessionMemory ----------------------------------------------------------------------------|
-    // Run the O2 A product-grid spectrum through caller-retained session memory and return owned arrays.      |
+    // Run the product-grid spectrum through caller-retained session memory and return owned arrays.      |
     //                                                                                                         |
     //   Root-level orchestration follows the integrated transport route in                                    |
     //   `tests/unit/spectrum/spectrum_run_test.zig`                                                           |
@@ -181,7 +181,7 @@ pub fn runForwardWithSessionMemory(
 
     // runForward sampling policy -----------------------------------------------------------------------------|
     // Canonical expected values owned by this repository.                                                     |
-    // product row using integrated radiance and integrated irradiance sampling. O2 A                          |
+    // product row using integrated radiance and integrated irradiance sampling.                          |
     // `evidence/python-reference-case-native.json` exposes no Python-native key for calibration arrays, slit  |
     // kernels, or per-channel integration overrides. Keep this policy fixed here;                             |
     // user-configurable controls enter through Scene JSON and `solveConfig`.                                  |
@@ -230,7 +230,7 @@ pub fn runForwardWithSessionMemory(
 
 pub fn runForward(allocator: Allocator, prepared: *const Prepared, solve_config: SolveConfig) !SpectrumRunResult {
     // runForward ---------------------------------------------------------------------------------------------|
-    // Run one O2 A spectrum with a short-lived session memory owner.                                          |
+    // Run one spectrum with a short-lived session memory owner.                                          |
     // --------------------------------------------------------------------------------------------------------|
     var session = initSessionMemory(allocator);
     defer session.deinit(allocator);
@@ -248,7 +248,7 @@ pub fn runOptimalEstimation(
     retrieval_controls: retrieval.Controls,
 ) !retrieval.Result {
     // runOptimalEstimation -----------------------------------------------------------------------------------|
-    // Run one full-physics O2 A optimal-estimation solve through the explicit forward path.                   |
+    // Run one full-physics optimal-estimation solve through the explicit forward path.                   |
     //                                                                                                         |
     // steps                                                                                                   |
     //   1. copy measurement rows into dense retrieval SoA storage                                             |
@@ -403,7 +403,7 @@ pub fn runOptimalEstimationCorrection(
     retrieval_controls: retrieval.Controls,
 ) !retrieval.Result {
     // runOptimalEstimationCorrection ---------------------------------------------------------------------    |
-    // Apply one full-physics O2 A correction step to a prepared case already written at the fast-stage state. |
+    // Apply one full-physics correction step to a prepared scene already written at the fast-stage state. |
     //                                                                                                         |
     // contract                                                                                                |
     //   The correction path returns exactly one Rodgers update. Controls still validate solver thresholds,    |
@@ -540,8 +540,8 @@ pub fn runOptimalEstimationBatch(
     // Run a correctness-first full-physics OE batch over caller-provided start/prior rows.                    |
     //                                                                                                         |
     // boundary                                                                                                |
-    //   This is the single-worker O2 A batch slice. Each start reuses the same public measurement rows and    |
-    //   prepared case, then copies compact result rows into the run-major BatchResult owner.                  |
+    //   This is the single-worker batch slice. Each start reuses the same public measurement rows and    |
+    //   prepared scene, then copies compact result rows into the run-major BatchResult owner.                  |
     //                                                                                                         |
     // failure model                                                                                           |
     //   OutOfMemory aborts the whole batch. Numerical or control failures mark only that start as failed,     |
@@ -634,7 +634,7 @@ pub fn runFastmodeOptimalEstimationBatch(
     // Run fast-stage starts, then run a full-physics correction batch seeded from the fast-stage states.      |
     //                                                                                                         |
     // boundary                                                                                                |
-    //   Python owns the fast and correction case construction. Zig receives two prepared O2 A scenes, two     |
+    //   Python owns the fast and correction scene construction. Zig receives two prepared scenes, two     |
     //   measurement grids, and config-driven controls; no wavelength counts are hardcoded here.               |
     //                                                                                                         |
     //   converged flags keep fast-stage convergence when the correction stage returns ok.                     |
@@ -767,7 +767,7 @@ pub fn buildAtmosphericBudget(
     wavelengths_nm: []const f64,
 ) !AtmosphericBudget {
     // buildAtmosphericBudget ---------------------------------------------------------------------------------|
-    // Build public atmospheric support-row diagnostic rows for the prepared O2 A case.                        |
+    // Build public atmospheric support-row diagnostic rows for the prepared scene.                        |
     // --------------------------------------------------------------------------------------------------------|
     return atmospheric_budget.build(allocator, prepared.scene, &prepared.tables, wavelengths_nm);
 }
@@ -817,7 +817,7 @@ pub fn buildInstrumentResponse(
 
 pub fn solveConfig(scene: Scene) SolveConfig {
     // solveConfig --------------------------------------------------------------------------------------------|
-    // Build the exercised O2 A transport controls used by integrated transport evidence.                      |
+    // Build the exercised transport controls used by integrated transport evidence.                      |
     // --------------------------------------------------------------------------------------------------------|
     const performance_thresholds = performanceThresholdsWithFourierLimit(scene.rtm);
     return .{
@@ -879,7 +879,7 @@ fn evaluateRetrievalState(
     //                                                                                                         |
     // boundary                                                                                                |
     //   The retrieval driver owns one retained LayerGrid. This function refills its computed rows for the     |
-    //   current state while borrowing line, CIA, phase, instrument, and solar tables from the prepared case.  |
+    //   current state while borrowing line, CIA, phase, instrument, and solar tables from the prepared scene.  |
     //                                                                                                         |
     // refresh                                                                                                 |
     //   aerosol optical depth : rebuild inline AerosolLayerTable                                              |
@@ -920,7 +920,7 @@ fn writeRetrievalStateToScene(
     state: retrieval.StateVector,
 ) !void {
     // writeRetrievalStateToScene -----------------------------------------------------------------------------|
-    // Write active OE scalar values into the case copy used for this iteration.                               |
+    // Write active OE scalar values into the scene copy used for this iteration.                               |
     //                                                                                                         |
     // pressure placement                                                                                      |
     //   target interval takes the new aerosol top/bottom pressures, the adjacent interval boundaries move     |
@@ -1020,7 +1020,7 @@ fn prepareSessionRows(
     const worker_count = spectrum_run.preferredRadianceWorkerCount(dense_count);
     const worker_pool = session.worker_pool.poolForWorkerCount(allocator, worker_count);
 
-    // Public O2 A spectrum runs read support-profile sigma rows through optics interpolation. They do not read
+    // Public spectrum runs read support-profile sigma rows through optics interpolation. They do not read
     // diagnostic layer-node rows or profile-line d_sigma/dT rows for the current surface/aerosol Jacobian set.
     // Both mode bits remain in the reuse stamp so future diagnostic or temperature-profile paths split caches.
     const build_layer_values = false;

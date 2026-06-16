@@ -44,7 +44,7 @@ test "irradianceAtWavelength matches operational spline and clamp behavior" {
     );
     defer tables.deinit(std.testing.allocator);
 
-    // Source: `OperationalSolarSpectrum.interpolateIrradiance` route for the O2 A reference solar asset.
+    // Source: `OperationalSolarSpectrum.interpolateIrradiance` route for the reference solar asset.
     try expectSolar(4.87640000000000000e14, try solar_lookup.irradianceAtWavelength(tables.solar, 753.0));
     try expectSolar(4.86690022241158375e14, try solar_lookup.irradianceAtWavelength(tables.solar, 753.005));
     try expectSolar(4.87870339978322125e14, try solar_lookup.irradianceAtWavelength(tables.solar, 760.005));
@@ -82,7 +82,7 @@ test "integrateIrradianceAtNominalAssumeCapacity weights cached irradiance sampl
         },
     );
 
-    // Source: `spectral_eval.zig` integrateIrradianceAtNominal route with the O2 A reference solar asset.
+    // Source: `spectral_eval.zig` integrateIrradianceAtNominal route with the reference solar asset.
     try expectSolar(4.87366765517170125e14, actual);
     try std.testing.expectEqual(@as(u32, 3), memory.values.count());
 }
@@ -159,7 +159,7 @@ test "integrateIrradianceAtNominalAssumeCapacity rejects malformed side storage"
 
 fn expectSolar(expected: f64, actual: f64) !void {
     // expectSolar --------------------------------------------------------------------------------------------|
-    // Compare large O2 A irradiance values with an absolute tolerance small enough to catch spline changes.   |
+    // Compare large irradiance values with an absolute tolerance small enough to catch spline changes.   |
     // --------------------------------------------------------------------------------------------------------|
     try std.testing.expectApproxEqAbs(expected, actual, 1.0e1);
 }

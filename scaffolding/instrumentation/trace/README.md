@@ -1,6 +1,6 @@
 # Tracy Forward-Model Tracing
 
-This folder owns the Tracy/ztracy tracing workflow for the O2 A forward-model
+This folder owns the Tracy/ztracy tracing workflow for the forward-model
 performance investigation.
 
 ## Capture
@@ -82,7 +82,7 @@ The default counter set is restricted to counters reported as supported by
 fixed_cycles,fixed_instructions,arm_l1d_cache_refill,arm_l1d_cache,arm_br_mis_pred,arm_br_pred
 ```
 
-The script builds the same O2 A LABOS forward harness in `ReleaseFast`, but
+The script builds the same LABOS forward harness in `ReleaseFast`, but
 without ztracy:
 
 ```sh

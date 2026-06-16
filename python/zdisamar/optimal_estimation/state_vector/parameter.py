@@ -1,4 +1,4 @@
-"""Fixed O2 A two-state retrieval composition."""
+"""Fixed two-state retrieval composition."""
 
 import math
 from collections.abc import Sequence
@@ -123,7 +123,7 @@ class StateVector:
         return tuple(bounded)
 
     def write_to(self, target: object, state: Sequence[float]) -> None:
-        """Write all retrieval variables into one O2 A scene."""
+        """Write all retrieval variables into one scene."""
 
         if len(state) != len(self.parameters):
             raise ValueError("state length does not match state vector")

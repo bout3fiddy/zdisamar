@@ -17,7 +17,7 @@ def parse_args() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Verify that the typed Python O2 A setup matches the default DISAMAR parity entrypoint."
+            "Verify that the typed Python setup matches the default DISAMAR parity entrypoint."
         )
     )
     parser.add_argument(
@@ -217,7 +217,7 @@ def run_roundtrip() -> dict[str, Any]:
     }
 
     return {
-        "question": "Does the typed Python O2 A setup match the default DISAMAR parity entrypoint?",
+        "question": "Does the typed Python setup match the default DISAMAR parity entrypoint?",
         "answer": {
             "matches": checks["reference_matches_typed_arrays"],
             "sample_count": checks["typed_sample_count"],

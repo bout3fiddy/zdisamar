@@ -103,7 +103,7 @@ Primary uses:
 
 - find thresholds with very large positive or negative margins;
 - estimate work controlled by a branch;
-- identify branches that are effectively constant for an O2 A workload.
+- identify branches that are effectively constant for a workload.
 
 ## `reduction_expression_rows.parquet`
 
