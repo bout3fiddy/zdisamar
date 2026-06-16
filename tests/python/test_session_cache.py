@@ -31,7 +31,7 @@ def test_session_cache_warms_optimal_estimation_route_once() -> None:
             try:
                 cache.warm_optimal_estimation(("aerosol_optical_depth",))
             except RuntimeError as error:
-                assert "no loaded wavelength-band case" in str(error)
+                assert "no loaded wavelength-band scene" in str(error)
             else:
                 raise AssertionError("unloaded OE cache warm was accepted")
 
