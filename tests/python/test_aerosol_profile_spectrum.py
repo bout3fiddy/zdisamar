@@ -195,7 +195,7 @@ def expect_spectrum_rejected(scene) -> None:
 def expect_profile_jacobian_rejected(cache: rtm.SessionCache) -> None:
 
     try:
-        cache.spectrum(jacobian=True, jacobian_state_names=("aerosol_optical_depth",))
+        cache.spectrum(jacobian=True)
     except ValueError as error:
         assert "profile Jacobians" in str(error)
     else:

@@ -74,7 +74,6 @@ class SessionCache:
         scene: Scene | None = None,
         *,
         jacobian: bool = False,
-        jacobian_state_names: tuple[str, ...] | None = None,
         include_scene: bool = False,
     ):
         """Run the RTM using cached storage."""
@@ -86,7 +85,6 @@ class SessionCache:
 
         return self._handle.spectrum(
             jacobian=jacobian,
-            jacobian_state_names=jacobian_state_names,
             include_scene=include_scene,
         )
 

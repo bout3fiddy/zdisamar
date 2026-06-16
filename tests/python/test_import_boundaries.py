@@ -99,10 +99,10 @@ def test_plot_jacobian_uses_rtm_conversion() -> None:
     from zdisamar.plot.jacobian import jacobian_frame
 
     class Spectrum:
-        jacobian_state_names = ("aerosol_optical_depth",)
+        jacobian_state_names = ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")
         wavelength_nm = np.array([755.0, 760.0], dtype=np.float64)
         irradiance = np.array([10.0, 12.0], dtype=np.float64)
-        radiance_jacobian = np.array([[0.2], [0.3]], dtype=np.float64)
+        radiance_jacobian = np.array([[0.2, 0.02], [0.3, 0.03]], dtype=np.float64)
 
         def reflectance_jacobian(self, state: str):
 

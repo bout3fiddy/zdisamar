@@ -681,6 +681,10 @@ fn densifyVendorPressureGrid(
     // --------------------------------------------------------------------------------------------------------|
     if (profile.rows.len < 2) return allocator.dupe(readers.AtmosphereProfileRow, profile.rows);
 
+    var hydrostatic_arena = std.heap.ArenaAllocator.init(allocator);
+    defer hydrostatic_arena.deinit();
+    const scratch_allocator = hydrostatic_arena.allocator();
+
     const scale_height_guess_km = 8.0;
     var dense_row_count: usize = 1;
     for (profile.rows[0 .. profile.rows.len - 1], profile.rows[1..]) |lower, upper| {
@@ -691,14 +695,10 @@ fn densifyVendorPressureGrid(
         dense_row_count += additional_levels + 1;
     }
 
-    const dense_pressures_hpa = try allocator.alloc(f64, dense_row_count);
-    defer allocator.free(dense_pressures_hpa);
-    const dense_temperatures_k = try allocator.alloc(f64, dense_row_count);
-    defer allocator.free(dense_temperatures_k);
-    const dense_altitudes_km = try allocator.alloc(f64, dense_row_count);
-    defer allocator.free(dense_altitudes_km);
-    const dense_altitudes_gp_km = try allocator.alloc(f64, (dense_row_count - 1) * 2);
-    defer allocator.free(dense_altitudes_gp_km);
+    const dense_pressures_hpa = try scratch_allocator.alloc(f64, dense_row_count);
+    const dense_temperatures_k = try scratch_allocator.alloc(f64, dense_row_count);
+    const dense_altitudes_km = try scratch_allocator.alloc(f64, dense_row_count);
+    const dense_altitudes_gp_km = try scratch_allocator.alloc(f64, (dense_row_count - 1) * 2);
 
     var dense_index: usize = 0;
     dense_pressures_hpa[dense_index] = profile.rows[0].pressure_hpa;
@@ -731,8 +731,7 @@ fn densifyVendorPressureGrid(
     const universal_gas_constant = 8.3144621;
     const mean_molecular_weight_air = 28.964e-3;
     const safe_surface_pressure_hpa = @max(surface_pressure_hpa, 1.0e-9);
-    const dense_log_pressures = try allocator.alloc(f64, dense_row_count);
-    defer allocator.free(dense_log_pressures);
+    const dense_log_pressures = try scratch_allocator.alloc(f64, dense_row_count);
 
     for (dense_pressures_hpa, 0..) |pressure_hpa, index| {
         dense_log_pressures[index] = @log(@max(pressure_hpa, 1.0e-9));
@@ -750,8 +749,7 @@ fn densifyVendorPressureGrid(
         }
     }
 
-    const previous_altitudes_km = try allocator.dupe(f64, dense_altitudes_km);
-    defer allocator.free(previous_altitudes_km);
+    const previous_altitudes_km = try scratch_allocator.dupe(f64, dense_altitudes_km);
 
     var iteration: usize = 0;
     while (iteration < 6) : (iteration += 1) {

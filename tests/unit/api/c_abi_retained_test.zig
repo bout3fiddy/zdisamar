@@ -4,62 +4,27 @@ const c_api = @import("c_api");
 const o2a_json = @import("o2a_json.zig");
 
 test "optimal-estimation C ABI result rows keep ctypes layout" {
-    try std.testing.expectEqual(@as(usize, 80), @sizeOf(c_api.ZdsOptimalEstimationStateSpec));
+    try std.testing.expectEqual(@as(usize, 48), @sizeOf(c_api.ZdsOptimalEstimationScalarSpec));
+    try std.testing.expectEqual(@as(usize, 88), @sizeOf(c_api.ZdsOptimalEstimationPressureSpec));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(c_api.ZdsOptimalEstimationControls));
-    try std.testing.expectEqual(@as(usize, 72), @sizeOf(c_api.ZdsOptimalEstimationRequest));
+    try std.testing.expectEqual(@as(usize, 192), @sizeOf(c_api.ZdsOptimalEstimationRequest));
     try std.testing.expectEqual(@as(usize, 120), @sizeOf(c_api.ZdsOptimalEstimationResult));
-    try std.testing.expectEqual(@as(usize, 104), @sizeOf(c_api.ZdsOptimalEstimationBatchRequest));
+    try std.testing.expectEqual(@as(usize, 224), @sizeOf(c_api.ZdsOptimalEstimationBatchRequest));
     try std.testing.expectEqual(@as(usize, 72), @sizeOf(c_api.ZdsOptimalEstimationBatchResult));
     try std.testing.expectEqual(@as(usize, 104), @sizeOf(c_api.ZdsOptimalEstimationFastmodeBatchResult));
 }
 
-test "warm optimal-estimation cache accepts the two retained Jacobian states" {
+test "warm optimal-estimation cache uses the fixed two-state Jacobian route" {
     const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
     defer c_api.zds_context_destroy(ctx);
 
     try prepareDefault(ctx);
 
-    const state_ids = [_]u8{ 0, 1 };
     try std.testing.expectEqual(
         @intFromEnum(c_api.ZdsStatus.ok),
-        c_api.zds_warm_o2a_optimal_estimation(ctx, state_ids[0..].ptr, state_ids.len),
+        c_api.zds_warm_o2a_optimal_estimation(ctx),
     );
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(ctx)));
-}
-
-test "warm optimal-estimation cache rejects one-state request" {
-    const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
-    defer c_api.zds_context_destroy(ctx);
-
-    try prepareDefault(ctx);
-
-    const state_ids = [_]u8{0};
-    try std.testing.expectEqual(
-        @intFromEnum(c_api.ZdsStatus.failure),
-        c_api.zds_warm_o2a_optimal_estimation(ctx, state_ids[0..].ptr, state_ids.len),
-    );
-    try std.testing.expectEqualStrings(
-        "invalid optimal-estimation state vector",
-        std.mem.span(c_api.zds_last_error(ctx)),
-    );
-}
-
-test "warm optimal-estimation cache rejects removed surface-albedo state lane" {
-    const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
-    defer c_api.zds_context_destroy(ctx);
-
-    try prepareDefault(ctx);
-
-    const removed_surface_albedo_id = [_]u8{2};
-    try std.testing.expectEqual(
-        @intFromEnum(c_api.ZdsStatus.failure),
-        c_api.zds_warm_o2a_optimal_estimation(
-            ctx,
-            removed_surface_albedo_id[0..].ptr,
-            removed_surface_albedo_id.len,
-        ),
-    );
-    try std.testing.expectEqualStrings("UnsupportedJacobianState", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
 test "optimal-estimation free hooks clear borrowed result rows" {
@@ -113,17 +78,15 @@ test "single-run optimal-estimation returns result handle for full-grid measurem
 
     const altitude_km = [_]f64{ 0.0, 1.0 };
     const pressure_hpa = [_]f64{ 900.0, 800.0 };
-    var states = [_]c_api.ZdsOptimalEstimationStateSpec{
-        aerosolOpticalDepthSpec(),
-        aerosolPressureSpec(&altitude_km, &pressure_hpa),
-    };
-    states[0].initial = 0.3;
-    states[0].prior = 0.3;
+    var aod = aerosolOpticalDepthSpec();
+    aod.initial = 0.3;
+    aod.prior = 0.3;
     var request = singleRequest(
         spectrum.wavelength_nm[0..spectrum.len],
         spectrum.reflectance[0..spectrum.len],
         variance,
-        &states,
+        aod,
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
     );
     request.controls.max_iterations = 1;
     var result: c_api.ZdsOptimalEstimationResult = .{};
@@ -181,15 +144,12 @@ test "correction optimal-estimation returns one-step result handle" {
 
     const altitude_km = [_]f64{ 0.0, 1.0 };
     const pressure_hpa = [_]f64{ 900.0, 800.0 };
-    var states = [_]c_api.ZdsOptimalEstimationStateSpec{
-        aerosolOpticalDepthSpec(),
-        aerosolPressureSpec(&altitude_km, &pressure_hpa),
-    };
     var request = singleRequest(
         spectrum.wavelength_nm[0..spectrum.len],
         spectrum.reflectance[0..spectrum.len],
         variance,
-        &states,
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
     );
     request.controls.max_iterations = 5;
     var result: c_api.ZdsOptimalEstimationResult = .{};
@@ -240,17 +200,14 @@ test "batch optimal-estimation returns run-major result handle" {
 
     const altitude_km = [_]f64{ 0.0, 1.0 };
     const pressure_hpa = [_]f64{ 900.0, 800.0 };
-    var state_template = [_]c_api.ZdsOptimalEstimationStateSpec{
-        aerosolOpticalDepthSpec(),
-        aerosolPressureSpec(&altitude_km, &pressure_hpa),
-    };
     const initial = [_]f64{ 0.08, 850.0, 0.09, 850.0 };
     const prior = [_]f64{ 0.10, 850.0, 0.10, 850.0 };
     var request = batchRequest(
         spectrum.wavelength_nm[0..spectrum.len],
         spectrum.reflectance[0..spectrum.len],
         variance,
-        &state_template,
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
         &initial,
         &prior,
     );
@@ -304,21 +261,14 @@ test "fastmode optimal-estimation batch returns per-stage metadata" {
 
     const altitude_km = [_]f64{ 0.0, 1.0 };
     const pressure_hpa = [_]f64{ 900.0, 800.0 };
-    var fast_state_template = [_]c_api.ZdsOptimalEstimationStateSpec{
-        aerosolOpticalDepthSpec(),
-        aerosolPressureSpec(&altitude_km, &pressure_hpa),
-    };
-    var correction_state_template = [_]c_api.ZdsOptimalEstimationStateSpec{
-        aerosolOpticalDepthSpec(),
-        aerosolPressureSpec(&altitude_km, &pressure_hpa),
-    };
     const initial = [_]f64{ 0.08, 850.0, 0.09, 850.0 };
     const prior = [_]f64{ 0.10, 850.0, 0.10, 850.0 };
     var fast_request = batchRequest(
         spectrum.wavelength_nm[0..spectrum.len],
         spectrum.reflectance[0..spectrum.len],
         variance,
-        &fast_state_template,
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
         &initial,
         &prior,
     );
@@ -328,7 +278,8 @@ test "fastmode optimal-estimation batch returns per-stage metadata" {
         spectrum.wavelength_nm[0..spectrum.len],
         spectrum.reflectance[0..spectrum.len],
         variance,
-        &correction_state_template,
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
         &initial,
         &prior,
     );
@@ -372,32 +323,6 @@ test "fastmode optimal-estimation batch returns per-stage metadata" {
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(fast_ctx)));
 }
 
-test "optimal-estimation request rejects removed surface-albedo state lane" {
-    const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
-    defer c_api.zds_context_destroy(ctx);
-    try prepareDefault(ctx);
-
-    const wavelength_nm = [_]f64{ 758.0, 760.0 };
-    const reflectance = [_]f64{ 0.12, 0.13 };
-    const variance = [_]f64{ 1.0e-4, 1.0e-4 };
-    const altitude_km = [_]f64{ 0.0, 1.0 };
-    const pressure_hpa = [_]f64{ 900.0, 800.0 };
-    var states = [_]c_api.ZdsOptimalEstimationStateSpec{
-        aerosolOpticalDepthSpec(),
-        aerosolPressureSpec(&altitude_km, &pressure_hpa),
-    };
-    states[0].state_id = 2;
-    var request = singleRequest(&wavelength_nm, &reflectance, &variance, &states);
-    var result: c_api.ZdsOptimalEstimationResult = .{};
-
-    try std.testing.expectEqual(
-        @intFromEnum(c_api.ZdsStatus.failure),
-        c_api.zds_run_o2a_optimal_estimation(ctx, &request, &result),
-    );
-    try std.testing.expectEqual(c_api.ZdsOptimalEstimationResult{}, result);
-    try std.testing.expectEqualStrings("UnsupportedState", std.mem.span(c_api.zds_last_error(ctx)));
-}
-
 test "optimal-estimation pressure state requires profile rows" {
     const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
     defer c_api.zds_context_destroy(ctx);
@@ -406,11 +331,13 @@ test "optimal-estimation pressure state requires profile rows" {
     const wavelength_nm = [_]f64{ 758.0, 760.0 };
     const reflectance = [_]f64{ 0.12, 0.13 };
     const variance = [_]f64{ 1.0e-4, 1.0e-4 };
-    var states = [_]c_api.ZdsOptimalEstimationStateSpec{
+    var request = singleRequest(
+        &wavelength_nm,
+        &reflectance,
+        &variance,
         aerosolOpticalDepthSpec(),
         pressureStateWithoutProfile(),
-    };
-    var request = singleRequest(&wavelength_nm, &reflectance, &variance, &states);
+    );
     var result: c_api.ZdsOptimalEstimationResult = .{};
 
     try std.testing.expectEqual(
@@ -433,9 +360,8 @@ fn prepareDefault(ctx: *c_api.Context) !void {
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
-fn aerosolOpticalDepthSpec() c_api.ZdsOptimalEstimationStateSpec {
+fn aerosolOpticalDepthSpec() c_api.ZdsOptimalEstimationScalarSpec {
     return .{
-        .state_id = 0,
         .has_lower = 1,
         .has_upper = 1,
         .initial = 0.1,
@@ -446,17 +372,18 @@ fn aerosolOpticalDepthSpec() c_api.ZdsOptimalEstimationStateSpec {
     };
 }
 
-fn pressureStateWithoutProfile() c_api.ZdsOptimalEstimationStateSpec {
+fn pressureStateWithoutProfile() c_api.ZdsOptimalEstimationPressureSpec {
     return .{
-        .state_id = 1,
-        .has_lower = 1,
-        .has_upper = 1,
+        .scalar = .{
+            .has_lower = 1,
+            .has_upper = 1,
+            .initial = 850.0,
+            .prior = 850.0,
+            .variance = 100.0,
+            .lower = 600.0,
+            .upper = 1000.0,
+        },
         .interval_index_1based = 1,
-        .initial = 850.0,
-        .prior = 850.0,
-        .variance = 100.0,
-        .lower = 600.0,
-        .upper = 1000.0,
         .thickness_hpa = 10.0,
     };
 }
@@ -464,17 +391,18 @@ fn pressureStateWithoutProfile() c_api.ZdsOptimalEstimationStateSpec {
 fn aerosolPressureSpec(
     altitude_km: []const f64,
     pressure_hpa: []const f64,
-) c_api.ZdsOptimalEstimationStateSpec {
+) c_api.ZdsOptimalEstimationPressureSpec {
     return .{
-        .state_id = 1,
-        .has_lower = 1,
-        .has_upper = 1,
+        .scalar = .{
+            .has_lower = 1,
+            .has_upper = 1,
+            .initial = 850.0,
+            .prior = 850.0,
+            .variance = 100.0,
+            .lower = 600.0,
+            .upper = 1000.0,
+        },
         .interval_index_1based = 2,
-        .initial = 850.0,
-        .prior = 850.0,
-        .variance = 100.0,
-        .lower = 600.0,
-        .upper = 1000.0,
         .thickness_hpa = 10.0,
         .pressure_profile_count = altitude_km.len,
         .pressure_profile_altitude_km = altitude_km.ptr,
@@ -507,15 +435,16 @@ fn singleRequest(
     wavelength_nm: []const f64,
     reflectance: []const f64,
     variance: []const f64,
-    states: []const c_api.ZdsOptimalEstimationStateSpec,
+    aod: c_api.ZdsOptimalEstimationScalarSpec,
+    pressure: c_api.ZdsOptimalEstimationPressureSpec,
 ) c_api.ZdsOptimalEstimationRequest {
     return .{
         .sample_count = wavelength_nm.len,
         .wavelength_nm = wavelength_nm.ptr,
         .reflectance = reflectance.ptr,
         .variance = variance.ptr,
-        .state_count = states.len,
-        .states = states.ptr,
+        .aerosol_optical_depth = aod,
+        .aerosol_layer_pressure = pressure,
     };
 }
 
@@ -523,7 +452,8 @@ fn batchRequest(
     wavelength_nm: []const f64,
     reflectance: []const f64,
     variance: []const f64,
-    state_template: []const c_api.ZdsOptimalEstimationStateSpec,
+    aod: c_api.ZdsOptimalEstimationScalarSpec,
+    pressure: c_api.ZdsOptimalEstimationPressureSpec,
     initial: []const f64,
     prior: []const f64,
 ) c_api.ZdsOptimalEstimationBatchRequest {
@@ -532,9 +462,9 @@ fn batchRequest(
         .wavelength_nm = wavelength_nm.ptr,
         .reflectance = reflectance.ptr,
         .variance = variance.ptr,
-        .state_count = state_template.len,
-        .state_template = state_template.ptr,
-        .run_count = initial.len / state_template.len,
+        .aerosol_optical_depth = aod,
+        .aerosol_layer_pressure = pressure,
+        .run_count = initial.len / 2,
         .initial = initial.ptr,
         .prior = prior.ptr,
         .batch_worker_count = 1,

@@ -1,4 +1,4 @@
-"""Generic state-vector composition."""
+"""Fixed O2 A two-state retrieval composition."""
 
 import math
 from collections.abc import Sequence

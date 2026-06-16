@@ -31,7 +31,7 @@ pub const ScatteringMode = enum(u2) {
 // Prepared derivative route selector.                                                                         |
 //                                                                                                             |
 // none            : reflectance only                                                                          |
-// semi_analytical : same-solve Jacobian propagation for the active state mask                                 |
+// semi_analytical : same-solve Jacobian propagation for the fixed two-state aerosol vector                    |
 // ------------------------------------------------------------------------------------------------------------|
 pub const DerivativeMode = enum(u1) {
     none = 0,
@@ -215,7 +215,7 @@ pub const TransportControls = struct {
 // memory                                                                                                      |
 // [ 0..71] controls              : TransportControls                                                          |
 // [72..72] derivative_mode       : DerivativeMode                                                             |
-// [73..73] derivative_state_mask : StateMask                                                                  |
+// [73..73] wants_jacobian        : bool                                                                       |
 // [74..79] padding               : 6 B                                                                        |
 //                                                                                                             |
 // unused bits: 48 padding + 7 enum-storage slack = 55 bits                                                    |
@@ -223,7 +223,7 @@ pub const TransportControls = struct {
 // footprint: per instance = 80 B (0.078 KiB); total = per instance * live instance count                      |
 pub const SolveConfig = struct {
     derivative_mode: DerivativeMode = .none,
-    derivative_state_mask: jacobian_states.StateMask = jacobian_states.all_states_mask,
+    wants_jacobian: bool = true,
     controls: TransportControls = .{},
 };
 // ------------------------------------------------------------------------------------------------------------|
@@ -236,7 +236,7 @@ pub fn prepareSolveConfig(config: SolveConfig) PrepareError!SolveConfig {
 
     return .{
         .derivative_mode = config.derivative_mode,
-        .derivative_state_mask = jacobian_states.sanitizedMask(config.derivative_state_mask),
+        .wants_jacobian = config.wants_jacobian,
         .controls = config.controls,
     };
 }

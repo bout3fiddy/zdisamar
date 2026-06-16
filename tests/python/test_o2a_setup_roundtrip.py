@@ -86,37 +86,17 @@ def run_roundtrip() -> dict[str, Any]:
         perturbed_session_spectrum = cache.spectrum(jacobian=True)
         perturbed_session_rtm_s = time.perf_counter() - perturbed_session_rtm_start_s
         perturbed_session_arrays = spectrum_arrays(perturbed_session_spectrum)
-        perturbed_session_names = perturbed_session_spectrum.jacobian_state_names
         perturbed_session_jacobian = np.asarray(
             perturbed_session_spectrum.radiance_jacobian,
             dtype=np.float64,
         ).copy()
 
-        requested_jacobian_names = (
-            "aerosol_optical_depth",
-            "aerosol_layer_mid_pressure_hpa",
-        )
-        compact_session_spectrum = cache.spectrum(
-            jacobian=True,
-            jacobian_state_names=requested_jacobian_names,
-        )
-        compact_session_names = compact_session_spectrum.jacobian_state_names
-        compact_session_jacobian = np.asarray(
-            compact_session_spectrum.radiance_jacobian,
+        repeated_session_spectrum = cache.spectrum(jacobian=True)
+        repeated_session_names = repeated_session_spectrum.jacobian_state_names
+        repeated_session_jacobian = np.asarray(
+            repeated_session_spectrum.radiance_jacobian,
             dtype=np.float64,
         ).copy()
-        empty_jacobian_state_selection_rejected = False
-
-        try:
-            cache.spectrum(jacobian=True, jacobian_state_names=())
-        except ValueError:
-            empty_jacobian_state_selection_rejected = True
-
-    full_state_indices = {name: index for index, name in enumerate(perturbed_session_names)}
-    selected_full_jacobian = np.stack(
-        [perturbed_session_jacobian[:, full_state_indices[name]] for name in compact_session_names],
-        axis=1,
-    )
 
     perturbed_functional_spectrum = rtm.spectrum(perturbed_scene, jacobian=True)
     perturbed_functional_arrays = spectrum_arrays(perturbed_functional_spectrum)
@@ -215,20 +195,23 @@ def run_roundtrip() -> dict[str, Any]:
                 rtol=tolerance,
             )
         ),
-        "requested_jacobian_dimension_matches_state_vector": bool(
-            compact_session_names == requested_jacobian_names
-            and compact_session_jacobian.shape
-            == (perturbed_session_arrays["wavelength_nm"].size, len(requested_jacobian_names))
+        "jacobian_dimension_matches_fixed_state_vector": bool(
+            repeated_session_names
+            == (
+                "aerosol_optical_depth",
+                "aerosol_layer_mid_pressure_hpa",
+            )
+            and repeated_session_jacobian.shape
+            == (perturbed_session_arrays["wavelength_nm"].size, 2)
         ),
-        "requested_jacobian_columns_match_full_native_columns": bool(
+        "repeated_jacobian_matches_full_native_columns": bool(
             np.allclose(
-                compact_session_jacobian,
-                selected_full_jacobian,
+                repeated_session_jacobian,
+                perturbed_session_jacobian,
                 atol=tolerance,
                 rtol=tolerance,
             )
         ),
-        "empty_jacobian_state_selection_rejected": empty_jacobian_state_selection_rejected,
         "parity_route_used": True,
         "tolerance": tolerance,
     }
@@ -279,12 +262,10 @@ def main() -> int:
         f"session_matches_typed_arrays={checks['session_matches_typed_arrays']}, "
         "session_reload_matches_functional_jacobian="
         f"{checks['session_reload_matches_functional_jacobian']}, "
-        "requested_jacobian_dimension_matches_state_vector="
-        f"{checks['requested_jacobian_dimension_matches_state_vector']}, "
-        "requested_jacobian_columns_match_full_native_columns="
-        f"{checks['requested_jacobian_columns_match_full_native_columns']}, "
-        "empty_jacobian_state_selection_rejected="
-        f"{checks['empty_jacobian_state_selection_rejected']}"
+        "jacobian_dimension_matches_fixed_state_vector="
+        f"{checks['jacobian_dimension_matches_fixed_state_vector']}, "
+        "repeated_jacobian_matches_full_native_columns="
+        f"{checks['repeated_jacobian_matches_full_native_columns']}"
     )
     print(f"json: {output_path}")
     excluded = {"tolerance", "typed_sample_count", "reference_sample_count"}

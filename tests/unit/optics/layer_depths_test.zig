@@ -430,11 +430,7 @@ test "layer optics fill aerosol optical-depth jacobian lanes from current route 
     const layers = try allocator.alloc(layer_depths.LayerOptics, tables.layers.layer_pressures_hpa.len);
     defer allocator.free(layers);
     try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, support_rows, layers, null);
-    layer_depths.fillLayerAerosolJacobians(
-        tables.aerosol,
-        jacobian.stateMask(.aerosol_optical_depth),
-        layers,
-    );
+    layer_depths.fillLayerAerosolJacobians(tables.aerosol, layers);
 
     for (aerosol_jacobian_layers_758) |expected| {
         const layer_index: usize = @intCast(expected.layer_index);

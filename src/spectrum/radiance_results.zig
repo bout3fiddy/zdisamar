@@ -80,8 +80,7 @@ pub fn wantsJacobian(solve_config: controls.SolveConfig) bool {
     // wantsJacobian ----------------------------------------------------------------------------------------- |
     // Decide whether dense radiance storage and nominal gathers need active Jacobian lanes.                   |
     // --------------------------------------------------------------------------------------------------------|
-    return solve_config.derivative_mode != .none and
-        jacobian_states.activeStateCount(solve_config.derivative_state_mask) != 0;
+    return solve_config.derivative_mode != .none and solve_config.wants_jacobian;
 }
 
 pub fn scaleReflectanceToRadiance(
@@ -108,7 +107,7 @@ pub fn scaleReflectanceToRadiance(
     const scale = solar_cosine * solar_irradiance / std.math.pi;
 
     const radiance_jacobian = if (wantsJacobian(solve_config))
-        jacobian_states.scaleMasked(reflectance.jacobian, scale, solve_config.derivative_state_mask)
+        jacobian_states.scale(reflectance.jacobian, scale)
     else
         jacobian_states.zero();
 
@@ -181,11 +180,10 @@ pub fn integratePrefetchedRadianceAtNominal(
         radiance_sum += weight * results.radiance[result_index];
 
         if (wants_jacobian) {
-            jacobian_states.addScaledMasked(
+            jacobian_states.addScaled(
                 &jacobian_sum,
                 results.jacobian[result_index],
                 weight,
-                solve_config.derivative_state_mask,
             );
         }
     }

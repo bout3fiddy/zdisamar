@@ -563,7 +563,6 @@ pub fn reduceLayerOpticsFromSupportRows(
 
 pub fn fillLayerAerosolJacobians(
     aerosol: aerosol_tables.AerosolLayerTable,
-    state_mask: jacobian_states.StateMask,
     layers: []LayerOptics,
 ) void {
     // fillLayerAerosolJacobians ----------------------------------------------------------------------------- |
@@ -585,7 +584,6 @@ pub fn fillLayerAerosolJacobians(
         layer.aerosol_phase_weight_jacobian = jacobian_states.zero();
     }
 
-    if (!jacobian_states.includes(state_mask, .aerosol_optical_depth)) return;
     if (aerosol.profile.len != 0) return;
     if (aerosol.optical_depth <= 0.0) return;
 

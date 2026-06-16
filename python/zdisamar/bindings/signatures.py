@@ -40,7 +40,7 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
     bind(
         lib,
         "zds_warm_o2a_optimal_estimation",
-        [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t],
+        [ctypes.c_void_p],
         ctypes.c_int,
     )
     bind(lib, "zds_run_spectrum", [ctypes.c_void_p, ctypes.POINTER(CSpectrum)], ctypes.c_int)
@@ -48,17 +48,6 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         lib,
         "zds_run_spectrum_jacobian",
         [ctypes.c_void_p, ctypes.POINTER(CSpectrum)],
-        ctypes.c_int,
-    )
-    bind(
-        lib,
-        "zds_run_spectrum_jacobian_for_states",
-        [
-            ctypes.c_void_p,
-            ctypes.POINTER(CSpectrum),
-            ctypes.POINTER(ctypes.c_uint8),
-            ctypes.c_size_t,
-        ],
         ctypes.c_int,
     )
     bind(

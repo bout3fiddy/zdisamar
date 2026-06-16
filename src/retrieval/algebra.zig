@@ -48,36 +48,31 @@ pub fn zeroMatrix() Matrix {
     return .{.{0.0} ** max_state_count} ** max_state_count;
 }
 
-pub fn identityMatrix(state_count: usize) Matrix {
+pub fn identityMatrix() Matrix {
     // identityMatrix -----------------------------------------------------------------------------------------|
-    // Build an identity matrix over the leading state_count rows and columns.                                 |
+    // Build the fixed two-state identity matrix.                                                              |
     // --------------------------------------------------------------------------------------------------------|
-    var result = zeroMatrix();
-    for (0..state_count) |index| result[index][index] = 1.0;
-    return result;
+    return .{ .{ 1.0, 0.0 }, .{ 0.0, 1.0 } };
 }
 
-fn symmetrize(matrix: *Matrix, state_count: usize) void {
+fn symmetrize(matrix: *Matrix) void {
     // symmetrize ---------------------------------------------------------------------------------------------|
-    // Average symmetric off-diagonal entries before symmetric eigensolve or inversion.                        |
+    // Average the single off-diagonal pair before symmetric eigensolve or inversion.                          |
     // --------------------------------------------------------------------------------------------------------|
-    for (0..state_count) |row| {
-        for (row + 1..state_count) |col| {
-            const value = 0.5 * (matrix[row][col] + matrix[col][row]);
-            matrix[row][col] = value;
-            matrix[col][row] = value;
-        }
-    }
+    const value = 0.5 * (matrix[0][1] + matrix[1][0]);
+    matrix[0][1] = value;
+    matrix[1][0] = value;
 }
 
-pub fn choleskyLowerDiagonal(prior_variance: []const f64, sqrt_sa: *Vector, sqrt_inv_sa: *Vector) !void {
+pub fn choleskyLowerDiagonal(prior_variance: Vector, sqrt_sa: *Vector, sqrt_inv_sa: *Vector) !void {
     // choleskyLowerDiagonal ----------------------------------------------------------------------------------|
     // Convert diagonal prior covariance values into sqrt(Sa) and sqrt(Sa)^-1 lanes.                           |
     //                                                                                                         |
     // guard                                                                                                   |
     //   variance must be finite and positive because the retrieval update divides by sqrt(variance).          |
     // --------------------------------------------------------------------------------------------------------|
-    for (prior_variance, 0..) |variance, index| {
+    inline for (0..max_state_count) |index| {
+        const variance = prior_variance[index];
         if (variance <= 0.0 or !std.math.isFinite(variance)) return error.InvalidPriorCovariance;
         const root = @sqrt(variance);
         sqrt_sa[index] = root;
@@ -85,7 +80,7 @@ pub fn choleskyLowerDiagonal(prior_variance: []const f64, sqrt_sa: *Vector, sqrt
     }
 }
 
-pub fn jacobiEigenSymmetric(input: Matrix, state_count: usize) struct {
+pub fn jacobiEigenSymmetric(input: Matrix) struct {
     values: Vector,
     vectors: Matrix,
 } {
@@ -94,176 +89,111 @@ pub fn jacobiEigenSymmetric(input: Matrix, state_count: usize) struct {
     //                                                                                                         |
     // hot path                                                                                                |
     //   repeated : once per OE solver update                                                                  |
-    //   shape    : at most 3x3, no heap storage, fixed 24-sweep cap                                           |
+    //   shape    : fixed 2x2, no heap storage                                                                 |
     //   output   : eigenvalues sorted descending with matching eigenvector columns                            |
     //                                                                                                         |
     // math                                                                                                    |
-    //   Jacobi rotations zero one off-diagonal pair a[p,q] at a time while accumulating eigenvectors.         |
+    //   One Jacobi rotation zeros the only off-diagonal pair while accumulating eigenvectors.                 |
     // --------------------------------------------------------------------------------------------------------|
     var a = input;
-    symmetrize(&a, state_count);
-    var vectors = identityMatrix(state_count);
+    symmetrize(&a);
+    var vectors = identityMatrix();
 
-    for (0..24) |_| {
-        var changed = false;
-        for (0..state_count) |p| {
-            for (p + 1..state_count) |q| {
-                const apq = a[p][q];
-                if (@abs(apq) <= eigen_tolerance) continue;
-                changed = true;
+    const apq = a[0][1];
+    if (@abs(apq) > eigen_tolerance) {
+        const app = a[0][0];
+        const aqq = a[1][1];
+        const tau = (aqq - app) / (2.0 * apq);
+        const sign: f64 = if (tau < 0.0) -1.0 else 1.0;
+        const t = sign / (@abs(tau) + @sqrt(1.0 + tau * tau));
+        const c = 1.0 / @sqrt(1.0 + t * t);
+        const s = t * c;
 
-                const app = a[p][p];
-                const aqq = a[q][q];
-                const tau = (aqq - app) / (2.0 * apq);
-                const sign: f64 = if (tau < 0.0) -1.0 else 1.0;
-                const t = sign / (@abs(tau) + @sqrt(1.0 + tau * tau));
-                const c = 1.0 / @sqrt(1.0 + t * t);
-                const s = t * c;
+        const t_apq = t * apq;
+        a[0][0] = app - t_apq;
+        a[1][1] = aqq + t_apq;
+        a[0][1] = 0.0;
+        a[1][0] = 0.0;
 
-                for (0..state_count) |k| {
-                    if (k == p or k == q) continue;
-                    const akp = a[k][p];
-                    const akq = a[k][q];
-                    a[k][p] = c * akp - s * akq;
-                    a[p][k] = a[k][p];
-                    a[k][q] = s * akp + c * akq;
-                    a[q][k] = a[k][q];
-                }
-
-                const t_apq = t * apq;
-                a[p][p] = app - t_apq;
-                a[q][q] = aqq + t_apq;
-                a[p][q] = 0.0;
-                a[q][p] = 0.0;
-
-                for (0..state_count) |k| {
-                    const vkp = vectors[k][p];
-                    const vkq = vectors[k][q];
-                    vectors[k][p] = c * vkp - s * vkq;
-                    vectors[k][q] = s * vkp + c * vkq;
-                }
-            }
-        }
-        if (!changed) break;
+        vectors[0][0] = c;
+        vectors[0][1] = s;
+        vectors[1][0] = -s;
+        vectors[1][1] = c;
     }
 
-    var values = zeroVector();
-    for (0..state_count) |index| values[index] = @max(a[index][index], 0.0);
-    sortEigenPairs(&values, &vectors, state_count);
+    var values = Vector{ @max(a[0][0], 0.0), @max(a[1][1], 0.0) };
+    sortEigenPairs(&values, &vectors);
     return .{ .values = values, .vectors = vectors };
 }
 
-fn sortEigenPairs(values: *Vector, vectors: *Matrix, state_count: usize) void {
+fn sortEigenPairs(values: *Vector, vectors: *Matrix) void {
     // sortEigenPairs -----------------------------------------------------------------------------------------|
     // Keep eigenvalues in descending order and swap matching eigenvector columns.                             |
     // --------------------------------------------------------------------------------------------------------|
-    if (state_count <= 1) return;
+    if (values[0] >= values[1]) return;
 
-    for (0..state_count - 1) |i| {
-        var best = i;
-        for (i + 1..state_count) |j| {
-            if (values[j] > values[best]) best = j;
-        }
-        if (best == i) continue;
-
-        std.mem.swap(f64, &values[i], &values[best]);
-        for (0..state_count) |row| std.mem.swap(f64, &vectors[row][i], &vectors[row][best]);
-    }
+    std.mem.swap(f64, &values[0], &values[1]);
+    std.mem.swap(f64, &vectors[0][0], &vectors[0][1]);
+    std.mem.swap(f64, &vectors[1][0], &vectors[1][1]);
 }
 
-pub fn matrixVector(matrix: Matrix, vector: Vector, state_count: usize) Vector {
+pub fn matrixVector(matrix: Matrix, vector: Vector) Vector {
     // matrixVector -------------------------------------------------------------------------------------------|
-    // Multiply matrix rows by one state vector over the active leading state_count lanes.                     |
+    // Multiply the fixed two-state matrix rows by one state vector.                                           |
     // --------------------------------------------------------------------------------------------------------|
-    var result = zeroVector();
-    for (0..state_count) |row| {
-        var sum: f64 = 0.0;
-        for (0..state_count) |col| sum += matrix[row][col] * vector[col];
-        result[row] = sum;
-    }
-    return result;
+    return .{
+        matrix[0][0] * vector[0] + matrix[0][1] * vector[1],
+        matrix[1][0] * vector[0] + matrix[1][1] * vector[1],
+    };
 }
 
-pub fn transposeMatrixVector(matrix: Matrix, vector: Vector, state_count: usize) Vector {
+pub fn transposeMatrixVector(matrix: Matrix, vector: Vector) Vector {
     // transposeMatrixVector ----------------------------------------------------------------------------------|
-    // Multiply matrix columns by one state vector over the active leading state_count lanes.                  |
+    // Multiply the fixed two-state matrix columns by one state vector.                                        |
     // --------------------------------------------------------------------------------------------------------|
-    var result = zeroVector();
-    for (0..state_count) |col| {
-        var sum: f64 = 0.0;
-        for (0..state_count) |row| sum += matrix[row][col] * vector[row];
-        result[col] = sum;
-    }
-    return result;
+    return .{
+        matrix[0][0] * vector[0] + matrix[1][0] * vector[1],
+        matrix[0][1] * vector[0] + matrix[1][1] * vector[1],
+    };
 }
 
-pub fn invertSymmetric(input: Matrix, state_count: usize) !Matrix {
+pub fn invertSymmetric(input: Matrix) !Matrix {
     // invertSymmetric ----------------------------------------------------------------------------------------|
-    // Invert a small state-space matrix with Gauss-Jordan elimination and row pivoting.                       |
+    // Invert the fixed symmetric 2x2 state-space matrix.                                                      |
     //                                                                                                         |
     // hot path                                                                                                |
-    //   repeated : final posterior covariance and pressure-profile spline helper solves                       |
-    //   shape    : at most 3x3, no heap storage, identity matrix carried beside the working matrix            |
+    //   repeated : final posterior covariance                                                                 |
+    //   shape    : fixed 2x2, no heap storage                                                                 |
     //                                                                                                         |
     // guard                                                                                                   |
-    //   pivot_abs <= 1.0e-24 rejects singular or badly scaled systems before row normalization.               |
+    //   det_abs <= 1.0e-24 rejects singular or badly scaled systems before normalization.                     |
     // --------------------------------------------------------------------------------------------------------|
     var a = input;
-    var inverse = identityMatrix(state_count);
+    symmetrize(&a);
 
-    for (0..state_count) |pivot_index| {
-        var pivot_row = pivot_index;
-        var pivot_abs = @abs(a[pivot_index][pivot_index]);
+    const det = a[0][0] * a[1][1] - a[0][1] * a[0][1];
+    const det_abs = @abs(det);
+    if (det_abs <= 1.0e-24 or !std.math.isFinite(det_abs)) return error.SingularMatrix;
 
-        for (pivot_index + 1..state_count) |row| {
-            const candidate = @abs(a[row][pivot_index]);
-            if (candidate > pivot_abs) {
-                pivot_abs = candidate;
-                pivot_row = row;
-            }
-        }
-
-        if (pivot_abs <= 1.0e-24 or !std.math.isFinite(pivot_abs)) return error.SingularMatrix;
-
-        if (pivot_row != pivot_index) {
-            for (0..state_count) |col| {
-                std.mem.swap(f64, &a[pivot_index][col], &a[pivot_row][col]);
-                std.mem.swap(f64, &inverse[pivot_index][col], &inverse[pivot_row][col]);
-            }
-        }
-
-        const pivot = a[pivot_index][pivot_index];
-        for (0..state_count) |col| {
-            a[pivot_index][col] /= pivot;
-            inverse[pivot_index][col] /= pivot;
-        }
-
-        for (0..state_count) |row| {
-            if (row == pivot_index) continue;
-
-            const factor = a[row][pivot_index];
-            if (factor == 0.0) continue;
-
-            for (0..state_count) |col| {
-                a[row][col] -= factor * a[pivot_index][col];
-                inverse[row][col] -= factor * inverse[pivot_index][col];
-            }
-        }
-    }
-    return inverse;
+    const inv_det = 1.0 / det;
+    return .{
+        .{ a[1][1] * inv_det, -a[0][1] * inv_det },
+        .{ -a[0][1] * inv_det, a[0][0] * inv_det },
+    };
 }
 
-pub fn multiply(a: Matrix, b: Matrix, state_count: usize) Matrix {
+pub fn multiply(a: Matrix, b: Matrix) Matrix {
     // multiply -----------------------------------------------------------------------------------------------|
-    // Multiply two small state matrices over the active leading state_count rows and columns.                 |
+    // Multiply two fixed two-state matrices.                                                                  |
     // --------------------------------------------------------------------------------------------------------|
-    var result = zeroMatrix();
-    for (0..state_count) |row| {
-        for (0..state_count) |col| {
-            var sum: f64 = 0.0;
-            for (0..state_count) |k| sum += a[row][k] * b[k][col];
-            result[row][col] = sum;
-        }
-    }
-    return result;
+    return .{
+        .{
+            a[0][0] * b[0][0] + a[0][1] * b[1][0],
+            a[0][0] * b[0][1] + a[0][1] * b[1][1],
+        },
+        .{
+            a[1][0] * b[0][0] + a[1][1] * b[1][0],
+            a[1][0] * b[0][1] + a[1][1] * b[1][1],
+        },
+    };
 }

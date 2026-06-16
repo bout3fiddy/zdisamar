@@ -13,37 +13,39 @@ test "normal-system accumulation uses reflectance Jacobians directly" {
     );
     defer measurements.deinit(std.testing.allocator);
 
-    const specs = [_]retrieval.StateSpec{
-        .{
-            .state = .aerosol_optical_depth,
+    const retrieval_state: retrieval.RetrievalState = .{
+        .aerosol_optical_depth = .{
             .initial = 0.3,
             .prior = 0.2,
             .variance = 4.0,
             .lower_bound = 0.0,
             .upper_bound = 1.0,
         },
-        .{
-            .state = .aerosol_layer_mid_pressure_hpa,
-            .initial = 850.0,
-            .prior = 850.0,
-            .variance = 100.0,
-            .lower_bound = 600.0,
-            .upper_bound = 1000.0,
-            .thickness_hpa = 10.0,
-            .interval_index_1based = 2,
-            .pressure_altitude_profile = .{
-                .altitude_km = &.{ 0.0, 1.0 },
-                .pressure_hpa = &.{ 900.0, 800.0 },
-                .second = &.{ 0.0, 0.0 },
+        .aerosol_layer_mid_pressure = .{
+            .scalar = .{
+                .initial = 850.0,
+                .prior = 850.0,
+                .variance = 100.0,
+                .lower_bound = 600.0,
+                .upper_bound = 1000.0,
+            },
+            .placement = .{
+                .thickness_hpa = 10.0,
+                .interval_index_1based = 2,
+                .pressure_altitude_profile = .{
+                    .altitude_km = &.{ 0.0, 1.0 },
+                    .pressure_hpa = &.{ 900.0, 800.0 },
+                    .second = &.{ 0.0, 0.0 },
+                },
             },
         },
     };
-    var result = try retrieval.Result.init(std.testing.allocator, retrieval.max_state_count, 1);
+    var result = try retrieval.Result.init(std.testing.allocator, 1);
     defer result.deinit(std.testing.allocator);
 
-    const state_space = try retrieval.initializeStateSpace(&specs, &result);
+    const state_space = try retrieval.initializeStateSpace(retrieval_state, &result);
     var scratch: retrieval.RetrievalIterationScratch = .{};
-    try retrieval.preparePriorScales(state_space, specs.len, &scratch);
+    try retrieval.preparePriorScales(state_space, &scratch);
 
     const jacobian_rows = [_]internal.rtm.jacobian_states.Vector{
         .{ 0.5, 0.0 },
@@ -56,7 +58,7 @@ test "normal-system accumulation uses reflectance Jacobians directly" {
             .reflectance = &.{ 0.10, 0.20 },
             .jacobian = &jacobian_rows,
         },
-        &specs,
+        retrieval_state,
         state_space.state,
         state_space.prior,
         scratch.sqrt_sa,
@@ -79,7 +81,6 @@ test "solve step keeps zero-residual state at the prior" {
     scratch.dx_white = algebra.zeroVector();
 
     const step = try retrieval.solveStep(
-        retrieval.max_state_count,
         .{ .{ 2.0, 0.0 }, .{ 0.0, 3.0 } },
         .{ 0.0, 0.0 },
         .{ 0.3, 850.0 },
@@ -94,22 +95,4 @@ test "solve step keeps zero-residual state at the prior" {
     try std.testing.expect(step.snr_normal);
     try std.testing.expectApproxEqAbs(0.75, step.posterior_precision[0][0], 1.0e-15);
     try std.testing.expectApproxEqAbs(0.04, step.posterior_precision[1][1], 1.0e-15);
-}
-
-test "solve step rejects one-state calls" {
-    var scratch: retrieval.RetrievalIterationScratch = .{};
-
-    try std.testing.expectError(
-        error.InvalidStateCount,
-        retrieval.solveStep(
-            1,
-            .{ .{ 2.0, 0.0 }, .{ 0.0, 0.0 } },
-            .{ 0.0, 0.0 },
-            .{ 0.3, 0.0 },
-            .{ 2.0, 0.0 },
-            .{ 0.5, 0.0 },
-            1.0,
-            &scratch,
-        ),
-    );
 }

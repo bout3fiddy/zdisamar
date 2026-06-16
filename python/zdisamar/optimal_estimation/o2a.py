@@ -1026,7 +1026,6 @@ def evaluate_reflectance(
         scene,
         cache=cache,
         jacobian=True,
-        jacobian_state_names=state_names,
         include_scene=False,
     )
     wavelength_nm = spectrum.wavelength_nm
@@ -1042,7 +1041,7 @@ def evaluate_reflectance(
     )
 
     if available_state_names != state_names:
-        raise ValueError("RTM Jacobian state selection did not preserve requested state order")
+        raise ValueError("RTM Jacobian state order does not match optimal-estimation state order")
 
     return RtmEvaluation(
         wavelength_nm=wavelength_nm,

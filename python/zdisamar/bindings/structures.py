@@ -160,17 +160,22 @@ class OxygenCollisionInducedAbsorptionDiagnosticsRaw(ctypes.Structure):
     ]
 
 
-class COptimalEstimationStateSpec(ctypes.Structure):
+class COptimalEstimationScalarSpec(ctypes.Structure):
     _fields_ = [
-        ("state_id", ctypes.c_uint8),
         ("has_lower", ctypes.c_uint8),
         ("has_upper", ctypes.c_uint8),
-        ("interval_index_1based", ctypes.c_uint32),
         ("initial", ctypes.c_double),
         ("prior", ctypes.c_double),
         ("variance", ctypes.c_double),
         ("lower", ctypes.c_double),
         ("upper", ctypes.c_double),
+    ]
+
+
+class COptimalEstimationPressureSpec(ctypes.Structure):
+    _fields_ = [
+        ("scalar", COptimalEstimationScalarSpec),
+        ("interval_index_1based", ctypes.c_uint32),
         ("thickness_hpa", ctypes.c_double),
         ("pressure_profile_count", ctypes.c_size_t),
         ("pressure_profile_altitude_km", ctypes.POINTER(ctypes.c_double)),
@@ -192,8 +197,8 @@ class COptimalEstimationRequest(ctypes.Structure):
         ("wavelength_nm", ctypes.POINTER(ctypes.c_double)),
         ("reflectance", ctypes.POINTER(ctypes.c_double)),
         ("variance", ctypes.POINTER(ctypes.c_double)),
-        ("state_count", ctypes.c_size_t),
-        ("states", ctypes.POINTER(COptimalEstimationStateSpec)),
+        ("aerosol_optical_depth", COptimalEstimationScalarSpec),
+        ("aerosol_layer_pressure", COptimalEstimationPressureSpec),
         ("controls", COptimalEstimationControls),
     ]
 
@@ -224,8 +229,8 @@ class COptimalEstimationBatchRequest(ctypes.Structure):
         ("wavelength_nm", ctypes.POINTER(ctypes.c_double)),
         ("reflectance", ctypes.POINTER(ctypes.c_double)),
         ("variance", ctypes.POINTER(ctypes.c_double)),
-        ("state_count", ctypes.c_size_t),
-        ("state_template", ctypes.POINTER(COptimalEstimationStateSpec)),
+        ("aerosol_optical_depth", COptimalEstimationScalarSpec),
+        ("aerosol_layer_pressure", COptimalEstimationPressureSpec),
         ("run_count", ctypes.c_size_t),
         ("initial", ctypes.POINTER(ctypes.c_double)),
         ("prior", ctypes.POINTER(ctypes.c_double)),

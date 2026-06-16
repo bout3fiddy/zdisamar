@@ -249,7 +249,9 @@ pub fn radianceAtWavelength(
             stage_cost,
         );
         try layer_depths.reduceLayerOpticsFromSupportRows(layer_grid, work_rows.support, work_rows.layers, stage_cost);
-        layer_depths.fillLayerAerosolJacobians(aerosol, prepared_solve_config.derivative_state_mask, work_rows.layers);
+        if (prepared_solve_config.derivative_mode != .none and prepared_solve_config.wants_jacobian) {
+            layer_depths.fillLayerAerosolJacobians(aerosol, work_rows.layers);
+        }
     }
 
     const source_rows = source_rows: {
@@ -288,14 +290,13 @@ pub fn radianceAtWavelength(
                 angles,
                 surface_albedo,
                 totalOpticalDepth(work_rows.layers),
-                prepared_solve_config.derivative_mode,
-                prepared_solve_config.derivative_state_mask,
             );
         }
 
         const needs_order_local_sum =
             prepared_solve_config.controls.integrate_source_function and
-            prepared_solve_config.derivative_mode != .none;
+            prepared_solve_config.derivative_mode != .none and
+            prepared_solve_config.wants_jacobian;
         var work = try worker_memory.solveWorkArrays(
             layer_count,
             prepared_solve_config.controls.n_streams,

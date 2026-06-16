@@ -20,7 +20,9 @@ test "public root exposes setup session and spectrum surface" {
     try std.testing.expect(@hasDecl(zdisamar, "Spectrum"));
     try std.testing.expect(@hasDecl(zdisamar, "SpectrumRunResult"));
     try std.testing.expect(@hasDecl(zdisamar, "optimal_estimation"));
-    try std.testing.expect(@hasDecl(zdisamar, "RetrievalStateSpec"));
+    try std.testing.expect(@hasDecl(zdisamar, "RetrievalState"));
+    try std.testing.expect(@hasDecl(zdisamar, "RetrievalStateScalar"));
+    try std.testing.expect(@hasDecl(zdisamar, "RetrievalPressureLayerPlacement"));
     try std.testing.expect(@hasDecl(zdisamar, "RetrievalPressureAltitudeProfile"));
     try std.testing.expect(@hasDecl(zdisamar, "RetrievalResult"));
     try std.testing.expect(@hasDecl(zdisamar, "RetrievalBatchResult"));

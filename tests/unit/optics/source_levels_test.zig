@@ -316,11 +316,7 @@ test "source levels reproduce shared RTM quadrature evidence rows" {
                 null,
             );
             try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, support_rows, layer_rows, null);
-            layer_depths.fillLayerAerosolJacobians(
-                tables.aerosol,
-                jacobian.stateMask(.aerosol_optical_depth),
-                layer_rows,
-            );
+            layer_depths.fillLayerAerosolJacobians(tables.aerosol, layer_rows);
             try source_levels.fillSourceLevelsAtWavelength(
                 expected.wavelength_nm,
                 tables.layers,
