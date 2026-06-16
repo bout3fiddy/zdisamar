@@ -32,7 +32,7 @@ private allocator, with one scoped exception covered below.
   freed once, in reverse order, at SessionMemory.deinit
 ```
 
-## The owner and the grow-and-keep model (`session_memory.zig`, `common/memory.zig`)
+## The owner and reuse (`session_memory.zig`)
 
 `SessionMemory` is the top-level owner, a 416-byte value that holds the six
 children inline and allocates nothing itself. `init` constructs
@@ -93,9 +93,8 @@ column grows, so stale values are never read against fresh storage.
 `profile_line_memory.zig` holds the largest table and the only arena in the
 subsystem. `ProfileLineValues` keeps the O2 line cross-section data: a dense
 support-profile sigma column, and, when diagnostics ask for it, a
-wavelength-by-layer-node grid. It is the single biggest piece of session memory,
-and building it sums Voigt and line-mixing terms over every line at every
-wavelength, the most expensive step in setup.
+wavelength-by-layer-node grid. Building it sums Voigt and line-mixing terms over
+every line at every wavelength, the most expensive step in setup.
 
 The build runs only on a stamp miss. `profileLineReuseStamp` hashes the scene id,
 the exact wavelengths, the parsed line assets, and the fixed-node spectroscopy
@@ -125,8 +124,8 @@ storage. The only free is at teardown.
 
 ## Per-worker radiative-transfer scratch (`transport_worker_memory.zig`)
 
-Each `TransportWorkerMemory` owns about 27 grown-and-kept slices: the attenuation
-tables, the layer reflection and transmission rows, the scattering-order fields,
+Each `TransportWorkerMemory` owns about 27 reused slices: the attenuation tables,
+the layer reflection and transmission rows, the scattering-order fields,
 the phase rows, the optics rows, and the Fourier basis cache. `ensureCapacity` and
 `ensureOpticsCapacity` grow them to their largest needed size once per run, and the
 radiative transfer refills and rereads them per wavelength. `solveWorkArrays` hands
@@ -169,18 +168,14 @@ for nearly all of it:
     Fourier basis              ~14.2 KiB per term
 ```
 
-Once the stamps match and the buffers are at size, a forward run and every
-retrieval iteration read only retained storage and stack scratch, and allocate
-nothing.
-
 ## Where to start
 
 - `session_memory.zig` — the owner and the teardown order, the shortest file and
   the map of the directory.
-- `common/memory.zig` — `ensureSliceCapacity`, the grow-and-keep primitive
-  everything here is built on.
-- `profile_line_memory.zig` — the largest table, the one arena, and the reuse
-  stamp; read `profileLineReuseStamp` and the build function.
+- `common/memory.zig` — `ensureSliceCapacity`, the reuse primitive everything here
+  is built on.
+- `profile_line_memory.zig` — the line cross-section cache, the one arena, and the
+  reuse stamp; read `profileLineReuseStamp` and the build function.
 - `transport_worker_memory.zig` — the per-worker scratch and the geometry and
   Fourier-basis caches.
 - `prepareSessionRows` in `root.zig` — where the stamps are checked and the
