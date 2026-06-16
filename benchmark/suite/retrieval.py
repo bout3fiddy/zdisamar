@@ -3,7 +3,7 @@
 from typing import Any
 
 from zdisamar import rtm
-from zdisamar.inverse_method.optimal_estimation import o2a as band_retrieval
+from zdisamar.optimal_estimation import o2a as band_retrieval
 
 from validation.o2a.measurement_noise import measurement_from_o2a_baseline_noise
 from validation.optimal_estimation import setup

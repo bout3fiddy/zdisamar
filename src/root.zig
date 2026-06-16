@@ -277,16 +277,19 @@ pub fn runOptimalEstimation(
     );
     defer measurement.deinit(allocator);
 
-    var result = try retrieval.Result.init(allocator, state_specs.len, retrieval_controls.max_iterations);
+    try retrieval.validateStateSpecs(state_specs);
+
+    const state_count = retrieval.max_state_count;
+    var result = try retrieval.Result.init(allocator, state_count, retrieval_controls.max_iterations);
     errdefer result.deinit(allocator);
 
     const state_space = try retrieval.initializeStateSpace(state_specs, &result);
-    const state_count = state_specs.len;
-    const has_pressure_state = retrievalStateActive(state_specs, .aerosol_layer_mid_pressure_hpa);
-    if (has_pressure_state and prepared.scene.atmosphere.intervals.len == 0) return error.InvalidStateSpec;
+    if (prepared.scene.atmosphere.intervals.len == 0) return error.InvalidStateSpec;
 
-    const mutable_interval_count = if (has_pressure_state) prepared.scene.atmosphere.intervals.len else 0;
-    const mutable_intervals = try allocator.alloc(scene_input.VerticalInterval, mutable_interval_count);
+    const mutable_intervals = try allocator.alloc(
+        scene_input.VerticalInterval,
+        prepared.scene.atmosphere.intervals.len,
+    );
     defer allocator.free(mutable_intervals);
 
     var retrieval_layers = try atmosphere_layers.buildFromPreparedProfiles(
@@ -315,7 +318,6 @@ pub fn runOptimalEstimation(
             prepared,
             state_specs,
             previous,
-            state_space.derivative_state_mask,
             mutable_intervals,
             &retrieval_layers,
         );
@@ -422,16 +424,19 @@ pub fn runOptimalEstimationCorrection(
     );
     defer measurement.deinit(allocator);
 
-    var result = try retrieval.Result.init(allocator, state_specs.len, 1);
+    try retrieval.validateStateSpecs(state_specs);
+
+    const state_count = retrieval.max_state_count;
+    var result = try retrieval.Result.init(allocator, state_count, 1);
     errdefer result.deinit(allocator);
 
     const state_space = try retrieval.initializeStateSpace(state_specs, &result);
-    const state_count = state_specs.len;
-    const has_pressure_state = retrievalStateActive(state_specs, .aerosol_layer_mid_pressure_hpa);
-    if (has_pressure_state and prepared.scene.atmosphere.intervals.len == 0) return error.InvalidStateSpec;
+    if (prepared.scene.atmosphere.intervals.len == 0) return error.InvalidStateSpec;
 
-    const mutable_interval_count = if (has_pressure_state) prepared.scene.atmosphere.intervals.len else 0;
-    const mutable_intervals = try allocator.alloc(scene_input.VerticalInterval, mutable_interval_count);
+    const mutable_intervals = try allocator.alloc(
+        scene_input.VerticalInterval,
+        prepared.scene.atmosphere.intervals.len,
+    );
     defer allocator.free(mutable_intervals);
 
     var retrieval_layers = try atmosphere_layers.buildFromPreparedProfiles(
@@ -452,7 +457,6 @@ pub fn runOptimalEstimationCorrection(
         prepared,
         state_specs,
         state_space.state,
-        state_space.derivative_state_mask,
         mutable_intervals,
         &retrieval_layers,
     );
@@ -544,25 +548,27 @@ pub fn runOptimalEstimationBatch(
     // --------------------------------------------------------------------------------------------------------|
     try validateRetrievalControls(retrieval_controls);
 
-    if (state_template.len == 0 or state_template.len > retrieval.max_state_count) return error.InvalidStateCount;
+    try retrieval.validateStateSpecs(state_template);
+
+    const state_count = retrieval.max_state_count;
 
     if (initial_states.len != prior_states.len) return error.InvalidStateSpec;
 
-    if (initial_states.len % state_template.len != 0) return error.InvalidStateSpec;
+    if (initial_states.len % state_count != 0) return error.InvalidStateSpec;
 
-    const run_count = initial_states.len / state_template.len;
+    const run_count = initial_states.len / state_count;
     if (run_count == 0) return error.InvalidStateSpec;
 
     var result = try retrieval.BatchResult.init(
         allocator,
         run_count,
-        state_template.len,
+        state_count,
         retrieval_controls.max_iterations,
     );
     errdefer result.deinit(allocator);
 
     for (0..run_count) |run_index| {
-        const state_offset = run_index * state_template.len;
+        const state_offset = run_index * state_count;
         var run_specs_buffer: [retrieval.max_state_count]retrieval.StateSpec = undefined;
         for (state_template, 0..) |template, state_index| {
             var spec = template;
@@ -578,7 +584,7 @@ pub fn runOptimalEstimationBatch(
             measurement_wavelength_nm,
             measurement_reflectance,
             measurement_variance,
-            run_specs_buffer[0..state_template.len],
+            run_specs_buffer[0..state_count],
             retrieval_controls,
         ) catch |err| switch (err) {
             error.OutOfMemory => return err,
@@ -592,12 +598,12 @@ pub fn runOptimalEstimationBatch(
         result.iteration_count[run_index] = run.iteration_count;
         result.converged[run_index] = if (run.converged) 1 else 0;
         result.status[run_index] = @intFromEnum(retrieval.BatchRunStatus.ok);
-        for (0..state_template.len) |state_index| {
+        for (0..state_count) |state_index| {
             result.state[state_offset + state_index] = run.state[state_index];
         }
 
-        const history_offset = run_index * result.history_capacity * state_template.len;
-        const history_len = @as(usize, run.iteration_count) * state_template.len;
+        const history_offset = run_index * result.history_capacity * state_count;
+        const history_len = @as(usize, run.iteration_count) * state_count;
         @memcpy(
             result.history_state[history_offset .. history_offset + history_len],
             run.history_state[0..history_len],
@@ -636,6 +642,9 @@ pub fn runFastmodeOptimalEstimationBatch(
     //                                                                                                         |
     //   converged flags keep fast-stage convergence when the correction stage returns ok.                     |
     // --------------------------------------------------------------------------------------------------------|
+    try retrieval.validateStateSpecs(fast_state_template);
+    try retrieval.validateStateSpecs(correction_state_template);
+
     if (fast_state_template.len != correction_state_template.len) return error.InvalidStateSpec;
 
     for (fast_state_template, correction_state_template) |fast_spec, correction_spec| {
@@ -823,8 +832,7 @@ pub fn solveConfig(scene: Scene) SolveConfig {
     const performance_thresholds = performanceThresholdsWithFourierLimit(scene.rtm);
     return .{
         .derivative_mode = .semi_analytical,
-        .derivative_state_mask = jacobian_states.stateMask(.aerosol_optical_depth) |
-            jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa),
+        .derivative_state_mask = jacobian_states.all_states_mask,
         .controls = .{
             .scattering = .multiple,
             .n_streams = @intCast(scene.rtm.stream_count),
@@ -873,7 +881,6 @@ fn evaluateRetrievalState(
     prepared: *const Prepared,
     state_specs: []const retrieval.StateSpec,
     state: retrieval.StateVector,
-    derivative_state_mask: jacobian_states.StateMask,
     mutable_intervals: []scene_input.VerticalInterval,
     retrieval_layers: *atmosphere_layers.LayerGrid,
 ) !SpectrumRunResult {
@@ -911,7 +918,7 @@ fn evaluateRetrievalState(
 
     var solve_config = solveConfig(scene);
     solve_config.derivative_mode = .semi_analytical;
-    solve_config.derivative_state_mask = derivative_state_mask;
+    solve_config.derivative_state_mask = jacobian_states.all_states_mask;
 
     return runForwardWithSessionMemory(allocator, session, &evaluation_prepared, solve_config);
 }
@@ -970,16 +977,6 @@ fn writeRetrievalStateToScene(
             },
         }
     }
-}
-
-fn retrievalStateActive(state_specs: []const retrieval.StateSpec, state: jacobian_states.State) bool {
-    // retrievalStateActive ---------------------------------------------------------------------------------- |
-    // Test whether one fixed Jacobian state appears in the current OE state vector.                           |
-    // --------------------------------------------------------------------------------------------------------|
-    for (state_specs) |spec| {
-        if (spec.state == state) return true;
-    }
-    return false;
 }
 
 const PreparedSessionRows = struct {

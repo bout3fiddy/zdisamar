@@ -36,8 +36,16 @@ def test_session_cache_warms_optimal_estimation_route_once() -> None:
                 raise AssertionError("unloaded OE cache warm was accepted")
 
             cache.load(scene)
-            cache.warm_optimal_estimation(("aerosol_optical_depth",))
-            cache.warm_optimal_estimation(("aerosol_optical_depth",))
+            try:
+                cache.warm_optimal_estimation(("aerosol_optical_depth",))
+            except ValueError as error:
+                assert "aerosol_layer_mid_pressure_hpa" in str(error)
+            else:
+                raise AssertionError("one-state OE cache warm was accepted")
+
+            cache.warm_optimal_estimation(
+                ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")
+            )
             cache.warm_optimal_estimation(
                 ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")
             )
@@ -50,7 +58,6 @@ def test_session_cache_warms_optimal_estimation_route_once() -> None:
 
     assert calls == [
         ("load", (scene, True)),
-        ("warm_oe", ("aerosol_optical_depth",)),
         ("warm_oe", ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")),
         ("load", (scene, True)),
         ("warm_oe", ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")),

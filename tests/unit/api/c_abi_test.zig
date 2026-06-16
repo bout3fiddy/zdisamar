@@ -173,7 +173,12 @@ test "optimal-estimation request rejects removed surface-albedo state lane" {
     const wavelength_nm = [_]f64{ 758.0, 760.0 };
     const reflectance = [_]f64{ 0.12, 0.13 };
     const variance = [_]f64{ 1.0e-4, 1.0e-4 };
-    var states = [_]c_api.ZdsOptimalEstimationStateSpec{aerosolOpticalDepthSpec()};
+    const altitude_km = [_]f64{ 0.0, 1.0 };
+    const pressure_hpa = [_]f64{ 900.0, 800.0 };
+    var states = [_]c_api.ZdsOptimalEstimationStateSpec{
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
+    };
     states[0].state_id = 2;
     var request = singleRequest(&wavelength_nm, &reflectance, &variance, &states);
     var result: c_api.ZdsOptimalEstimationResult = .{};
@@ -194,7 +199,10 @@ test "optimal-estimation pressure state requires profile rows" {
     const wavelength_nm = [_]f64{ 758.0, 760.0 };
     const reflectance = [_]f64{ 0.12, 0.13 };
     const variance = [_]f64{ 1.0e-4, 1.0e-4 };
-    var states = [_]c_api.ZdsOptimalEstimationStateSpec{pressureStateWithoutProfile()};
+    var states = [_]c_api.ZdsOptimalEstimationStateSpec{
+        aerosolOpticalDepthSpec(),
+        pressureStateWithoutProfile(),
+    };
     var request = singleRequest(&wavelength_nm, &reflectance, &variance, &states);
     var result: c_api.ZdsOptimalEstimationResult = .{};
 
@@ -214,9 +222,14 @@ test "optimal-estimation batch rejects unsupported worker counts" {
     const wavelength_nm = [_]f64{ 758.0, 760.0 };
     const reflectance = [_]f64{ 0.12, 0.13 };
     const variance = [_]f64{ 1.0e-4, 1.0e-4 };
-    var state_template = [_]c_api.ZdsOptimalEstimationStateSpec{aerosolOpticalDepthSpec()};
-    const initial = [_]f64{0.1};
-    const prior = [_]f64{0.1};
+    const altitude_km = [_]f64{ 0.0, 1.0 };
+    const pressure_hpa = [_]f64{ 900.0, 800.0 };
+    var state_template = [_]c_api.ZdsOptimalEstimationStateSpec{
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
+    };
+    const initial = [_]f64{ 0.1, 850.0 };
+    const prior = [_]f64{ 0.1, 850.0 };
     var request = batchRequest(&wavelength_nm, &reflectance, &variance, &state_template, &initial, &prior);
     request.batch_worker_count = 2;
     var result: c_api.ZdsOptimalEstimationBatchResult = .{};
@@ -308,7 +321,7 @@ test "fastmode optimal-estimation batch rejects mismatched state ordering" {
         ),
     );
     try std.testing.expectEqual(c_api.ZdsOptimalEstimationFastmodeBatchResult{}, result);
-    try std.testing.expectEqualStrings("InvalidStateSpec", std.mem.span(c_api.zds_last_error(fast_ctx)));
+    try std.testing.expectEqualStrings("invalid state order", std.mem.span(c_api.zds_last_error(fast_ctx)));
 }
 
 fn expectFailure(ctx: *c_api.Context, status: c_int, expected_error: []const u8) !void {

@@ -27,6 +27,23 @@ test "warm optimal-estimation cache accepts the two retained Jacobian states" {
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
+test "warm optimal-estimation cache rejects one-state request" {
+    const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
+    defer c_api.zds_context_destroy(ctx);
+
+    try prepareDefault(ctx);
+
+    const state_ids = [_]u8{0};
+    try std.testing.expectEqual(
+        @intFromEnum(c_api.ZdsStatus.failure),
+        c_api.zds_warm_o2a_optimal_estimation(ctx, state_ids[0..].ptr, state_ids.len),
+    );
+    try std.testing.expectEqualStrings(
+        "invalid optimal-estimation state vector",
+        std.mem.span(c_api.zds_last_error(ctx)),
+    );
+}
+
 test "warm optimal-estimation cache rejects removed surface-albedo state lane" {
     const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
     defer c_api.zds_context_destroy(ctx);
@@ -94,7 +111,12 @@ test "single-run optimal-estimation returns result handle for full-grid measurem
     defer std.testing.allocator.free(variance);
     @memset(variance, 1.0e-6);
 
-    var states = [_]c_api.ZdsOptimalEstimationStateSpec{aerosolOpticalDepthSpec()};
+    const altitude_km = [_]f64{ 0.0, 1.0 };
+    const pressure_hpa = [_]f64{ 900.0, 800.0 };
+    var states = [_]c_api.ZdsOptimalEstimationStateSpec{
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
+    };
     states[0].initial = 0.3;
     states[0].prior = 0.3;
     var request = singleRequest(
@@ -113,20 +135,30 @@ test "single-run optimal-estimation returns result handle for full-grid measurem
     defer c_api.zds_optimal_estimation_result_free(ctx, &result);
 
     try std.testing.expect(result.result_handle != null);
-    try std.testing.expectEqual(@as(usize, 1), result.state_count);
+    try std.testing.expectEqual(@as(usize, 2), result.state_count);
     try std.testing.expectEqual(@as(usize, 1), result.iteration_count);
-    try std.testing.expectEqual(@as(u8, 1), result.converged);
+    try std.testing.expectEqual(@as(u8, 0), result.converged);
     try std.testing.expectEqual(@as(u8, 0), result.state_ids.?[0]);
-    try std.testing.expectApproxEqAbs(0.3, result.state.?[0], 1.0e-12);
+    try std.testing.expectEqual(@as(u8, 1), result.state_ids.?[1]);
+    try std.testing.expectApproxEqRel(0.3218022557145076, result.state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(841.0563427719196, result.state.?[1], 1.0e-12);
     try std.testing.expectApproxEqAbs(0.3, result.initial_state.?[0], 0.0);
-    try std.testing.expectApproxEqRel(1.3229305526174265e-7, result.posterior_covariance.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.9999867706944716, result.averaging_kernel.?[0], 1.0e-12);
-    try std.testing.expectApproxEqAbs(0.3, result.history_state.?[0], 0.0);
-    try std.testing.expectApproxEqAbs(0.0, result.history_chi2.?[0], 0.0);
-    try std.testing.expectApproxEqAbs(0.0, result.history_chi2_reflectance.?[0], 0.0);
-    try std.testing.expectApproxEqAbs(0.0, result.history_chi2_state_vector.?[0], 0.0);
-    try std.testing.expectApproxEqAbs(0.0, result.history_state_vector_convergence.?[0], 0.0);
-    try std.testing.expectEqual(@as(u8, 1), result.history_snr_normal.?[0]);
+    try std.testing.expectApproxEqAbs(850.0, result.initial_state.?[1], 0.0);
+    try std.testing.expectApproxEqRel(5.0327224966474805e-5, result.posterior_covariance.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.005484945752473451, result.posterior_covariance.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.005484945752473451, result.posterior_covariance.?[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(98.14024630925327, result.posterior_covariance.?[3], 1.0e-12);
+    try std.testing.expectApproxEqRel(313.7498523160241, result.averaging_kernel.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(-0.017296055445342524, result.averaging_kernel.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(-172.96055445340608, result.averaging_kernel.?[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(5.864488802889277, result.averaging_kernel.?[3], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.3218022557145076, result.history_state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(841.0563427719196, result.history_state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(17581.186238836166, result.history_chi2.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(17580.338814954608, result.history_chi2_reflectance.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.8474238815580228, result.history_chi2_state_vector.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(5.379307392874958, result.history_state_vector_convergence.?[0], 1.0e-12);
+    try std.testing.expectEqual(@as(u8, 0), result.history_snr_normal.?[0]);
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
@@ -147,7 +179,12 @@ test "correction optimal-estimation returns one-step result handle" {
     defer std.testing.allocator.free(variance);
     @memset(variance, 1.0e-6);
 
-    var states = [_]c_api.ZdsOptimalEstimationStateSpec{aerosolOpticalDepthSpec()};
+    const altitude_km = [_]f64{ 0.0, 1.0 };
+    const pressure_hpa = [_]f64{ 900.0, 800.0 };
+    var states = [_]c_api.ZdsOptimalEstimationStateSpec{
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
+    };
     var request = singleRequest(
         spectrum.wavelength_nm[0..spectrum.len],
         spectrum.reflectance[0..spectrum.len],
@@ -164,14 +201,23 @@ test "correction optimal-estimation returns one-step result handle" {
     defer c_api.zds_optimal_estimation_result_free(ctx, &result);
 
     try std.testing.expect(result.result_handle != null);
-    try std.testing.expectEqual(@as(usize, 1), result.state_count);
+    try std.testing.expectEqual(@as(usize, 2), result.state_count);
     try std.testing.expectEqual(@as(usize, 1), result.iteration_count);
     try std.testing.expectApproxEqAbs(0.1, result.initial_state.?[0], 0.0);
-    try std.testing.expectApproxEqRel(0.3358862191767914, result.state.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(2.3333920905514787e-7, result.posterior_covariance.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.9999766660790946, result.averaging_kernel.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.3358862191767914, result.history_state.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(242005.5066494241, result.history_chi2.?[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(850.0, result.initial_state.?[1], 0.0);
+    try std.testing.expectApproxEqRel(0.36656240097651505, result.state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(847.531818925324, result.state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(3.212187341505087e-7, result.posterior_covariance.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.0015179266918172764, result.posterior_covariance.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.0015179266918172764, result.posterior_covariance.?[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(72.29518736871741, result.posterior_covariance.?[3], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.9999678781265839, result.averaging_kernel.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(-1.5179266918172786e-5, result.averaging_kernel.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(-0.15179266918767098, result.averaging_kernel.?[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.2770481263128252, result.averaging_kernel.?[3], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.36656240097651505, result.history_state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(847.531818925324, result.history_state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(265603.46505356533, result.history_chi2.?[0], 1.0e-12);
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
@@ -192,9 +238,14 @@ test "batch optimal-estimation returns run-major result handle" {
     defer std.testing.allocator.free(variance);
     @memset(variance, 1.0e-6);
 
-    var state_template = [_]c_api.ZdsOptimalEstimationStateSpec{aerosolOpticalDepthSpec()};
-    const initial = [_]f64{ 0.08, 0.09 };
-    const prior = [_]f64{ 0.10, 0.10 };
+    const altitude_km = [_]f64{ 0.0, 1.0 };
+    const pressure_hpa = [_]f64{ 900.0, 800.0 };
+    var state_template = [_]c_api.ZdsOptimalEstimationStateSpec{
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
+    };
+    const initial = [_]f64{ 0.08, 850.0, 0.09, 850.0 };
+    const prior = [_]f64{ 0.10, 850.0, 0.10, 850.0 };
     var request = batchRequest(
         spectrum.wavelength_nm[0..spectrum.len],
         spectrum.reflectance[0..spectrum.len],
@@ -214,16 +265,20 @@ test "batch optimal-estimation returns run-major result handle" {
 
     try std.testing.expect(result.result_handle != null);
     try std.testing.expectEqual(@as(usize, 2), result.run_count);
-    try std.testing.expectEqual(@as(usize, 1), result.state_count);
+    try std.testing.expectEqual(@as(usize, 2), result.state_count);
     try std.testing.expectEqual(@as(usize, 1), result.history_capacity);
     try std.testing.expectEqual(@as(usize, 1), result.iteration_count.?[0]);
     try std.testing.expectEqual(@as(usize, 1), result.iteration_count.?[1]);
     try std.testing.expectEqual(@as(u8, 1), result.status.?[0]);
     try std.testing.expectEqual(@as(u8, 1), result.status.?[1]);
-    try std.testing.expectApproxEqRel(0.3488838954119376, result.state.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.3419559672154927, result.state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.3815807881577048, result.state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(848.0765436795413, result.state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.3735949222795868, result.state.?[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(847.8074099290603, result.state.?[3], 1.0e-12);
     try std.testing.expectApproxEqRel(result.state.?[0], result.history_state.?[0], 0.0);
     try std.testing.expectApproxEqRel(result.state.?[1], result.history_state.?[1], 0.0);
+    try std.testing.expectApproxEqRel(result.state.?[2], result.history_state.?[2], 0.0);
+    try std.testing.expectApproxEqRel(result.state.?[3], result.history_state.?[3], 0.0);
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
@@ -247,10 +302,18 @@ test "fastmode optimal-estimation batch returns per-stage metadata" {
     defer std.testing.allocator.free(variance);
     @memset(variance, 1.0e-6);
 
-    var fast_state_template = [_]c_api.ZdsOptimalEstimationStateSpec{aerosolOpticalDepthSpec()};
-    var correction_state_template = [_]c_api.ZdsOptimalEstimationStateSpec{aerosolOpticalDepthSpec()};
-    const initial = [_]f64{ 0.08, 0.09 };
-    const prior = [_]f64{ 0.10, 0.10 };
+    const altitude_km = [_]f64{ 0.0, 1.0 };
+    const pressure_hpa = [_]f64{ 900.0, 800.0 };
+    var fast_state_template = [_]c_api.ZdsOptimalEstimationStateSpec{
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
+    };
+    var correction_state_template = [_]c_api.ZdsOptimalEstimationStateSpec{
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
+    };
+    const initial = [_]f64{ 0.08, 850.0, 0.09, 850.0 };
+    const prior = [_]f64{ 0.10, 850.0, 0.10, 850.0 };
     var fast_request = batchRequest(
         spectrum.wavelength_nm[0..spectrum.len],
         spectrum.reflectance[0..spectrum.len],
@@ -286,7 +349,7 @@ test "fastmode optimal-estimation batch returns per-stage metadata" {
 
     try std.testing.expect(result.result_handle != null);
     try std.testing.expectEqual(@as(usize, 2), result.run_count);
-    try std.testing.expectEqual(@as(usize, 1), result.state_count);
+    try std.testing.expectEqual(@as(usize, 2), result.state_count);
     try std.testing.expectEqual(@as(usize, 2), result.history_capacity);
     try std.testing.expectEqual(@as(usize, 2), result.iteration_count.?[0]);
     try std.testing.expectEqual(@as(usize, 2), result.iteration_count.?[1]);
@@ -294,12 +357,18 @@ test "fastmode optimal-estimation batch returns per-stage metadata" {
     try std.testing.expectEqual(@as(usize, 1), result.full_correction_iteration_count.?[0]);
     try std.testing.expectEqual(@as(u8, 1), result.status.?[0]);
     try std.testing.expectEqual(@as(u8, 1), result.status.?[1]);
-    try std.testing.expectApproxEqRel(0.3007235613338587, result.state.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.30054519061204255, result.state.?[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.3488838954119376, result.history_state.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.3007235613338587, result.history_state.?[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.3419559672154927, result.history_state.?[2], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.30054519061204255, result.history_state.?[3], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.3212508722823766, result.state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(829.2142546099802, result.state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.3210901563847662, result.state.?[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(829.6743599634119, result.state.?[3], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.3815807881577048, result.history_state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(848.0765436795413, result.history_state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.3212508722823766, result.history_state.?[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(829.2142546099802, result.history_state.?[3], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.3735949222795868, result.history_state.?[4], 1.0e-12);
+    try std.testing.expectApproxEqRel(847.8074099290603, result.history_state.?[5], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.3210901563847662, result.history_state.?[6], 1.0e-12);
+    try std.testing.expectApproxEqRel(829.6743599634119, result.history_state.?[7], 1.0e-12);
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(fast_ctx)));
 }
 
@@ -311,7 +380,12 @@ test "optimal-estimation request rejects removed surface-albedo state lane" {
     const wavelength_nm = [_]f64{ 758.0, 760.0 };
     const reflectance = [_]f64{ 0.12, 0.13 };
     const variance = [_]f64{ 1.0e-4, 1.0e-4 };
-    var states = [_]c_api.ZdsOptimalEstimationStateSpec{aerosolOpticalDepthSpec()};
+    const altitude_km = [_]f64{ 0.0, 1.0 };
+    const pressure_hpa = [_]f64{ 900.0, 800.0 };
+    var states = [_]c_api.ZdsOptimalEstimationStateSpec{
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
+    };
     states[0].state_id = 2;
     var request = singleRequest(&wavelength_nm, &reflectance, &variance, &states);
     var result: c_api.ZdsOptimalEstimationResult = .{};
@@ -332,7 +406,10 @@ test "optimal-estimation pressure state requires profile rows" {
     const wavelength_nm = [_]f64{ 758.0, 760.0 };
     const reflectance = [_]f64{ 0.12, 0.13 };
     const variance = [_]f64{ 1.0e-4, 1.0e-4 };
-    var states = [_]c_api.ZdsOptimalEstimationStateSpec{pressureStateWithoutProfile()};
+    var states = [_]c_api.ZdsOptimalEstimationStateSpec{
+        aerosolOpticalDepthSpec(),
+        pressureStateWithoutProfile(),
+    };
     var request = singleRequest(&wavelength_nm, &reflectance, &variance, &states);
     var result: c_api.ZdsOptimalEstimationResult = .{};
 
@@ -381,6 +458,27 @@ fn pressureStateWithoutProfile() c_api.ZdsOptimalEstimationStateSpec {
         .lower = 600.0,
         .upper = 1000.0,
         .thickness_hpa = 10.0,
+    };
+}
+
+fn aerosolPressureSpec(
+    altitude_km: []const f64,
+    pressure_hpa: []const f64,
+) c_api.ZdsOptimalEstimationStateSpec {
+    return .{
+        .state_id = 1,
+        .has_lower = 1,
+        .has_upper = 1,
+        .interval_index_1based = 2,
+        .initial = 850.0,
+        .prior = 850.0,
+        .variance = 100.0,
+        .lower = 600.0,
+        .upper = 1000.0,
+        .thickness_hpa = 10.0,
+        .pressure_profile_count = altitude_km.len,
+        .pressure_profile_altitude_km = altitude_km.ptr,
+        .pressure_profile_pressure_hpa = pressure_hpa.ptr,
     };
 }
 

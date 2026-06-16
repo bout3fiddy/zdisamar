@@ -4,8 +4,8 @@ from tempfile import TemporaryDirectory
 from typing import cast
 
 import numpy as np
-from zdisamar.inverse_method.optimal_estimation.retrieval import Iteration, Measurement, Result
-from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
+from zdisamar.optimal_estimation.retrieval import Iteration, Measurement, Result
+from zdisamar.optimal_estimation.rtm_evaluation import RtmEvaluation
 from zdisamar.plot.fields import TOTAL_OPTICAL_DEPTH, WAVELENGTH_NM
 from zdisamar.plot.optimal_estimation import (
     JACOBIAN_PANEL_SPACING,

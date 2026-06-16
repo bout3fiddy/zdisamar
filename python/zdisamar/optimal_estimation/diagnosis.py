@@ -8,9 +8,9 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from ... import rtm
-from ...display import PrettyMapping
-from ...input.wavelength_band.o2a import Scene
+from .. import rtm
+from ..display import PrettyMapping
+from ..input.wavelength_band.o2a import Scene
 from .retrieval import Measurement, RetrievalControls
 from .state_vector import (
     AEROSOL_LAYER_MID_PRESSURE_HPA,
@@ -168,6 +168,14 @@ class RetrievalDiagnosis:
     native_worker_limit: int | None = None
     elapsed_s: float = 0.0
 
+    def __post_init__(self) -> None:
+
+        if self.state_names != (AEROSOL_OPTICAL_DEPTH, AEROSOL_LAYER_MID_PRESSURE_HPA):
+            raise ValueError(
+                "retrieval diagnosis requires aerosol_optical_depth and "
+                "aerosol_layer_mid_pressure_hpa in that order"
+            )
+
     def value(self, name: StateName) -> tuple[float, ...]:
         """Return one retrieved state column by name."""
 
@@ -251,8 +259,8 @@ class RetrievalDiagnosis:
     ):
         """Render the retrieval path plot as SVG."""
 
-        from ...plot.properties import PLOT
-        from ...plot.retrieval_diagnosis import retrieval_diagnosis_figure
+        from ..plot.properties import PLOT
+        from ..plot.retrieval_diagnosis import retrieval_diagnosis_figure
 
         return PLOT.finish(retrieval_diagnosis_figure(self), save=save)
 

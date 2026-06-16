@@ -110,7 +110,7 @@ def run_zdisamar_validation(case) -> dict[str, np.ndarray]:
 
 def mid_pressure_jacobian_scale(case) -> float:
 
-    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
+    from zdisamar.optimal_estimation import o2a as o2a_oe
 
     profile = o2a_oe.pressure_altitude_profile_from_scene(case)
 

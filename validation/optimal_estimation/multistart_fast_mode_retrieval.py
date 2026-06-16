@@ -34,9 +34,8 @@ DEFAULT_NATIVE_WORKER_LIMIT = os.cpu_count() or 1
 os.environ.setdefault(NATIVE_WORKER_LIMIT_ENV, str(DEFAULT_NATIVE_WORKER_LIMIT))
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
-from zdisamar import rtm  # noqa: E402
-from zdisamar.inverse_method import optimal_estimation  # noqa: E402
-from zdisamar.inverse_method.optimal_estimation.diagnosis import (  # noqa: E402
+from zdisamar import optimal_estimation, rtm  # noqa: E402
+from zdisamar.optimal_estimation.diagnosis import (  # noqa: E402
     diagnose_retrieval,
     diagnosis_batch_worker_count_for_limit,
 )

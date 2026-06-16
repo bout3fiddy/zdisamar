@@ -13,5 +13,5 @@ test "native retrieval layouts match canonical optimal-estimation value owners" 
     try std.testing.expectEqual(@as(usize, 120), @sizeOf(retrieval.BatchOutput));
     try std.testing.expectEqual(@as(usize, 168), @sizeOf(retrieval.FastmodeBatchResult));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(retrieval.Controls));
-    try std.testing.expectEqual(@as(usize, 88), @sizeOf(retrieval.StateSpace));
+    try std.testing.expectEqual(@as(usize, 80), @sizeOf(retrieval.StateSpace));
 }

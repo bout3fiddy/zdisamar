@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 def test_optimal_estimation_diagnosis_display() -> None:
 
-    from zdisamar.inverse_method.optimal_estimation.diagnosis import RetrievalDiagnosis
-    from zdisamar.inverse_method.optimal_estimation.retrieval import Result
+    from zdisamar.optimal_estimation.diagnosis import RetrievalDiagnosis
+    from zdisamar.optimal_estimation.retrieval import Result
 
     calls = 0
 
@@ -21,13 +21,13 @@ def test_optimal_estimation_diagnosis_display() -> None:
         return {"n": n}
 
     result = Result(
-        state_names=("aerosol_optical_depth",),
-        state=(0.1,),
+        state_names=("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa"),
+        state=(0.1, 600.0),
         iterations=1,
         converged=True,
         history=(),
-        posterior_covariance=((1.0,),),
-        averaging_kernel=((1.0,),),
+        posterior_covariance=((1.0, 0.0), (0.0, 1.0)),
+        averaging_kernel=((1.0, 0.0), (0.0, 1.0)),
         diagnosis_factory=diagnosis_factory,
     )
     diagnosis = result.diagnose(n=3)
@@ -109,18 +109,21 @@ def test_optimal_estimation_diagnosis_display() -> None:
     grouped_payload = basin_sweep.to_dict()
     assert grouped_payload["basin_count"] == 2
 
-    one_axis_sweep = RetrievalDiagnosis(
-        state_names=("aerosol_optical_depth",),
-        start_state=((0.1,), (0.2,)),
-        retrieved_state=((0.12,), (0.22,)),
-        iterations=(3, 4),
-        converged=(True, True),
-        retrieval_paths=(((0.12,),), ((0.22,),)),
-        start_bounds=((0.02, 2.0),),
-        batch_workers=1,
-    )
-    assert one_axis_sweep.basins() == ()
-    assert one_axis_sweep.to_dict()["basin_count"] == 0
+    try:
+        RetrievalDiagnosis(
+            state_names=("aerosol_optical_depth",),
+            start_state=((0.1,), (0.2,)),
+            retrieved_state=((0.12,), (0.22,)),
+            iterations=(3, 4),
+            converged=(True, True),
+            retrieval_paths=(((0.12,),), ((0.22,),)),
+            start_bounds=((0.02, 2.0),),
+            batch_workers=1,
+        )
+    except ValueError as error:
+        assert "aerosol_layer_mid_pressure_hpa" in str(error)
+    else:
+        raise AssertionError("one-axis retrieval diagnosis was accepted")
 
     two_axis_sweep = RetrievalDiagnosis(
         state_names=(
@@ -177,10 +180,10 @@ def test_optimal_estimation_diagnosis_display() -> None:
 def test_optimal_estimation_diagnosis_auto_workers() -> None:
 
     from zdisamar.input.wavelength_band.o2a import Scene
-    from zdisamar.inverse_method.optimal_estimation.diagnosis import diagnose_retrieval
-    from zdisamar.inverse_method.optimal_estimation.o2a import BatchResult
-    from zdisamar.inverse_method.optimal_estimation.retrieval import Measurement, RetrievalControls
-    from zdisamar.inverse_method.optimal_estimation.state_vector import (
+    from zdisamar.optimal_estimation.diagnosis import diagnose_retrieval
+    from zdisamar.optimal_estimation.o2a import BatchResult
+    from zdisamar.optimal_estimation.retrieval import Measurement, RetrievalControls
+    from zdisamar.optimal_estimation.state_vector import (
         AerosolLayerMidPressure,
         AerosolOpticalDepth,
         StateVector,
@@ -225,8 +228,8 @@ def test_optimal_estimation_diagnosis_auto_workers() -> None:
 
         return batch
 
-    from zdisamar.inverse_method import optimal_estimation
-    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
+    from zdisamar import optimal_estimation
+    from zdisamar.optimal_estimation import o2a as o2a_oe
 
     banned_batch_api = "retrieve" + "_many"
     assert not hasattr(optimal_estimation, banned_batch_api)
@@ -235,7 +238,7 @@ def test_optimal_estimation_diagnosis_auto_workers() -> None:
     with (
         patch.dict(os.environ, {"ZDISAMAR_WORKER_LIMIT": "10"}),
         patch(
-            "zdisamar.inverse_method.optimal_estimation.o2a.diagnosis_batch",
+            "zdisamar.optimal_estimation.o2a.diagnosis_batch",
             side_effect=diagnosis_batch,
         ),
     ):
@@ -260,7 +263,7 @@ def test_optimal_estimation_diagnosis_auto_workers() -> None:
     calls.clear()
 
     with patch(
-        "zdisamar.inverse_method.optimal_estimation.o2a.diagnosis_batch",
+        "zdisamar.optimal_estimation.o2a.diagnosis_batch",
         side_effect=diagnosis_batch,
     ):
         explicit = diagnose_retrieval(
@@ -296,7 +299,7 @@ def test_optimal_estimation_diagnosis_auto_workers() -> None:
         )
 
     with patch(
-        "zdisamar.inverse_method.optimal_estimation.o2a.diagnosis_batch",
+        "zdisamar.optimal_estimation.o2a.diagnosis_batch",
         side_effect=explicit_diagnosis_batch,
     ):
         explicit_large = diagnose_retrieval(
@@ -316,10 +319,10 @@ def test_optimal_estimation_diagnosis_auto_workers() -> None:
 def test_optimal_estimation_diagnosis_adaptive_grid() -> None:
 
     from zdisamar.input.wavelength_band.o2a import Scene
-    from zdisamar.inverse_method.optimal_estimation.diagnosis import diagnose_retrieval
-    from zdisamar.inverse_method.optimal_estimation.o2a import BatchResult
-    from zdisamar.inverse_method.optimal_estimation.retrieval import Measurement, RetrievalControls
-    from zdisamar.inverse_method.optimal_estimation.state_vector import (
+    from zdisamar.optimal_estimation.diagnosis import diagnose_retrieval
+    from zdisamar.optimal_estimation.o2a import BatchResult
+    from zdisamar.optimal_estimation.retrieval import Measurement, RetrievalControls
+    from zdisamar.optimal_estimation.state_vector import (
         AerosolLayerMidPressure,
         AerosolOpticalDepth,
         StateVector,
@@ -386,7 +389,7 @@ def test_optimal_estimation_diagnosis_adaptive_grid() -> None:
     with (
         patch.dict(os.environ, {"ZDISAMAR_WORKER_LIMIT": "10"}),
         patch(
-            "zdisamar.inverse_method.optimal_estimation.o2a.diagnosis_batch",
+            "zdisamar.optimal_estimation.o2a.diagnosis_batch",
             side_effect=diagnosis_batch,
         ),
     ):
@@ -410,7 +413,7 @@ def test_optimal_estimation_diagnosis_adaptive_grid() -> None:
     calls.clear()
 
     with patch(
-        "zdisamar.inverse_method.optimal_estimation.o2a.diagnosis_batch",
+        "zdisamar.optimal_estimation.o2a.diagnosis_batch",
         side_effect=diagnosis_batch,
     ):
         dynamic = diagnose_retrieval(
@@ -432,7 +435,7 @@ def test_optimal_estimation_diagnosis_adaptive_grid() -> None:
     assert any(0.37 <= row[0] <= 0.55 for row in dynamic_refinement_rows)
 
     calls.clear()
-    from zdisamar.inverse_method.optimal_estimation.diagnosis import BoundaryBisectionStrategy
+    from zdisamar.optimal_estimation.diagnosis import BoundaryBisectionStrategy
 
     strategy = BoundaryBisectionStrategy(
         refinement_batch_size=3,
@@ -440,7 +443,7 @@ def test_optimal_estimation_diagnosis_adaptive_grid() -> None:
     )
 
     with patch(
-        "zdisamar.inverse_method.optimal_estimation.o2a.diagnosis_batch",
+        "zdisamar.optimal_estimation.o2a.diagnosis_batch",
         side_effect=diagnosis_batch,
     ):
         custom = diagnose_retrieval(
@@ -455,7 +458,7 @@ def test_optimal_estimation_diagnosis_adaptive_grid() -> None:
     assert len(calls[1]) == 3
     assert any(0.46 <= row[0] <= 0.49 for row in custom.start_state[9:])
 
-    from zdisamar.inverse_method.optimal_estimation.diagnosis import DiagnosisBatchSummary
+    from zdisamar.optimal_estimation.diagnosis import DiagnosisBatchSummary
 
     def synthetic_boundary_batch(rows: tuple[tuple[float, ...], ...]) -> DiagnosisBatchSummary:
 

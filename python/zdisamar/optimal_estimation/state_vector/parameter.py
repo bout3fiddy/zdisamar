@@ -5,7 +5,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from .aerosol_layer_mid_pressure import AEROSOL_LAYER_MID_PRESSURE_HPA
+from .aerosol_optical_depth import AEROSOL_OPTICAL_DEPTH
+
 StateName = str
+OPTIMAL_ESTIMATION_STATE_NAMES: tuple[StateName, ...] = (
+    AEROSOL_OPTICAL_DEPTH,
+    AEROSOL_LAYER_MID_PRESSURE_HPA,
+)
 
 
 class StateVectorParameter(Protocol):
@@ -32,13 +39,13 @@ class StateVector:
 
         parameters = tuple(self.parameters)
 
-        if not parameters:
-            raise ValueError("state vector must contain at least one parameter")
-
         names = tuple(parameter.name for parameter in parameters)
 
-        if len(set(names)) != len(names):
-            raise ValueError("state vector parameter names must be unique")
+        if names != OPTIMAL_ESTIMATION_STATE_NAMES:
+            raise ValueError(
+                "state vector must contain aerosol_optical_depth and "
+                "aerosol_layer_mid_pressure_hpa in that order"
+            )
 
         for parameter in parameters:
             uncertainty = float(parameter.prior_uncertainty)

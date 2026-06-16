@@ -26,7 +26,7 @@ The public Python runtime surface is:
   construction,
 - `zdisamar.rtm` for radiance, reflectance, atmospheric-budget, instrument
   response, and collision-induced-absorption execution helpers,
-- `zdisamar.inverse_method.optimal_estimation` for inverse-method data classes
+- `zdisamar.optimal_estimation` for inverse-method data classes
   and the Rodgers-style optimal-estimation implementation.
 
 The Python package loads the Zig-built binding and reference data from packaged

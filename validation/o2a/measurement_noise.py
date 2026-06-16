@@ -4,8 +4,7 @@ from dataclasses import dataclass
 from functools import cache
 
 import numpy as np
-from zdisamar import reference_data, rtm
-from zdisamar.inverse_method import optimal_estimation
+from zdisamar import optimal_estimation, reference_data, rtm
 
 from validation.o2a import baseline
 

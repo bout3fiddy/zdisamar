@@ -14,6 +14,10 @@ pub const StateMatrix = Matrix;
 pub const no_lower_bound = -std.math.inf(f64);
 pub const no_upper_bound = std.math.inf(f64);
 
+comptime {
+    std.debug.assert(max_state_count == jacobian_states.state_count);
+}
+
 // root.zig ---------------------------------------------------------------------------------------------------|
 // Retrieval value layer, fixed state-space scratch, and retained result owners for O2 A O2 A release.         |
 //                                                                                                             |
@@ -352,7 +356,7 @@ pub const Result = struct {
         // Result.init ----------------------------------------------------------------------------------------|
         // Allocate C/Python-borrowable result arrays for one retrieval run.                                   |
         // ----------------------------------------------------------------------------------------------------|
-        if (state_count > max_state_count) return error.InvalidStateCount;
+        if (state_count != max_state_count) return error.InvalidStateCount;
         if (max_iterations > max_iteration_count) return error.InvalidStateSpec;
 
         var result: Result = .{ .state_count = @intCast(state_count) };
@@ -428,7 +432,7 @@ pub const BatchResult = struct {
         // Allocate run-major SoA arrays for a full-physics retrieval batch.                                   |
         // ----------------------------------------------------------------------------------------------------|
         if (run_count == 0) return error.InvalidStateSpec;
-        if (state_count == 0 or state_count > max_state_count) return error.InvalidStateCount;
+        if (state_count != max_state_count) return error.InvalidStateCount;
         if (history_capacity == 0 or history_capacity > max_iteration_count) return error.InvalidStateSpec;
 
         var result: BatchResult = .{
@@ -575,7 +579,7 @@ pub const FastmodeBatchResult = struct {
         // ----------------------------------------------------------------------------------------------------|
         if (run_count == 0) return error.InvalidStateSpec;
 
-        if (state_count == 0 or state_count > max_state_count) return error.InvalidStateCount;
+        if (state_count != max_state_count) return error.InvalidStateCount;
 
         if (history_capacity == 0 or history_capacity > max_iteration_count * 2) {
             return error.InvalidStateSpec;
@@ -644,30 +648,27 @@ pub const Controls = struct {
 // Dense state-space vectors derived once before an OE run or correction step.                                 |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 88 B (0.086 KiB), align: 8 B                                                                          |
+// size: 80 B (0.078 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [ 0..15] state                : Vector                                                                      |
-// [16..31] prior                : Vector                                                                      |
-// [32..47] variance             : Vector                                                                      |
-// [48..63] lower                : Vector                                                                      |
-// [64..79] upper                : Vector                                                                      |
-// [80..80] derivative_state_mask: jacobian_states.StateMask                                                   |
-// [81..87] trailing padding     : 7 B                                                                         |
+// [ 0..15] state   : Vector                                                                                   |
+// [16..31] prior   : Vector                                                                                   |
+// [32..47] variance: Vector                                                                                   |
+// [48..63] lower   : Vector                                                                                   |
+// [64..79] upper   : Vector                                                                                   |
 //                                                                                                             |
 // ownership                                                                                                   |
 //   No heap references. Copied by value so correction paths reuse prepared scalar state without aliases.      |
 //                                                                                                             |
-// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                    |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // cache span: 2 cache lines at 64 B per line                                                                  |
-// footprint: per instance = 88 B (0.086 KiB); one stack value per active retrieval or correction              |
+// footprint: per instance = 80 B (0.078 KiB); one stack value per active retrieval or correction              |
 pub const StateSpace = struct {
     state: Vector,
     prior: Vector,
     variance: Vector,
     lower: Vector,
     upper: Vector,
-    derivative_state_mask: jacobian_states.StateMask,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -755,11 +756,9 @@ pub const Step = struct {
 
 pub fn initializeStateSpace(state_specs: []const StateSpec, result: ?*Result) Error!StateSpace {
     // initializeStateSpace ---------------------------------------------------------------------------------- |
-    // Convert validated state-spec rows into fixed two-lane vectors used by the Rodgers update.               |
-    //                                                                                                         |
-    //   removed from the state vector.                                                                        |
+    // Convert the fixed two-row state spec into vectors used by the Rodgers update.                           |
     // --------------------------------------------------------------------------------------------------------|
-    if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
+    try validateStateSpecs(state_specs);
 
     var state_space: StateSpace = .{
         .state = algebra.zeroVector(),
@@ -767,17 +766,14 @@ pub fn initializeStateSpace(state_specs: []const StateSpec, result: ?*Result) Er
         .variance = algebra.zeroVector(),
         .lower = algebra.zeroVector(),
         .upper = algebra.zeroVector(),
-        .derivative_state_mask = 0,
     };
 
     for (state_specs, 0..) |spec, index| {
-        try validateStateSpec(spec);
         state_space.state[index] = spec.initial;
         state_space.prior[index] = spec.prior;
         state_space.variance[index] = spec.variance;
         state_space.lower[index] = spec.lower_bound;
         state_space.upper[index] = spec.upper_bound;
-        state_space.derivative_state_mask |= jacobian_states.stateMask(spec.state);
         if (result) |full_result| {
             full_result.state_ids[index] = spec.state;
             full_result.initial_state[index] = spec.initial;
@@ -794,6 +790,8 @@ pub fn preparePriorScales(
     // preparePriorScales ------------------------------------------------------------------------------------ |
     // Fill sqrt(Sa) and sqrt(Sa)^-1 scratch lanes from the diagonal prior covariance.                         |
     // --------------------------------------------------------------------------------------------------------|
+    if (state_count != max_state_count) return error.InvalidStateCount;
+
     try algebra.choleskyLowerDiagonal(state_space.variance[0..state_count], &scratch.sqrt_sa, &scratch.sqrt_inv_sa);
 }
 
@@ -830,7 +828,7 @@ pub fn accumulateNormalSystem(
     {
         return error.WavelengthGridMismatch;
     }
-    if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
+    try validateStateSpecs(state_specs);
 
     scratch.b = algebra.zeroVector();
     scratch.g = algebra.zeroMatrix();
@@ -855,16 +853,16 @@ pub fn accumulateNormalSystem(
         const inv_variance = measurement.inv_variance[sample_index];
         chi2_reflectance += residual * residual * inv_variance;
 
-        for (0..state_specs.len) |state_index| {
+        for (0..max_state_count) |state_index| {
             column_values[state_index] =
                 evaluation.jacobian[sample_index][projection.source_index[state_index]] *
                 projection.state_scale[state_index];
         }
 
-        for (0..state_specs.len) |row| {
+        for (0..max_state_count) |row| {
             const weighted_row = column_values[row] * inv_variance;
             scratch.b[row] += sqrt_sa[row] * weighted_row * residual;
-            for (0..state_specs.len) |col| {
+            for (0..max_state_count) |col| {
                 const normal = weighted_row * column_values[col];
                 scratch.jt_invse_j[row][col] += normal;
                 scratch.g[row][col] += sqrt_sa[row] * normal * sqrt_sa[col];
@@ -898,6 +896,8 @@ pub fn solveStep(
     //   state   = prior + sqrt(Sa) * eigenvectors * dx_new                                                    |
     //                                                                                                         |
     // --------------------------------------------------------------------------------------------------------|
+    if (state_count != max_state_count) return error.InvalidStateCount;
+
     const eig = algebra.jacobiEigenSymmetric(g, state_count);
     scratch.eigenvectors = eig.vectors;
     scratch.dx_trans = algebra.transposeMatrixVector(eig.vectors, scratch.dx_white, state_count);
@@ -1014,20 +1014,21 @@ pub fn validateStateSpecs(state_specs: []const StateSpec) Error!void {
     // Validate one C/Python OE state vector before the solver mutates the O2 A case.                          |
     //                                                                                                         |
     // guard                                                                                                   |
-    //   fixed state count     : 1..2                                                                          |
+    //   fixed state count     : exactly two                                                                   |
+    //   fixed order           : aerosol optical depth, aerosol-layer mid-pressure                             |
     //   covariance lanes      : finite and positive                                                           |
     //   pressure-state lanes  : carry interval placement, thickness, and pressure-to-altitude profile rows    |
     //   non-pressure lanes    : carry no pressure-placement side data                                         |
     //                                                                                                         |
     // --------------------------------------------------------------------------------------------------------|
-    if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
+    if (state_specs.len != max_state_count) return error.InvalidStateCount;
+    if (state_specs[0].state != .aerosol_optical_depth or
+        state_specs[1].state != .aerosol_layer_mid_pressure_hpa)
+    {
+        return error.InvalidStateSpec;
+    }
 
-    var seen = [_]bool{false} ** jacobian_states.state_count;
     for (state_specs) |spec| {
-        const state_index = @intFromEnum(spec.state);
-        if (seen[state_index]) return error.InvalidStateSpec;
-
-        seen[state_index] = true;
         try validateStateSpec(spec);
     }
 }

@@ -625,6 +625,13 @@ pub export fn zds_warm_o2a_optimal_estimation(
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
+    if (selection.state_count != zdisamar.optimal_estimation.max_state_count or
+        selection.ids[0] != @intFromEnum(zdisamar.JacobianState.aerosol_optical_depth) or
+        selection.ids[1] != @intFromEnum(zdisamar.JacobianState.aerosol_layer_mid_pressure_hpa))
+    {
+        resolved.setError("invalid optimal-estimation state vector");
+        return @intFromEnum(ZdsStatus.failure);
+    }
 
     var solve_config = zdisamar.solveConfig(prepared.scene);
     solve_config.derivative_state_mask = selection.mask;
@@ -1325,6 +1332,10 @@ fn optimalEstimationBatchRequestView(
         resolved.setError("empty optimal-estimation batch");
         return error.InvalidStateSpec;
     }
+    if (state_count != zdisamar.optimal_estimation.max_state_count) {
+        resolved.setError("invalid state count");
+        return error.InvalidStateCount;
+    }
 
     const batch_worker_count = resolved_request.batch_worker_count;
     if (batch_worker_count != 1) {
@@ -1453,7 +1464,7 @@ fn optimalEstimationStateSpecsFromRaw(
     //   Public state ids are exactly 0 aerosol optical depth and 1 aerosol-layer pressure; id 2 was the       |
     //   removed surface-albedo lane and is rejected before any native state-space math sees it.               |
     // --------------------------------------------------------------------------------------------------------|
-    if (state_count == 0 or state_count > zdisamar.optimal_estimation.max_state_count) {
+    if (state_count != zdisamar.optimal_estimation.max_state_count) {
         resolved.setError("invalid state count");
         return error.InvalidStateCount;
     }
@@ -1466,6 +1477,10 @@ fn optimalEstimationStateSpecsFromRaw(
         if (raw.state_id >= zdisamar.jacobian_state_count) {
             resolved.setError("UnsupportedState");
             return error.UnsupportedState;
+        }
+        if (raw.state_id != @as(u8, @intCast(index))) {
+            resolved.setError("invalid state order");
+            return error.InvalidStateSpec;
         }
 
         const state = std.meta.intToEnum(zdisamar.JacobianState, raw.state_id) catch unreachable;

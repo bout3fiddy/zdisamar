@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from html import escape
 from pathlib import Path
 
-from ..inverse_method.optimal_estimation.diagnosis import (
+from ..optimal_estimation.diagnosis import (
     RETRIEVAL_BASIN_CLUSTER_RADIUS,
     RetrievalBasin,
     RetrievalDiagnosis,

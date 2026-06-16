@@ -20,14 +20,18 @@ import zdisamar as zd
 assert "numpy" not in sys.modules
 assert "pandas" not in sys.modules
 assert "altair" not in sys.modules
-assert zd.__all__ == ["reference_data", "rtm", "wavelength_bands"]
+assert zd.__all__ == ["reference_data", "rtm", "optimal_estimation", "wavelength_bands"]
 assert not hasattr(zd, "prepare")
 assert not hasattr(zd, "forward")
 assert not hasattr(zd, "Scene")
 
 import zdisamar.api as api
 
-assert api.__all__ == ["reference_data", "rtm", "wavelength_bands"]
+assert api.__all__ == ["reference_data", "rtm", "optimal_estimation", "wavelength_bands"]
+
+from zdisamar import optimal_estimation
+
+assert optimal_estimation.Measurement.__name__ == "Measurement"
 """
 
     subprocess.run([sys.executable, "-c", script], check=True, env=env)

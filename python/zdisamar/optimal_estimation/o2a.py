@@ -7,21 +7,22 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 
-from ... import rtm
-from ...input.instrument import SpectralGrid
-from ...input.wavelength_band.o2a import Scene
-from ...input.wavelength_band.optimisation import (
+from .. import rtm
+from ..input.instrument import SpectralGrid
+from ..input.wavelength_band.o2a import Scene
+from ..input.wavelength_band.optimisation import (
     FastModeFastStageSampling,
     measurement_indices_for_wavelengths,
 )
-from ...output.tables import AtmosphericBudget
+from ..output.tables import AtmosphericBudget
 from .measurement import require_matching_wavelength_grid
 from .retrieval import FastCorrection, Iteration, Measurement, Result, RetrievalControls
 from .rtm_evaluation import RtmEvaluation
-from .state_vector import StateVector
+from .state_vector import AEROSOL_LAYER_MID_PRESSURE_HPA, AEROSOL_OPTICAL_DEPTH, StateVector
 from .state_vector.pressure_altitude_profile import PressureAltitudeProfile
 
 FULL_CORRECTION_WINDOW_NM = (762.0, 768.0)
+OPTIMAL_ESTIMATION_STATE_NAMES = (AEROSOL_OPTICAL_DEPTH, AEROSOL_LAYER_MID_PRESSURE_HPA)
 
 
 @dataclass(frozen=True)
@@ -764,6 +765,11 @@ def batch_result_from_native(
     """Convert a copied native batch payload into Python diagnosis state."""
 
     state_count = _native_int(raw, "state_count")
+    if state_names != OPTIMAL_ESTIMATION_STATE_NAMES:
+        raise RuntimeError("optimal-estimation batch state vector is not the two-state contract")
+    if state_count != len(OPTIMAL_ESTIMATION_STATE_NAMES):
+        raise RuntimeError("native optimal-estimation batch state count must be two")
+
     state_values = _native_floats(raw, "state")
     states = tuple(
         tuple(state_values[offset : offset + state_count])
@@ -1209,6 +1215,12 @@ def _result_from_native(
     )
     history_snr_normal = _native_ints(raw, "history_snr_normal")
     state_names = state_vector.names
+
+    if state_names != OPTIMAL_ESTIMATION_STATE_NAMES:
+        raise RuntimeError("optimal-estimation state vector is not the two-state contract")
+
+    if state_count != len(OPTIMAL_ESTIMATION_STATE_NAMES):
+        raise RuntimeError("native optimal-estimation state count must be two")
 
     if state_count != len(state_names):
         raise RuntimeError("native optimal-estimation state count does not match request")

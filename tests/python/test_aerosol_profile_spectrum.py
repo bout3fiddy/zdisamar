@@ -5,9 +5,8 @@ from copy import deepcopy
 from unittest.mock import patch
 
 import pytest
-from zdisamar import rtm
+from zdisamar import optimal_estimation, rtm
 from zdisamar.bindings.handles import RtmHandle
-from zdisamar.inverse_method import optimal_estimation
 
 pytestmark = [pytest.mark.integration, pytest.mark.native]
 
@@ -168,7 +167,12 @@ def test_multi_layer_aerosol_profile_is_forward_only_for_retrieval() -> None:
                         initial=0.3,
                         prior=0.3,
                         prior_uncertainty=math.sqrt(0.8),
-                    )
+                    ),
+                    optimal_estimation.AerosolLayerMidPressure(
+                        initial=850.0,
+                        prior=850.0,
+                        prior_uncertainty=100.0,
+                    ),
                 ]
             ),
         )
@@ -218,7 +222,12 @@ def expect_profile_oe_correction_rejected(scene, spectrum) -> None:
                             initial=0.3,
                             prior=0.3,
                             prior_uncertainty=math.sqrt(0.8),
-                        )
+                        ),
+                        optimal_estimation.AerosolLayerMidPressure(
+                            initial=850.0,
+                            prior=850.0,
+                            prior_uncertainty=100.0,
+                        ),
                     ]
                 ),
                 controls=optimal_estimation.RetrievalControls(max_iterations=1),

@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from numbers import Real
 from typing import Self
 
-from ...display import PrettyMapping
+from ..display import PrettyMapping
 from .rtm_evaluation import RtmEvaluation
 from .state_vector import StateName
 
@@ -335,6 +335,6 @@ class Result:
     def plot(self):
         """Import plotting only when a caller asks for retrieval figures."""
 
-        from ...plot.optimal_estimation import OptimalEstimationPlot
+        from ..plot.optimal_estimation import OptimalEstimationPlot
 
         return OptimalEstimationPlot(self)

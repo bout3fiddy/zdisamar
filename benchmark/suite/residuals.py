@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from zdisamar.inverse_method.optimal_estimation import o2a as band_retrieval
+from zdisamar.optimal_estimation import o2a as band_retrieval
 from zdisamar.output.spectrum import Spectrum
 
 from validation.o2a.measurement_noise import components_from_spectrum

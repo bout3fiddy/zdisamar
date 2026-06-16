@@ -6,6 +6,11 @@ from typing import Self
 from ..bindings.handles import RtmHandle
 from ..input.wavelength_band.o2a import Scene
 
+OPTIMAL_ESTIMATION_STATE_NAMES = (
+    "aerosol_optical_depth",
+    "aerosol_layer_mid_pressure_hpa",
+)
+
 
 @dataclass(eq=False)
 class SessionCache:
@@ -46,6 +51,12 @@ class SessionCache:
 
         if not self._loaded:
             raise RuntimeError("SessionCache has no loaded wavelength-band case")
+
+        if tuple(state_names) != OPTIMAL_ESTIMATION_STATE_NAMES:
+            raise ValueError(
+                "optimal-estimation cache warming requires aerosol_optical_depth "
+                "and aerosol_layer_mid_pressure_hpa in that order"
+            )
 
         if self._oe_warm_state_names == state_names:
             return

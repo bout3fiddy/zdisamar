@@ -31,7 +31,7 @@ from validation.common.native_binding import sync_release_fast_binding  # noqa: 
 
 sync_release_fast_binding(REPO_ROOT)
 
-from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
+from zdisamar.optimal_estimation import o2a as o2a_oe  # noqa: E402
 from zdisamar.plot.properties import PLOT  # noqa: E402
 from zdisamar.wavelength_bands import o2a  # noqa: E402
 

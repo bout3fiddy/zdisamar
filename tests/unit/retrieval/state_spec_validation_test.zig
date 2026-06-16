@@ -23,11 +23,23 @@ test "retrieval state specs reject duplicate states and non-finite pressure thic
         },
     };
     try std.testing.expectError(error.InvalidStateSpec, retrieval.validateStateSpecs(&duplicate_states));
+    try std.testing.expectError(
+        error.InvalidStateCount,
+        retrieval.validateStateSpecs(duplicate_states[0..1]),
+    );
 
     const altitude_km = [_]f64{ 0.0, 1.0 };
     const pressure_hpa = [_]f64{ 900.0, 800.0 };
     const second = [_]f64{ 0.0, 0.0 };
     const pressure_state = [_]retrieval.StateSpec{
+        .{
+            .state = .aerosol_optical_depth,
+            .initial = 0.3,
+            .prior = 0.2,
+            .variance = 4.0,
+            .lower_bound = 0.0,
+            .upper_bound = 1.0,
+        },
         .{
             .state = .aerosol_layer_mid_pressure_hpa,
             .initial = 850.0,

@@ -8,10 +8,10 @@ from unittest.mock import patch
 def test_optimal_estimation_grid_mismatch_rejected() -> None:
 
     import numpy as np
-    from zdisamar.inverse_method.optimal_estimation import (
+    from zdisamar.optimal_estimation import (
         WavelengthGridMismatchError,
     )
-    from zdisamar.inverse_method.optimal_estimation.measurement import (
+    from zdisamar.optimal_estimation.measurement import (
         require_matching_wavelength_grid,
     )
 
@@ -30,19 +30,22 @@ def test_optimal_estimation_grid_mismatch_rejected() -> None:
 
 def test_optimal_estimation_result_dataclass() -> None:
 
-    from zdisamar.inverse_method.optimal_estimation.retrieval import FastCorrection, Result
-    from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
+    from zdisamar.optimal_estimation.retrieval import FastCorrection, Result
+    from zdisamar.optimal_estimation.rtm_evaluation import RtmEvaluation
 
     first = cast(RtmEvaluation, object())
     second = cast(RtmEvaluation, object())
+    state_names = ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")
+    state = (0.3, 850.0)
+    covariance = ((1.0, 0.0), (0.0, 1.0))
     result = Result(
-        state_names=(),
-        state=(),
+        state_names=state_names,
+        state=state,
         iterations=0,
         converged=True,
         history=(),
-        posterior_covariance=(),
-        averaging_kernel=(),
+        posterior_covariance=covariance,
+        averaging_kernel=covariance,
         final_evaluation=first,
     )
     assert result.final_evaluation is first
@@ -51,13 +54,13 @@ def test_optimal_estimation_result_dataclass() -> None:
     assert "final_evaluation" in {field.name for field in fields(result)}
 
     positional = Result(
-        (),
-        (),
+        state_names,
+        state,
         0,
         True,
         (),
-        (),
-        (),
+        covariance,
+        covariance,
     )
     assert positional.initial_state is None
     assert positional.fast_correction is None
@@ -65,7 +68,7 @@ def test_optimal_estimation_result_dataclass() -> None:
     correction = FastCorrection(
         fast_iterations=2,
         fast_converged=True,
-        fast_state=(0.4,),
+        fast_state=(0.4, 850.0),
         full_correction=None,
         full_correction_converged=False,
         full_correction_state_vector_convergence=1.5,
@@ -75,21 +78,21 @@ def test_optimal_estimation_result_dataclass() -> None:
 
 def test_final_evaluation_reuses_last_rtm_evaluation() -> None:
 
-    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
-    from zdisamar.inverse_method.optimal_estimation.retrieval import Result
-    from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
+    from zdisamar.optimal_estimation import o2a as o2a_oe
+    from zdisamar.optimal_estimation.retrieval import Result
+    from zdisamar.optimal_estimation.rtm_evaluation import RtmEvaluation
 
     sentinel = cast(RtmEvaluation, object())
     calls = 0
     result = Result(
-        state_names=("aerosol_optical_depth",),
-        state=(1.0,),
+        state_names=("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa"),
+        state=(1.0, 850.0),
         iterations=1,
         converged=True,
         history=(),
-        posterior_covariance=((1.0,),),
-        averaging_kernel=((1.0,),),
-        last_evaluated_state=(1.0,),
+        posterior_covariance=((1.0, 0.0), (0.0, 1.0)),
+        averaging_kernel=((1.0, 0.0), (0.0, 1.0)),
+        last_evaluated_state=(1.0, 850.0),
         last_evaluation=sentinel,
     )
 
@@ -107,9 +110,9 @@ def test_final_evaluation_reuses_last_rtm_evaluation() -> None:
 
 def test_lazy_final_evaluator_snapshots_scene() -> None:
 
-    from zdisamar.inverse_method import optimal_estimation
-    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
-    from zdisamar.inverse_method.optimal_estimation.rtm_evaluation import RtmEvaluation
+    from zdisamar import optimal_estimation
+    from zdisamar.optimal_estimation import o2a as o2a_oe
+    from zdisamar.optimal_estimation.rtm_evaluation import RtmEvaluation
     from zdisamar.wavelength_bands import o2a
 
     sentinel = cast(RtmEvaluation, object())
@@ -132,20 +135,25 @@ def test_lazy_final_evaluator_snapshots_scene() -> None:
                         initial=0.3,
                         prior=0.3,
                         prior_uncertainty=math.sqrt(0.8),
-                    )
+                    ),
+                    optimal_estimation.AerosolLayerMidPressure(
+                        initial=850.0,
+                        prior=850.0,
+                        prior_uncertainty=100.0,
+                    ),
                 ]
             ),
         )
         scene.geometry.solar_zenith_deg = 0.0
 
-        assert evaluator([1.0]) is sentinel
+        assert evaluator([1.0, 850.0]) is sentinel
 
     assert observed_solar_zenith == [original_solar_zenith]
 
 
 def test_state_vector_uncertainty_rejected() -> None:
 
-    from zdisamar.inverse_method import optimal_estimation
+    from zdisamar import optimal_estimation
 
     for uncertainty in (-1.0, 0.0, math.inf, math.nan):
         try:
@@ -156,6 +164,11 @@ def test_state_vector_uncertainty_rejected() -> None:
                         prior=0.3,
                         prior_uncertainty=uncertainty,
                     ),
+                    optimal_estimation.AerosolLayerMidPressure(
+                        initial=850.0,
+                        prior=850.0,
+                        prior_uncertainty=100.0,
+                    ),
                 )
             )
         except ValueError as error:
@@ -164,10 +177,50 @@ def test_state_vector_uncertainty_rejected() -> None:
             raise AssertionError("invalid state-vector uncertainty was accepted")
 
 
+def test_state_vector_requires_canonical_two_state_order() -> None:
+
+    from zdisamar import optimal_estimation
+
+    try:
+        optimal_estimation.StateVector(
+            (
+                optimal_estimation.AerosolOpticalDepth(
+                    initial=0.3,
+                    prior=0.3,
+                    prior_uncertainty=math.sqrt(0.8),
+                ),
+            )
+        )
+    except ValueError as error:
+        assert "aerosol_layer_mid_pressure_hpa" in str(error)
+    else:
+        raise AssertionError("one-state vector was accepted")
+
+    try:
+        optimal_estimation.StateVector(
+            (
+                optimal_estimation.AerosolLayerMidPressure(
+                    initial=850.0,
+                    prior=850.0,
+                    prior_uncertainty=100.0,
+                ),
+                optimal_estimation.AerosolOpticalDepth(
+                    initial=0.3,
+                    prior=0.3,
+                    prior_uncertainty=math.sqrt(0.8),
+                ),
+            )
+        )
+    except ValueError as error:
+        assert "in that order" in str(error)
+    else:
+        raise AssertionError("reordered state vector was accepted")
+
+
 def test_measurement_accepts_scientific_numeric_scalars() -> None:
 
     import numpy as np
-    from zdisamar.inverse_method import optimal_estimation
+    from zdisamar import optimal_estimation
 
     measurement = optimal_estimation.Measurement(
         wavelength_nm=(cast(float, np.float64(760.0)), cast(float, np.float64(760.1))),

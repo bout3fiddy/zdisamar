@@ -43,6 +43,7 @@ from .structures import (
 _MAX_OPTIMAL_ESTIMATION_ITERATIONS = 1000
 _MAX_UINT32 = 2**32 - 1
 _NATIVE_PRESSURE_STATE = "aerosol_layer_mid_pressure_hpa"
+_OPTIMAL_ESTIMATION_STATE_NAMES = ("aerosol_optical_depth", _NATIVE_PRESSURE_STATE)
 _BATCH_RUN_STATUS_NAMES = ("pending", "ok", "failed")
 
 
@@ -198,6 +199,12 @@ class RtmHandle:
 
     def warm_optimal_estimation_cache(self, state_names: tuple[str, ...]) -> None:
         """Build reusable RTM work arrays for the OE Jacobian route."""
+
+        if tuple(state_names) != _OPTIMAL_ESTIMATION_STATE_NAMES:
+            raise ValueError(
+                "optimal-estimation cache warming requires aerosol_optical_depth "
+                "and aerosol_layer_mid_pressure_hpa in that order"
+            )
 
         state_ids = jacobian_state_ids(state_names)
         self._check(
@@ -492,6 +499,9 @@ class RtmHandle:
 
         state_buffers = []
         state_specs = []
+        parameters = tuple(state_vector.parameters)
+        parameter_names = tuple(parameter.name for parameter in parameters)
+
         raw_max_iterations = controls.max_iterations
 
         if not isinstance(raw_max_iterations, Integral) or isinstance(raw_max_iterations, bool):
@@ -505,7 +515,7 @@ class RtmHandle:
                 f"1 and {_MAX_OPTIMAL_ESTIMATION_ITERATIONS}"
             )
 
-        for parameter in state_vector.parameters:
+        for parameter in parameters:
             parameter_name = parameter.name
             state_name = getattr(parameter, "jacobian_name", parameter_name)
 
@@ -580,8 +590,11 @@ class RtmHandle:
                 )
             )
 
-        if not state_specs:
-            raise ValueError("state vector must contain at least one parameter")
+        if parameter_names != _OPTIMAL_ESTIMATION_STATE_NAMES:
+            raise ValueError(
+                "state vector must contain aerosol_optical_depth and "
+                "aerosol_layer_mid_pressure_hpa in that order"
+            )
 
         state_spec_array = (COptimalEstimationStateSpec * len(state_specs))(*state_specs)
         request = COptimalEstimationRequest(

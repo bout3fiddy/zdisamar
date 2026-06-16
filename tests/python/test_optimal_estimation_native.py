@@ -11,19 +11,25 @@ pytestmark = [pytest.mark.integration, pytest.mark.native]
 def test_native_oe_loads_requested_scene_into_supplied_cache() -> None:
 
     from zdisamar.input.wavelength_band.o2a import Scene
-    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
-    from zdisamar.inverse_method.optimal_estimation.retrieval import (
+    from zdisamar.optimal_estimation import o2a as o2a_oe
+    from zdisamar.optimal_estimation.retrieval import (
         Measurement,
         Result,
         RetrievalControls,
     )
-    from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
+    from zdisamar.optimal_estimation.state_vector import StateVector
     from zdisamar.rtm.session_cache import SessionCache
 
     events: list[tuple[str, object, object]] = []
     requested_scene = SimpleNamespace(scene_id="requested")
     measurement = Measurement((760.0,), (0.2,), signal_to_noise=100.0)
-    state_vector = SimpleNamespace(parameters=(), jacobian_names=("aerosol_optical_depth",))
+    state_vector = SimpleNamespace(
+        parameters=(
+            SimpleNamespace(name="aerosol_optical_depth"),
+            SimpleNamespace(name="aerosol_layer_mid_pressure_hpa"),
+        ),
+        jacobian_names=("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa"),
+    )
     controls = RetrievalControls(max_iterations=1)
     native_result = Result((), (), 0, True, (), (), ())
 
@@ -67,7 +73,7 @@ def test_native_oe_loads_requested_scene_into_supplied_cache() -> None:
     assert events == [
         ("has_loaded_case", requested_scene, None),
         ("load", requested_scene, False),
-        ("warm_oe", ("aerosol_optical_depth",), None),
+        ("warm_oe", ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa"), None),
         ("optimal_estimation", measurement, controls),
     ]
 
@@ -75,19 +81,25 @@ def test_native_oe_loads_requested_scene_into_supplied_cache() -> None:
 def test_native_oe_reuses_matching_supplied_cache() -> None:
 
     from zdisamar.input.wavelength_band.o2a import Scene
-    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
-    from zdisamar.inverse_method.optimal_estimation.retrieval import (
+    from zdisamar.optimal_estimation import o2a as o2a_oe
+    from zdisamar.optimal_estimation.retrieval import (
         Measurement,
         Result,
         RetrievalControls,
     )
-    from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
+    from zdisamar.optimal_estimation.state_vector import StateVector
     from zdisamar.rtm.session_cache import SessionCache
 
     events: list[tuple[str, object, object]] = []
     requested_scene = SimpleNamespace(scene_id="requested")
     measurement = Measurement((760.0,), (0.2,), signal_to_noise=100.0)
-    state_vector = SimpleNamespace(parameters=(), jacobian_names=("aerosol_optical_depth",))
+    state_vector = SimpleNamespace(
+        parameters=(
+            SimpleNamespace(name="aerosol_optical_depth"),
+            SimpleNamespace(name="aerosol_layer_mid_pressure_hpa"),
+        ),
+        jacobian_names=("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa"),
+    )
     controls = RetrievalControls(max_iterations=1)
     native_result = Result((), (), 0, True, (), (), ())
 
@@ -130,21 +142,25 @@ def test_native_oe_reuses_matching_supplied_cache() -> None:
     assert result is native_result
     assert events == [
         ("has_loaded_case", requested_scene, None),
-        ("warm_oe", ("aerosol_optical_depth",), None),
+        ("warm_oe", ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa"), None),
         ("optimal_estimation", measurement, controls),
     ]
 
 
 def test_native_oe_marshaling_bounds() -> None:
 
+    from zdisamar import optimal_estimation
     from zdisamar.bindings.handles import RtmHandle
-    from zdisamar.inverse_method import optimal_estimation
 
     handle = object.__new__(RtmHandle)
     measurement = optimal_estimation.Measurement(
         wavelength_nm=[760.0],
         reflectance=[0.2],
         signal_to_noise=100.0,
+    )
+    pressure_profile = SimpleNamespace(
+        altitude_km=(0.0, 1.0),
+        pressure_hpa=(900.0, 800.0),
     )
     state_vector = SimpleNamespace(
         parameters=[
@@ -156,7 +172,18 @@ def test_native_oe_marshaling_bounds() -> None:
                 lower=None,
                 upper=None,
                 interval_index_1based=0,
-            )
+            ),
+            SimpleNamespace(
+                name="aerosol_layer_mid_pressure_hpa",
+                initial=850.0,
+                prior=850.0,
+                prior_uncertainty=100.0,
+                lower=600.0,
+                upper=1000.0,
+                interval_index_1based=2,
+                thickness_hpa=10.0,
+                pressure_altitude_profile=pressure_profile,
+            ),
         ]
     )
 
@@ -272,8 +299,9 @@ def test_native_oe_marshaling_bounds() -> None:
 
 def test_native_oe_runs_after_reference_scene_prepare() -> None:
 
+    from zdisamar import optimal_estimation
     from zdisamar.bindings.handles import RtmHandle
-    from zdisamar.inverse_method import optimal_estimation
+    from zdisamar.optimal_estimation import o2a as o2a_oe
     from zdisamar.wavelength_bands import o2a
 
     handle = RtmHandle()
@@ -291,8 +319,16 @@ def test_native_oe_runs_after_reference_scene_prepare() -> None:
                     prior=0.3,
                     prior_uncertainty=math.sqrt(0.8),
                 ),
+                optimal_estimation.AerosolLayerMidPressure(
+                    initial=850.0,
+                    prior=850.0,
+                    prior_uncertainty=100.0,
+                    lower=600.0,
+                    upper=1000.0,
+                ),
             )
         )
+        state_vector = o2a_oe.resolved_state_vector_for_scene(scene, state_vector)
         handle.load_scene(scene)
         result = handle.optimal_estimation(
             measurement=measurement,
@@ -300,13 +336,13 @@ def test_native_oe_runs_after_reference_scene_prepare() -> None:
             controls=optimal_estimation.RetrievalControls(max_iterations=1),
         )
         assert result["iteration_count"] == 1
-        assert result["state_count"] == 1
+        assert result["state_count"] == 2
         correction = handle.optimal_estimation_correction(
             measurement=measurement,
             state_vector=state_vector,
             controls=optimal_estimation.RetrievalControls(max_iterations=10),
         )
         assert correction["iteration_count"] == 1
-        assert correction["state_count"] == 1
+        assert correction["state_count"] == 2
     finally:
         handle.close()

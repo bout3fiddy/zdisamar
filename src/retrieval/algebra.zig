@@ -15,8 +15,8 @@ pub const Vector = [max_state_count]f64;
 //   states, so retrieval state math stays two-lane.                                                           |
 //                                                                                                             |
 // state-space storage                                                                                         |
-//   Vector is [2]f64 and Matrix is [2][2]f64. Callers pass state_count and use only the leading rows and      |
-//   columns, so one- and two-state retrievals share stack storage and avoid heap-backed linalg.               |
+//   Vector is [2]f64 and Matrix is [2][2]f64. OE retrieval always uses both lanes: aerosol optical depth and  |
+//   aerosol-layer mid-pressure.                                                                               |
 //                                                                                                             |
 // retrieval math                                                                                              |
 //   Later O2 A solver code builds the Rodgers normal system and update in these arrays:                       |
