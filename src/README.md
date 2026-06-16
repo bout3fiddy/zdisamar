@@ -14,9 +14,9 @@ The public functions are in [`root.zig`](root.zig) and run in this order:
 
 ```
 Scene  ->  prepare  ->  warmSessionMemory  ->  runForwardWithSessionMemory
-          Prepared      SessionMemory          SpectrumRunResult
-        (scene + tables)  (reused memory)        (radiance, reflectance,
-                                                  irradiance, Jacobian)
+              |                 |                          |
+              v                 v                          v
+          Prepared          SessionMemory            SpectrumRunResult
 ```
 
 - A caller-provided or parsed JSON scene gives a `Scene` — atmosphere, geometry,
@@ -24,8 +24,9 @@ Scene  ->  prepare  ->  warmSessionMemory  ->  runForwardWithSessionMemory
 - `prepare` builds the physics tables that stay fixed across runs of the same
   scene.
 - `warmSessionMemory` sets up the memory a run reuses.
-- `runForwardWithSessionMemory` runs one spectrum and returns the arrays. `runForward`
-  does the same with throwaway memory, for a single run.
+- `runForwardWithSessionMemory` runs one spectrum and returns the arrays: radiance,
+  reflectance, irradiance, and the Jacobian. `runForward` does the same with
+  throwaway memory, for a single run.
 
 A retrieval runs this forward pass many times — see below.
 
@@ -47,23 +48,32 @@ Inside one forward pass, data flows one way:
 - `spectrum/` — combine samples into radiance, average through the instrument slit.
 - `output/` — diagnostics and the written-out spectrum.
 
-A retrieval wraps the whole pass and repeats it:
+`input/` and `setup/` run once. Then `spectrum/` loops the wavelengths, calling
+`optics/` and `rtm/` for each one, and averages the per-wavelength results into the
+spectrum:
 
 ```
-+------------------------------------------------------+
-| retrieval/   Rodgers optimal estimation              |
-|                                                      |
-| apply state vector  ->  run forward model + Jacobian |
-| ->  accumulate normal system  ->  update the state   |
-| ->  repeat until converged                           |
-+------------------------------------------------------+
-                            |
-                            |  one forward pass per step
-                            v
-                  the input -> output pass above
+input  ->  setup        (once per scene)
+   |
+   v
+spectrum/
+   |
+   |   for each wavelength:
+   |       optics/  ->  layer optical depths
+   |       rtm/     ->  reflectance at that wavelength
+   |
+   v
+gather  ->  slit average  ->  product spectrum
+   |
+   v
+output
 ```
 
-The rest of the directories support the flow rather than sit in it:
+`rtm/` works one wavelength at a time and has no notion of the band; `spectrum/` is
+the loop that turns those single wavelengths into a spectrum.
+
+A retrieval wraps the whole pass and repeats it. The rest of the directories support 
+the flow:
 
 - `cache/` — the reused memory (see below).
 - `common/` — shared helpers: errors, hashing, math, units, memory, workers.

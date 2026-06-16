@@ -5,8 +5,10 @@ wavelength, `optics/` gives it a column of layers, each with an optical depth an
 single-scatter albedo. Alongside the layers it gets the viewing and solar geometry,
 the solar source, and the curved sun-path samples. `rtm/` turns all of that into the
 top-of-atmosphere reflectance at this wavelength, the one number the spectrum stage
-wants. The module also returns the derivatives of that reflectance
-with respect to the aerosol state.
+wants. The module also returns the derivatives of that reflectance with respect to
+the aerosol state. `spectrum/` drives this stage, calling `solveReflectance` once for
+each wavelength in the band, so the work here happens one wavelength at a time and
+never sees the band as a whole.
 
 Sunlight enters the top of the atmosphere along the solar direction, scattered by
 air molecules and aerosol and absorbed by oxygen; the scattered light travels on
