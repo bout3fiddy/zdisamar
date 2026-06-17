@@ -162,7 +162,8 @@ def run_once(
 
     setup_start = timing_start()
 
-    with rtm.SessionCache(case) as cache:
+    cache_context = rtm.SessionCache() if mode == "fast_mode" else rtm.SessionCache(case)
+    with cache_context as cache:
         setup_timing = elapsed_since(setup_start)
         retrieval_start = timing_start()
         result = band_retrieval.retrieve(
