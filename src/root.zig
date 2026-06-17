@@ -35,7 +35,7 @@ const Allocator = std.mem.Allocator;
 pub const geometry_direction_cosine_floor: f64 = 0.05;
 
 // root.zig ---------------------------------------------------------------------------------------------------|
-// Public explicit row surface for the O2 A forward model.                                                     |
+// Public explicit row surface for the forward model.                                                     |
 //                                                                                                             |
 // public flow                                                                                                 |
 //   Scene -> prepare -> warmSessionMemory -> runForwardWithSessionMemory                                      |
@@ -62,7 +62,9 @@ pub const Spectrum = output_spectrum.Spectrum;
 pub const SpectrumRunResult = output_spectrum.SpectrumRunResult;
 pub const SpectrumRunSummary = output_spectrum.SpectrumRunSummary;
 pub const optimal_estimation = retrieval;
-pub const RetrievalStateSpec = retrieval.StateSpec;
+pub const RetrievalState = retrieval.RetrievalState;
+pub const RetrievalStateScalar = retrieval.StateScalar;
+pub const RetrievalPressureLayerPlacement = retrieval.PressureLayerPlacement;
 pub const RetrievalPressureAltitudeProfile = retrieval.PressureAltitudeProfile;
 pub const RetrievalResult = retrieval.Result;
 pub const RetrievalBatchResult = retrieval.BatchResult;
@@ -79,24 +81,24 @@ pub const buildRunTables = setup_tables.buildRunTables;
 pub const buildProfileLineValues = profile_lines.buildProfileLineValues;
 
 // Prepared ---------------------------------------------------------------------------------------------------|
-// Public owner for parsed or caller-provided O2 A controls and setup tables.                                  |
+// Public owner for parsed or caller-provided controls and setup tables.                                  |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 2728 B (2.664 KiB), align: 8                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [   0.. 703] case  : Scene                                                                                  |
+// [   0.. 703] scene : Scene                                                                                  |
 // [ 704..2727] tables: RunTables                                                                              |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   case borrows control strings/slices. tables owns loaded physical setup arrays and scalar tables.          |
+//   scene borrows control strings/slices. tables owns loaded physical setup arrays and scalar tables.          |
 pub const Prepared = struct {
     scene: Scene,
     tables: RunTables,
 
     pub fn deinit(self: *Prepared, allocator: Allocator) void {
         // Prepared.deinit ------------------------------------------------------------------------------------|
-        // Release setup tables; case strings and slices are borrowed from caller-owned storage.               |
+        // Release setup tables; scene strings and slices are borrowed from caller-owned storage.               |
         // ----------------------------------------------------------------------------------------------------|
         self.tables.deinit(allocator);
         self.* = undefined;
@@ -106,14 +108,14 @@ pub const Prepared = struct {
 
 pub fn initSessionMemory(allocator: Allocator) SessionMemory {
     // initSessionMemory --------------------------------------------------------------------------------------|
-    // Create an empty reusable O2 A session cache.                                                            |
+    // Create an empty reusable session cache.                                                            |
     // --------------------------------------------------------------------------------------------------------|
     return SessionMemory.init(allocator);
 }
 
 pub fn prepare(allocator: Allocator, scene: Scene) !Prepared {
     // prepare ------------------------------------------------------------------------------------------------|
-    // Build the O2 A setup tables retained across forward runs.                                               |
+    // Build the setup tables retained across forward runs.                                               |
     // --------------------------------------------------------------------------------------------------------|
     return .{
         .scene = scene,
@@ -128,7 +130,7 @@ pub fn warmSessionMemory(
     solve_config: SolveConfig,
 ) !void {
     // warmSessionMemory --------------------------------------------------------------------------------------|
-    // Materialize reusable spectrum, radiance, profile-line, solar, and transport memory for one case.        |
+    // Materialize reusable spectrum, radiance, profile-line, solar, and transport memory for one scene.        |
     // --------------------------------------------------------------------------------------------------------|
     const prepared_solve_config = try controls.prepareSolveConfig(solve_config);
     _ = try prepareSessionRows(allocator, session, prepared, prepared_solve_config);
@@ -141,7 +143,7 @@ pub fn runForwardWithSessionMemory(
     solve_config: SolveConfig,
 ) !SpectrumRunResult {
     // runForwardWithSessionMemory ----------------------------------------------------------------------------|
-    // Run the O2 A product-grid spectrum through caller-retained session memory and return owned arrays.      |
+    // Run the product-grid spectrum through caller-retained session memory and return owned arrays.      |
     //                                                                                                         |
     //   Root-level orchestration follows the integrated transport route in                                    |
     //   `tests/unit/spectrum/spectrum_run_test.zig`                                                           |
@@ -179,7 +181,7 @@ pub fn runForwardWithSessionMemory(
 
     // runForward sampling policy -----------------------------------------------------------------------------|
     // Canonical expected values owned by this repository.                                                     |
-    // product row using integrated radiance and integrated irradiance sampling. O2 A                          |
+    // product row using integrated radiance and integrated irradiance sampling.                          |
     // `evidence/python-reference-case-native.json` exposes no Python-native key for calibration arrays, slit  |
     // kernels, or per-channel integration overrides. Keep this policy fixed here;                             |
     // user-configurable controls enter through Scene JSON and `solveConfig`.                                  |
@@ -228,7 +230,7 @@ pub fn runForwardWithSessionMemory(
 
 pub fn runForward(allocator: Allocator, prepared: *const Prepared, solve_config: SolveConfig) !SpectrumRunResult {
     // runForward ---------------------------------------------------------------------------------------------|
-    // Run one O2 A spectrum with a short-lived session memory owner.                                          |
+    // Run one spectrum with a short-lived session memory owner.                                          |
     // --------------------------------------------------------------------------------------------------------|
     var session = initSessionMemory(allocator);
     defer session.deinit(allocator);
@@ -242,15 +244,15 @@ pub fn runOptimalEstimation(
     measurement_wavelength_nm: []const f64,
     measurement_reflectance: []const f64,
     measurement_variance: []const f64,
-    state_specs: []const retrieval.StateSpec,
+    retrieval_state: retrieval.RetrievalState,
     retrieval_controls: retrieval.Controls,
 ) !retrieval.Result {
     // runOptimalEstimation -----------------------------------------------------------------------------------|
-    // Run one full-physics O2 A optimal-estimation solve through the explicit forward path.                   |
+    // Run one full-physics optimal-estimation solve through the explicit forward path.                   |
     //                                                                                                         |
     // steps                                                                                                   |
     //   1. copy measurement rows into dense retrieval SoA storage                                             |
-    //   2. initialize the fixed two-state Rodgers vectors from StateSpec rows                                 |
+    //   2. initialize the fixed two-state Rodgers vectors from RetrievalState                                 |
     //   3. per iteration: apply scalar retrieval state to an Scene, refresh layer/aerosol rows, run           |
     //      spectrum plus reflectance Jacobians, stream the normal system, and solve the transformed update    |
     //   4. write history, posterior covariance, and averaging kernel into the retained Result owner           |
@@ -277,16 +279,19 @@ pub fn runOptimalEstimation(
     );
     defer measurement.deinit(allocator);
 
-    var result = try retrieval.Result.init(allocator, state_specs.len, retrieval_controls.max_iterations);
+    try retrieval.validateRetrievalState(retrieval_state);
+
+    const state_count = retrieval.max_state_count;
+    var result = try retrieval.Result.init(allocator, retrieval_controls.max_iterations);
     errdefer result.deinit(allocator);
 
-    const state_space = try retrieval.initializeStateSpace(state_specs, &result);
-    const state_count = state_specs.len;
-    const has_pressure_state = retrievalStateActive(state_specs, .aerosol_layer_mid_pressure_hpa);
-    if (has_pressure_state and prepared.scene.atmosphere.intervals.len == 0) return error.InvalidStateSpec;
+    const state_space = try retrieval.initializeStateSpace(retrieval_state, &result);
+    if (prepared.scene.atmosphere.intervals.len == 0) return error.InvalidRetrievalState;
 
-    const mutable_interval_count = if (has_pressure_state) prepared.scene.atmosphere.intervals.len else 0;
-    const mutable_intervals = try allocator.alloc(scene_input.VerticalInterval, mutable_interval_count);
+    const mutable_intervals = try allocator.alloc(
+        scene_input.VerticalInterval,
+        prepared.scene.atmosphere.intervals.len,
+    );
     defer allocator.free(mutable_intervals);
 
     var retrieval_layers = try atmosphere_layers.buildFromPreparedProfiles(
@@ -300,7 +305,7 @@ pub fn runOptimalEstimation(
 
     var state = state_space.state;
     var scratch: retrieval.RetrievalIterationScratch = .{};
-    try retrieval.preparePriorScales(state_space, state_count, &scratch);
+    try retrieval.preparePriorScales(state_space, &scratch);
 
     var final_posterior_precision: retrieval.StateMatrix =
         .{.{0.0} ** retrieval.max_state_count} ** retrieval.max_state_count;
@@ -313,9 +318,8 @@ pub fn runOptimalEstimation(
             allocator,
             session,
             prepared,
-            state_specs,
+            retrieval_state,
             previous,
-            state_space.derivative_state_mask,
             mutable_intervals,
             &retrieval_layers,
         );
@@ -328,7 +332,7 @@ pub fn runOptimalEstimation(
                 .reflectance = forward.spectrum.reflectance,
                 .jacobian = forward.spectrum.jacobian,
             },
-            state_specs,
+            retrieval_state,
             previous,
             state_space.prior,
             scratch.sqrt_sa,
@@ -336,7 +340,6 @@ pub fn runOptimalEstimation(
         );
 
         const step = try retrieval.solveStep(
-            state_count,
             scratch.g,
             scratch.b,
             state_space.prior,
@@ -357,7 +360,7 @@ pub fn runOptimalEstimation(
         for (0..state_count) |index| {
             chi2_state += dx_iter[index] * dx_iter[index] / state_space.variance[index];
         }
-        const state_conv = retrieval.quadraticForm(step.posterior_precision, dx_iter, state_count) /
+        const state_conv = retrieval.quadraticForm(step.posterior_precision, dx_iter) /
             @as(f64, @floatFromInt(state_count));
         converged = state_conv < retrieval_controls.state_vector_convergence_threshold and step.snr_normal;
 
@@ -375,8 +378,8 @@ pub fn runOptimalEstimation(
         if (converged) break;
     }
 
-    const posterior_covariance = try retrieval_algebra.invertSymmetric(final_posterior_precision, state_count);
-    const averaging_kernel = retrieval_algebra.multiply(posterior_covariance, scratch.jt_invse_j, state_count);
+    const posterior_covariance = try retrieval_algebra.invertSymmetric(final_posterior_precision);
+    const averaging_kernel = retrieval_algebra.multiply(posterior_covariance, scratch.jt_invse_j);
     result.iteration_count = @intCast(iteration_count);
     result.converged = converged;
     for (0..state_count) |row| {
@@ -396,11 +399,11 @@ pub fn runOptimalEstimationCorrection(
     measurement_wavelength_nm: []const f64,
     measurement_reflectance: []const f64,
     measurement_variance: []const f64,
-    state_specs: []const retrieval.StateSpec,
+    retrieval_state: retrieval.RetrievalState,
     retrieval_controls: retrieval.Controls,
 ) !retrieval.Result {
     // runOptimalEstimationCorrection ---------------------------------------------------------------------    |
-    // Apply one full-physics O2 A correction step to a prepared case already written at the fast-stage state. |
+    // Apply one full-physics correction step to a prepared scene already written at the fast-stage state. |
     //                                                                                                         |
     // contract                                                                                                |
     //   The correction path returns exactly one Rodgers update. Controls still validate solver thresholds,    |
@@ -422,16 +425,19 @@ pub fn runOptimalEstimationCorrection(
     );
     defer measurement.deinit(allocator);
 
-    var result = try retrieval.Result.init(allocator, state_specs.len, 1);
+    try retrieval.validateRetrievalState(retrieval_state);
+
+    const state_count = retrieval.max_state_count;
+    var result = try retrieval.Result.init(allocator, 1);
     errdefer result.deinit(allocator);
 
-    const state_space = try retrieval.initializeStateSpace(state_specs, &result);
-    const state_count = state_specs.len;
-    const has_pressure_state = retrievalStateActive(state_specs, .aerosol_layer_mid_pressure_hpa);
-    if (has_pressure_state and prepared.scene.atmosphere.intervals.len == 0) return error.InvalidStateSpec;
+    const state_space = try retrieval.initializeStateSpace(retrieval_state, &result);
+    if (prepared.scene.atmosphere.intervals.len == 0) return error.InvalidRetrievalState;
 
-    const mutable_interval_count = if (has_pressure_state) prepared.scene.atmosphere.intervals.len else 0;
-    const mutable_intervals = try allocator.alloc(scene_input.VerticalInterval, mutable_interval_count);
+    const mutable_intervals = try allocator.alloc(
+        scene_input.VerticalInterval,
+        prepared.scene.atmosphere.intervals.len,
+    );
     defer allocator.free(mutable_intervals);
 
     var retrieval_layers = try atmosphere_layers.buildFromPreparedProfiles(
@@ -444,15 +450,14 @@ pub fn runOptimalEstimationCorrection(
     defer retrieval_layers.deinit(allocator);
 
     var scratch: retrieval.RetrievalIterationScratch = .{};
-    try retrieval.preparePriorScales(state_space, state_count, &scratch);
+    try retrieval.preparePriorScales(state_space, &scratch);
 
     var forward = try evaluateRetrievalState(
         allocator,
         session,
         prepared,
-        state_specs,
+        retrieval_state,
         state_space.state,
-        state_space.derivative_state_mask,
         mutable_intervals,
         &retrieval_layers,
     );
@@ -465,7 +470,7 @@ pub fn runOptimalEstimationCorrection(
             .reflectance = forward.spectrum.reflectance,
             .jacobian = forward.spectrum.jacobian,
         },
-        state_specs,
+        retrieval_state,
         state_space.state,
         state_space.prior,
         scratch.sqrt_sa,
@@ -473,7 +478,6 @@ pub fn runOptimalEstimationCorrection(
     );
 
     const step = try retrieval.solveStep(
-        state_count,
         scratch.g,
         scratch.b,
         state_space.prior,
@@ -495,7 +499,7 @@ pub fn runOptimalEstimationCorrection(
     for (0..state_count) |index| {
         chi2_state += dx_iter[index] * dx_iter[index] / state_space.variance[index];
     }
-    const state_conv = retrieval.quadraticForm(step.posterior_precision, dx_iter, state_count) /
+    const state_conv = retrieval.quadraticForm(step.posterior_precision, dx_iter) /
         @as(f64, @floatFromInt(state_count));
     const converged = state_conv < retrieval_controls.state_vector_convergence_threshold and step.snr_normal;
 
@@ -506,8 +510,8 @@ pub fn runOptimalEstimationCorrection(
     result.history_state_vector_convergence[0] = state_conv;
     result.history_snr_normal[0] = if (step.snr_normal) 1 else 0;
 
-    const posterior_covariance = try retrieval_algebra.invertSymmetric(step.posterior_precision, state_count);
-    const averaging_kernel = retrieval_algebra.multiply(posterior_covariance, accumulation.jt_invse_j, state_count);
+    const posterior_covariance = try retrieval_algebra.invertSymmetric(step.posterior_precision);
+    const averaging_kernel = retrieval_algebra.multiply(posterior_covariance, accumulation.jt_invse_j);
     result.iteration_count = 1;
     result.converged = converged;
     for (0..state_count) |row| {
@@ -527,7 +531,7 @@ pub fn runOptimalEstimationBatch(
     measurement_wavelength_nm: []const f64,
     measurement_reflectance: []const f64,
     measurement_variance: []const f64,
-    state_template: []const retrieval.StateSpec,
+    state_template: retrieval.RetrievalState,
     initial_states: []const f64,
     prior_states: []const f64,
     retrieval_controls: retrieval.Controls,
@@ -536,40 +540,39 @@ pub fn runOptimalEstimationBatch(
     // Run a correctness-first full-physics OE batch over caller-provided start/prior rows.                    |
     //                                                                                                         |
     // boundary                                                                                                |
-    //   This is the single-worker O2 A batch slice. Each start reuses the same public measurement rows and    |
-    //   prepared case, then copies compact result rows into the run-major BatchResult owner.                  |
+    //   This is the single-worker batch slice. Each start reuses the same public measurement rows and    |
+    //   prepared scene, then copies compact result rows into the run-major BatchResult owner.                  |
     //                                                                                                         |
     // failure model                                                                                           |
     //   OutOfMemory aborts the whole batch. Numerical or control failures mark only that start as failed,     |
     // --------------------------------------------------------------------------------------------------------|
     try validateRetrievalControls(retrieval_controls);
 
-    if (state_template.len == 0 or state_template.len > retrieval.max_state_count) return error.InvalidStateCount;
+    try retrieval.validateRetrievalState(state_template);
 
-    if (initial_states.len != prior_states.len) return error.InvalidStateSpec;
+    const state_count = retrieval.max_state_count;
 
-    if (initial_states.len % state_template.len != 0) return error.InvalidStateSpec;
+    if (initial_states.len != prior_states.len) return error.InvalidRetrievalState;
 
-    const run_count = initial_states.len / state_template.len;
-    if (run_count == 0) return error.InvalidStateSpec;
+    if (initial_states.len % state_count != 0) return error.InvalidRetrievalState;
+
+    const run_count = initial_states.len / state_count;
+    if (run_count == 0) return error.InvalidRetrievalState;
 
     var result = try retrieval.BatchResult.init(
         allocator,
         run_count,
-        state_template.len,
         retrieval_controls.max_iterations,
     );
     errdefer result.deinit(allocator);
 
     for (0..run_count) |run_index| {
-        const state_offset = run_index * state_template.len;
-        var run_specs_buffer: [retrieval.max_state_count]retrieval.StateSpec = undefined;
-        for (state_template, 0..) |template, state_index| {
-            var spec = template;
-            spec.initial = initial_states[state_offset + state_index];
-            spec.prior = prior_states[state_offset + state_index];
-            run_specs_buffer[state_index] = spec;
-        }
+        const state_offset = run_index * state_count;
+        var run_state = state_template;
+        run_state.aerosol_optical_depth.initial = initial_states[state_offset];
+        run_state.aerosol_optical_depth.prior = prior_states[state_offset];
+        run_state.aerosol_layer_mid_pressure.scalar.initial = initial_states[state_offset + 1];
+        run_state.aerosol_layer_mid_pressure.scalar.prior = prior_states[state_offset + 1];
 
         var run = runOptimalEstimation(
             allocator,
@@ -578,7 +581,7 @@ pub fn runOptimalEstimationBatch(
             measurement_wavelength_nm,
             measurement_reflectance,
             measurement_variance,
-            run_specs_buffer[0..state_template.len],
+            run_state,
             retrieval_controls,
         ) catch |err| switch (err) {
             error.OutOfMemory => return err,
@@ -592,12 +595,12 @@ pub fn runOptimalEstimationBatch(
         result.iteration_count[run_index] = run.iteration_count;
         result.converged[run_index] = if (run.converged) 1 else 0;
         result.status[run_index] = @intFromEnum(retrieval.BatchRunStatus.ok);
-        for (0..state_template.len) |state_index| {
+        for (0..state_count) |state_index| {
             result.state[state_offset + state_index] = run.state[state_index];
         }
 
-        const history_offset = run_index * result.history_capacity * state_template.len;
-        const history_len = @as(usize, run.iteration_count) * state_template.len;
+        const history_offset = run_index * result.history_capacity * state_count;
+        const history_len = @as(usize, run.iteration_count) * state_count;
         @memcpy(
             result.history_state[history_offset .. history_offset + history_len],
             run.history_state[0..history_len],
@@ -615,7 +618,7 @@ pub fn runFastmodeOptimalEstimationBatch(
     fast_measurement_wavelength_nm: []const f64,
     fast_measurement_reflectance: []const f64,
     fast_measurement_variance: []const f64,
-    fast_state_template: []const retrieval.StateSpec,
+    fast_state_template: retrieval.RetrievalState,
     initial_states: []const f64,
     prior_states: []const f64,
     fast_controls: retrieval.Controls,
@@ -623,7 +626,7 @@ pub fn runFastmodeOptimalEstimationBatch(
     correction_measurement_wavelength_nm: []const f64,
     correction_measurement_reflectance: []const f64,
     correction_measurement_variance: []const f64,
-    correction_state_template: []const retrieval.StateSpec,
+    correction_state_template: retrieval.RetrievalState,
     correction_prior_states: []const f64,
     correction_controls: retrieval.Controls,
 ) !retrieval.FastmodeBatchResult {
@@ -631,20 +634,17 @@ pub fn runFastmodeOptimalEstimationBatch(
     // Run fast-stage starts, then run a full-physics correction batch seeded from the fast-stage states.      |
     //                                                                                                         |
     // boundary                                                                                                |
-    //   Python owns the fast and correction case construction. Zig receives two prepared O2 A scenes, two     |
+    //   Python owns the fast and correction scene construction. Zig receives two prepared scenes, two     |
     //   measurement grids, and config-driven controls; no wavelength counts are hardcoded here.               |
     //                                                                                                         |
     //   converged flags keep fast-stage convergence when the correction stage returns ok.                     |
     // --------------------------------------------------------------------------------------------------------|
-    if (fast_state_template.len != correction_state_template.len) return error.InvalidStateSpec;
+    try retrieval.validateRetrievalState(fast_state_template);
+    try retrieval.validateRetrievalState(correction_state_template);
 
-    for (fast_state_template, correction_state_template) |fast_spec, correction_spec| {
-        if (fast_spec.state != correction_spec.state) return error.InvalidStateSpec;
-    }
+    if (initial_states.len != prior_states.len) return error.InvalidRetrievalState;
 
-    if (initial_states.len != prior_states.len) return error.InvalidStateSpec;
-
-    if (correction_prior_states.len != prior_states.len) return error.InvalidStateSpec;
+    if (correction_prior_states.len != prior_states.len) return error.InvalidRetrievalState;
 
     var fast = try runOptimalEstimationBatch(
         allocator,
@@ -678,7 +678,6 @@ pub fn runFastmodeOptimalEstimationBatch(
     var result = try retrieval.FastmodeBatchResult.init(
         allocator,
         fast.run_count,
-        fast.state_count,
         total_history_capacity,
     );
     errdefer result.deinit(allocator);
@@ -768,7 +767,7 @@ pub fn buildAtmosphericBudget(
     wavelengths_nm: []const f64,
 ) !AtmosphericBudget {
     // buildAtmosphericBudget ---------------------------------------------------------------------------------|
-    // Build public atmospheric support-row diagnostic rows for the prepared O2 A case.                        |
+    // Build public atmospheric support-row diagnostic rows for the prepared scene.                        |
     // --------------------------------------------------------------------------------------------------------|
     return atmospheric_budget.build(allocator, prepared.scene, &prepared.tables, wavelengths_nm);
 }
@@ -818,13 +817,12 @@ pub fn buildInstrumentResponse(
 
 pub fn solveConfig(scene: Scene) SolveConfig {
     // solveConfig --------------------------------------------------------------------------------------------|
-    // Build the exercised O2 A transport controls used by integrated transport evidence.                      |
+    // Build the exercised transport controls used by integrated transport evidence.                      |
     // --------------------------------------------------------------------------------------------------------|
     const performance_thresholds = performanceThresholdsWithFourierLimit(scene.rtm);
     return .{
         .derivative_mode = .semi_analytical,
-        .derivative_state_mask = jacobian_states.stateMask(.aerosol_optical_depth) |
-            jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa),
+        .wants_jacobian = true,
         .controls = .{
             .scattering = .multiple,
             .n_streams = @intCast(scene.rtm.stream_count),
@@ -856,14 +854,14 @@ fn validateRetrievalControls(retrieval_controls: retrieval.Controls) !void {
     if (retrieval_controls.max_iterations == 0 or
         retrieval_controls.max_iterations > retrieval.max_iteration_count)
     {
-        return error.InvalidStateSpec;
+        return error.InvalidRetrievalState;
     }
     if (retrieval_controls.state_vector_convergence_threshold <= 0.0 or
         retrieval_controls.max_change_transformed_state <= 0.0 or
         !std.math.isFinite(retrieval_controls.state_vector_convergence_threshold) or
         !std.math.isFinite(retrieval_controls.max_change_transformed_state))
     {
-        return error.InvalidStateSpec;
+        return error.InvalidRetrievalState;
     }
 }
 
@@ -871,9 +869,8 @@ fn evaluateRetrievalState(
     allocator: Allocator,
     session: *SessionMemory,
     prepared: *const Prepared,
-    state_specs: []const retrieval.StateSpec,
+    retrieval_state: retrieval.RetrievalState,
     state: retrieval.StateVector,
-    derivative_state_mask: jacobian_states.StateMask,
     mutable_intervals: []scene_input.VerticalInterval,
     retrieval_layers: *atmosphere_layers.LayerGrid,
 ) !SpectrumRunResult {
@@ -882,7 +879,7 @@ fn evaluateRetrievalState(
     //                                                                                                         |
     // boundary                                                                                                |
     //   The retrieval driver owns one retained LayerGrid. This function refills its computed rows for the     |
-    //   current state while borrowing line, CIA, phase, instrument, and solar tables from the prepared case.  |
+    //   current state while borrowing line, CIA, phase, instrument, and solar tables from the prepared scene.  |
     //                                                                                                         |
     // refresh                                                                                                 |
     //   aerosol optical depth : rebuild inline AerosolLayerTable                                              |
@@ -897,7 +894,7 @@ fn evaluateRetrievalState(
         @memcpy(mutable_intervals, prepared.scene.atmosphere.intervals);
         scene.atmosphere.intervals = mutable_intervals;
     }
-    try writeRetrievalStateToScene(&scene, mutable_intervals, state_specs, state);
+    try writeRetrievalStateToScene(&scene, mutable_intervals, retrieval_state, state);
     try input_validate.sceneControls(scene);
 
     try atmosphere_layers.refillFromPreparedProfiles(retrieval_layers, scene, prepared.tables.quadrature);
@@ -911,7 +908,7 @@ fn evaluateRetrievalState(
 
     var solve_config = solveConfig(scene);
     solve_config.derivative_mode = .semi_analytical;
-    solve_config.derivative_state_mask = derivative_state_mask;
+    solve_config.wants_jacobian = true;
 
     return runForwardWithSessionMemory(allocator, session, &evaluation_prepared, solve_config);
 }
@@ -919,67 +916,53 @@ fn evaluateRetrievalState(
 fn writeRetrievalStateToScene(
     scene: *Scene,
     mutable_intervals: []scene_input.VerticalInterval,
-    state_specs: []const retrieval.StateSpec,
+    retrieval_state: retrieval.RetrievalState,
     state: retrieval.StateVector,
 ) !void {
     // writeRetrievalStateToScene -----------------------------------------------------------------------------|
-    // Write active OE scalar values into the case copy used for this iteration.                               |
+    // Write active OE scalar values into the scene copy used for this iteration.                               |
     //                                                                                                         |
     // pressure placement                                                                                      |
     //   target interval takes the new aerosol top/bottom pressures, the adjacent interval boundaries move     |
     //   with it, and no other interval is changed.                                                            |
     // --------------------------------------------------------------------------------------------------------|
-    for (state_specs, 0..) |spec, index| {
-        const value = state[index];
-        switch (spec.state) {
-            .aerosol_optical_depth => scene.aerosol.optical_depth = value,
-            .aerosol_layer_mid_pressure_hpa => {
-                if (mutable_intervals.len == 0) return error.InvalidStateSpec;
+    scene.aerosol.optical_depth = state[0];
 
-                const fit_interval_index = @as(usize, spec.interval_index_1based);
-                const half_thickness = 0.5 * spec.thickness_hpa;
-                const top_pressure = value - half_thickness;
-                const bottom_pressure = value + half_thickness;
+    if (mutable_intervals.len == 0) return error.InvalidRetrievalState;
 
-                scene.aerosol.interval_index_1based = fit_interval_index;
-                scene.aerosol.top_pressure_hpa = top_pressure;
-                scene.aerosol.bottom_pressure_hpa = bottom_pressure;
+    const placement = retrieval_state.aerosol_layer_mid_pressure.placement;
+    const value = state[1];
+    const fit_interval_index = @as(usize, placement.interval_index_1based);
+    const half_thickness = 0.5 * placement.thickness_hpa;
+    const top_pressure = value - half_thickness;
+    const bottom_pressure = value + half_thickness;
 
-                var updated = false;
-                for (mutable_intervals) |*interval| {
-                    const interval_index = interval.index_1based;
+    scene.aerosol.interval_index_1based = fit_interval_index;
+    scene.aerosol.top_pressure_hpa = top_pressure;
+    scene.aerosol.bottom_pressure_hpa = bottom_pressure;
 
-                    if (interval_index == fit_interval_index) {
-                        interval.top_pressure_hpa = top_pressure;
-                        interval.bottom_pressure_hpa = bottom_pressure;
-                        updated = true;
-                        continue;
-                    }
+    var updated = false;
+    for (mutable_intervals) |*interval| {
+        const interval_index = interval.index_1based;
 
-                    if (interval_index + 1 == fit_interval_index) {
-                        interval.bottom_pressure_hpa = top_pressure;
-                        continue;
-                    }
+        if (interval_index == fit_interval_index) {
+            interval.top_pressure_hpa = top_pressure;
+            interval.bottom_pressure_hpa = bottom_pressure;
+            updated = true;
+            continue;
+        }
 
-                    if (interval_index == fit_interval_index + 1) {
-                        interval.top_pressure_hpa = bottom_pressure;
-                    }
-                }
+        if (interval_index + 1 == fit_interval_index) {
+            interval.bottom_pressure_hpa = top_pressure;
+            continue;
+        }
 
-                if (!updated) return error.InvalidStateSpec;
-            },
+        if (interval_index == fit_interval_index + 1) {
+            interval.top_pressure_hpa = bottom_pressure;
         }
     }
-}
 
-fn retrievalStateActive(state_specs: []const retrieval.StateSpec, state: jacobian_states.State) bool {
-    // retrievalStateActive ---------------------------------------------------------------------------------- |
-    // Test whether one fixed Jacobian state appears in the current OE state vector.                           |
-    // --------------------------------------------------------------------------------------------------------|
-    for (state_specs) |spec| {
-        if (spec.state == state) return true;
-    }
-    return false;
+    if (!updated) return error.InvalidRetrievalState;
 }
 
 const PreparedSessionRows = struct {
@@ -1000,44 +983,64 @@ fn prepareSessionRows(
     // Rebuild shape rows and retain expensive profile-line values for one already-validated solve route.      |
     //                                                                                                         |
     // hot path                                                                                                |
-    //   Root prepares SolveConfig once before this boundary. Wavelength workers receive the same sanitized    |
-    //   mask and validated stream/threshold controls, matching the prepared LABOS execution route.            |
+    //   Root prepares SolveConfig once before this boundary. Wavelength workers receive the same validated    |
+    //   stream and threshold controls, matching the prepared LABOS execution route.                           |
     // --------------------------------------------------------------------------------------------------------|
     const sampling_stamp = samplingTableReuseStamp(prepared);
-    const table = resolve_sampling_table: {
-        if (session.spectrum.hasTable(sampling_stamp)) {
-            break :resolve_sampling_table try session.spectrum.table(
-                session.spectrum.rows.len,
-                session.spectrum.kernel_offsets_nm.len,
-            );
-        }
-
-        var owned_sampling = try sampling_table.buildSpectrumSamplingTable(
+    if (!session.spectrum.hasTable(sampling_stamp)) {
+        const built_sampling = try sampling_table.buildSpectrumSamplingTable(
             allocator,
             prepared.scene,
             prepared.tables.instrument,
             prepared.tables.lines,
         );
-        defer owned_sampling.deinit(allocator);
-        const row_count = owned_sampling.rows.len;
-        const side_sample_count = owned_sampling.kernel_offsets_nm.len;
-        session.spectrum.takeTable(allocator, &owned_sampling, sampling_stamp);
-        break :resolve_sampling_table try session.spectrum.table(row_count, side_sample_count);
-    };
+        session.spectrum.rebuildTable(
+            allocator,
+            built_sampling.rows,
+            built_sampling.kernel_offsets_nm,
+            built_sampling.kernel_weights,
+            sampling_stamp,
+        );
+    }
+    const table = try session.spectrum.table(
+        session.spectrum.rows.len,
+        session.spectrum.kernel_offsets_nm.len,
+    );
 
-    var owned_wavelengths = try radiance_wavelengths.buildRadianceWavelengthList(allocator, table);
-    defer owned_wavelengths.deinit(allocator);
-    const wavelength_list_stamp = radianceWavelengthListReuseStamp(owned_wavelengths.view());
-    const dense_count = owned_wavelengths.wavelengths.len;
-    const exact_wavelengths = try allocator.alloc(f64, dense_count);
+    var built_wavelengths = try radiance_wavelengths.buildRadianceWavelengthList(allocator, table);
+    const wavelength_list_stamp = radianceWavelengthListReuseStamp(built_wavelengths.view());
+    const dense_count = built_wavelengths.wavelengths.len;
+    const exact_wavelengths = allocator.alloc(f64, dense_count) catch |err| {
+        built_wavelengths.deinit(allocator);
+        return err;
+    };
     defer allocator.free(exact_wavelengths);
-    for (owned_wavelengths.wavelengths, exact_wavelengths) |row, *wavelength_nm| {
+    const wavelength_list_matches = session.radiance.hasWavelengthList(
+        wavelength_list_stamp,
+        built_wavelengths.rows.len,
+        built_wavelengths.sample_indices.len,
+        built_wavelengths.wavelengths.len,
+    );
+    if (wavelength_list_matches) {
+        built_wavelengths.deinit(allocator);
+    } else {
+        session.radiance.rebuildWavelengthList(
+            allocator,
+            built_wavelengths.rows,
+            built_wavelengths.sample_indices,
+            built_wavelengths.wavelengths,
+            wavelength_list_stamp,
+        );
+    }
+
+    const active_wavelengths = session.radiance.wavelengthList().wavelengths;
+    for (active_wavelengths, exact_wavelengths) |row, *wavelength_nm| {
         wavelength_nm.* = row.wavelength_nm;
     }
     const worker_count = spectrum_run.preferredRadianceWorkerCount(dense_count);
     const worker_pool = session.worker_pool.poolForWorkerCount(allocator, worker_count);
 
-    // Public O2 A spectrum runs read support-profile sigma rows through optics interpolation. They do not read
+    // Public spectrum runs read support-profile sigma rows through optics interpolation. They do not read
     // diagnostic layer-node rows or profile-line d_sigma/dT rows for the current surface/aerosol Jacobian set.
     // Both mode bits remain in the reuse stamp so future diagnostic or temperature-profile paths split caches.
     const build_layer_values = false;
@@ -1051,15 +1054,6 @@ fn prepareSessionRows(
         needs_temperature_derivatives,
     );
 
-    const wavelength_list_matches = session.radiance.hasWavelengthList(
-        wavelength_list_stamp,
-        owned_wavelengths.rows.len,
-        owned_wavelengths.sample_indices.len,
-        owned_wavelengths.wavelengths.len,
-    );
-    if (!wavelength_list_matches) {
-        session.radiance.takeWavelengthList(allocator, &owned_wavelengths, wavelength_list_stamp);
-    }
     const wants_dense_jacobian = radiance_results.wantsJacobian(prepared_solve_config);
     try session.radiance.ensureResultCapacity(allocator, dense_count, wants_dense_jacobian);
 
@@ -1219,10 +1213,10 @@ fn radianceResultReuseStamp(
     }) |value| hashing.updateValue(&hasher, value);
     for ([_]usize{
         @intFromEnum(solve_config.derivative_mode),
-        solve_config.derivative_state_mask,
         @intFromEnum(solve_config.controls.scattering),
         solve_config.controls.n_streams,
     }) |value| hashing.updateValue(&hasher, value);
+    hashing.updateBool(&hasher, solve_config.wants_jacobian);
     hashing.updateBool(&hasher, solve_config.controls.use_spherical_correction);
     hashing.updateBool(&hasher, solve_config.controls.integrate_source_function);
     hashing.updateBool(&hasher, solve_config.controls.renorm_phase_function);

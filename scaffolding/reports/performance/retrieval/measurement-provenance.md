@@ -6,7 +6,7 @@ The current paired retrieval evidence is the tracked plot manifest:
 validation/outputs/optimal_estimation/paired_oe_plot_manifest.json
 ```
 
-The generated parquet and per-case DISAMAR directories live under:
+The generated parquet and per-scene DISAMAR directories live under:
 
 ```text
 out/validation/optimal_estimation/paired_disamar_zdisamar/
@@ -26,7 +26,7 @@ validation/outputs/optimal_estimation/zdisamar_o2a_slow_rtm_jacobian_benchmark.j
 ```
 
 The paired scene ranges follow the geometry, aerosol, meteorology, and surface
-parameter ranges from the AMT 2019 O2 A aerosol-height retrieval study,
+parameter ranges from the AMT 2019 O2A aerosol-height retrieval study,
 `https://doi.org/10.5194/amt-12-6619-2019`, narrowed here to sensible
 cloud-free aerosol-only validation ranges.
 

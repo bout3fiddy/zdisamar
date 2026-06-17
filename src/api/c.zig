@@ -13,9 +13,9 @@ pub const links_libc = builtin.link_libc;
 //   python/zdisamar/bindings/signatures.py binds the exported `zds_*` symbols with ctypes.                    |
 //                                                                                                             |
 // boundary                                                                                                    |
-//   Context owns prepared setup tables, reusable O2 session memory, returned spectrum handles, and error      |
+//   Context owns prepared setup tables, reusable session memory, returned spectrum handles, and error      |
 //   text. Compute receives only the public root inputs: Prepared, SessionMemory, and SolveConfig.             |
-//   JSON parsing, diagnostic tables, retrieval, and fastmode return typed failures until their O2 A/O2 A      |
+//   JSON parsing, diagnostic tables, retrieval, and fastmode return typed failures until they land      |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const ZdsStatus = enum(c_int) {
@@ -74,40 +74,43 @@ pub const ZdsDiagnosticReport = extern struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// ZdsOptimalEstimationStateSpec ------------------------------------------------------------------------------|
-// One C-facing retrieval-state control row. Optional pressure-profile pointers borrow caller buffers.         |
+// ZdsOptimalEstimationScalarSpec -----------------------------------------------------------------------------|
+// One C-facing scalar control field for a named fixed-state retrieval lane.                                   |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 80 B (0.078 KiB), align: 8 B                                                                          |
+// size: 48 B (0.047 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [ 0.. 0] state_id                      : u8                                                                 |
-// [ 1.. 1] has_lower                     : u8                                                                 |
-// [ 2.. 2] has_upper                     : u8                                                                 |
-// [ 3.. 3] padding                       : 1 B                                                                |
-// [ 4.. 7] interval_index_1based         : u32                                                                |
-// [ 8..15] initial                       : f64                                                                |
-// [16..23] prior                         : f64                                                                |
-// [24..31] variance                      : f64                                                                |
-// [32..39] lower                         : f64                                                                |
-// [40..47] upper                         : f64                                                                |
-// [48..55] thickness_hpa                 : f64                                                                |
-// [56..63] pressure_profile_count        : usize                                                              |
-// [64..71] pressure_profile_altitude_km  : ?[*]const f64                                                      |
-// [72..79] pressure_profile_pressure_hpa : ?[*]const f64                                                      |
-//                                                                                                             |
-// referenced storage                                                                                          |
-//   pressure-profile arrays are borrowed only while the request converts into native state specs.             |
-pub const ZdsOptimalEstimationStateSpec = extern struct {
-    state_id: u8 = 0,
+// [ 0.. 0] has_lower : u8                                                                                     |
+// [ 1.. 1] has_upper : u8                                                                                     |
+// [ 2.. 7] padding   : 6 B                                                                                    |
+// [ 8..15] initial   : f64                                                                                    |
+// [16..23] prior     : f64                                                                                    |
+// [24..31] variance  : f64                                                                                    |
+// [32..39] lower     : f64                                                                                    |
+// [40..47] upper     : f64                                                                                    |
+pub const ZdsOptimalEstimationScalarSpec = extern struct {
     has_lower: u8 = 0,
     has_upper: u8 = 0,
-    interval_index_1based: u32 = 0,
     initial: f64 = 0.0,
     prior: f64 = 0.0,
     variance: f64 = 0.0,
     lower: f64 = 0.0,
     upper: f64 = 0.0,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// ZdsOptimalEstimationPressureSpec ---------------------------------------------------------------------------|
+// C-facing pressure retrieval lane: scalar controls plus required layer-placement metadata.                   |
+//                                                                                                             |
+// layout(64-bit)                                                                                              |
+// size: 88 B (0.086 KiB), align: 8 B                                                                          |
+//                                                                                                             |
+// referenced storage                                                                                          |
+//   pressure-profile arrays are borrowed only while the request converts into the native fixed state.         |
+pub const ZdsOptimalEstimationPressureSpec = extern struct {
+    scalar: ZdsOptimalEstimationScalarSpec = .{},
+    interval_index_1based: u32 = 0,
     thickness_hpa: f64 = 0.0,
     pressure_profile_count: usize = 0,
     pressure_profile_altitude_km: ?[*]const f64 = null,
@@ -133,29 +136,29 @@ pub const ZdsOptimalEstimationControls = extern struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // ZdsOptimalEstimationRequest --------------------------------------------------------------------------------|
-// Single-run retrieval request with borrowed measurement arrays and state rows.                               |
+// Single-run retrieval request with borrowed measurement arrays and named fixed-state fields.                 |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 72 B (0.070 KiB), align: 8 B                                                                          |
+// size: 192 B (0.188 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
-// [ 0.. 7] sample_count  : usize                                                                              |
-// [ 8..15] wavelength_nm : ?[*]const f64                                                                      |
-// [16..23] reflectance   : ?[*]const f64                                                                      |
-// [24..31] variance      : ?[*]const f64                                                                      |
-// [32..39] state_count   : usize                                                                              |
-// [40..47] states        : ?[*]const ZdsOptimalEstimationStateSpec                                            |
-// [48..71] controls      : ZdsOptimalEstimationControls                                                       |
+// [  0..  7] sample_count           : usize                                                                   |
+// [  8.. 15] wavelength_nm          : ?[*]const f64                                                           |
+// [ 16.. 23] reflectance            : ?[*]const f64                                                           |
+// [ 24.. 31] variance               : ?[*]const f64                                                           |
+// [ 32.. 79] aerosol_optical_depth  : ZdsOptimalEstimationScalarSpec                                          |
+// [ 80..167] aerosol_layer_pressure : ZdsOptimalEstimationPressureSpec                                        |
+// [168..191] controls               : ZdsOptimalEstimationControls                                            |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   measurement arrays and state specs borrow caller buffers for the duration of the call.                    |
+//   measurement arrays and pressure-profile rows borrow caller buffers for the duration of the call.          |
 pub const ZdsOptimalEstimationRequest = extern struct {
     sample_count: usize = 0,
     wavelength_nm: ?[*]const f64 = null,
     reflectance: ?[*]const f64 = null,
     variance: ?[*]const f64 = null,
-    state_count: usize = 0,
-    states: ?[*]const ZdsOptimalEstimationStateSpec = null,
+    aerosol_optical_depth: ZdsOptimalEstimationScalarSpec = .{},
+    aerosol_layer_pressure: ZdsOptimalEstimationPressureSpec = .{},
     controls: ZdsOptimalEstimationControls = .{},
 };
 // ------------------------------------------------------------------------------------------------------------|
@@ -206,33 +209,33 @@ pub const ZdsOptimalEstimationResult = extern struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // ZdsOptimalEstimationBatchRequest ---------------------------------------------------------------------------|
-// Multi-run retrieval request sharing one measurement grid and one state template across run-specific priors. |
+// Multi-run retrieval request sharing one measurement grid and one fixed state template across run priors.    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 104 B (0.102 KiB), align: 8 B                                                                         |
+// size: 224 B (0.219 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
-// [  0..  7] sample_count       : usize                                                                       |
-// [  8.. 15] wavelength_nm      : ?[*]const f64                                                               |
-// [ 16.. 23] reflectance        : ?[*]const f64                                                               |
-// [ 24.. 31] variance           : ?[*]const f64                                                               |
-// [ 32.. 39] state_count        : usize                                                                       |
-// [ 40.. 47] state_template     : ?[*]const ZdsOptimalEstimationStateSpec                                     |
-// [ 48.. 55] run_count          : usize                                                                       |
-// [ 56.. 63] initial            : ?[*]const f64                                                               |
-// [ 64.. 71] prior              : ?[*]const f64                                                               |
-// [ 72.. 95] controls           : ZdsOptimalEstimationControls                                                |
-// [ 96..103] batch_worker_count : usize                                                                       |
+// [  0..  7] sample_count           : usize                                                                   |
+// [  8.. 15] wavelength_nm          : ?[*]const f64                                                           |
+// [ 16.. 23] reflectance            : ?[*]const f64                                                           |
+// [ 24.. 31] variance               : ?[*]const f64                                                           |
+// [ 32.. 79] aerosol_optical_depth  : ZdsOptimalEstimationScalarSpec                                          |
+// [ 80..167] aerosol_layer_pressure : ZdsOptimalEstimationPressureSpec                                        |
+// [168..175] run_count              : usize                                                                   |
+// [176..183] initial                : ?[*]const f64                                                           |
+// [184..191] prior                  : ?[*]const f64                                                           |
+// [192..215] controls               : ZdsOptimalEstimationControls                                            |
+// [216..223] batch_worker_count     : usize                                                                   |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   measurement arrays, template state rows, and run initial/prior arrays borrow caller buffers.              |
+//   measurement arrays, pressure-profile rows, and run initial/prior arrays borrow caller buffers.            |
 pub const ZdsOptimalEstimationBatchRequest = extern struct {
     sample_count: usize = 0,
     wavelength_nm: ?[*]const f64 = null,
     reflectance: ?[*]const f64 = null,
     variance: ?[*]const f64 = null,
-    state_count: usize = 0,
-    state_template: ?[*]const ZdsOptimalEstimationStateSpec = null,
+    aerosol_optical_depth: ZdsOptimalEstimationScalarSpec = .{},
+    aerosol_layer_pressure: ZdsOptimalEstimationPressureSpec = .{},
     run_count: usize = 0,
     initial: ?[*]const f64 = null,
     prior: ?[*]const f64 = null,
@@ -544,7 +547,7 @@ pub export fn zds_context_destroy(ctx: ?*Context) void {
 
 pub export fn zds_prepare_o2a_json(ctx: ?*Context, json_ptr: ?[*]const u8, json_len: usize) c_int {
     // zds_prepare_o2a_json -----------------------------------------------------------------------------------|
-    // Parse Python's native O2 A JSON shape and prepare the resulting typed case.                             |
+    // Parse Python's native JSON shape and prepare the resulting typed scene.                             |
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
 
@@ -580,7 +583,7 @@ pub export fn zds_prepare_o2a_json(ctx: ?*Context, json_ptr: ?[*]const u8, json_
 
 export fn zds_warm_o2a_session(ctx: ?*Context) c_int {
     // zds_warm_o2a_session -----------------------------------------------------------------------------------|
-    // Build retained session rows for the prepared O2 A case.                                                 |
+    // Build retained session rows for the prepared scene.                                                 |
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
 
@@ -590,8 +593,8 @@ export fn zds_warm_o2a_session(ctx: ?*Context) c_int {
     });
 
     var solve_config = zdisamar.solveConfig(prepared.scene);
-    solve_config.derivative_state_mask = 0;
     solve_config.derivative_mode = .none;
+    solve_config.wants_jacobian = false;
 
     zdisamar.warmSessionMemory(
         allocator,
@@ -608,11 +611,9 @@ export fn zds_warm_o2a_session(ctx: ?*Context) c_int {
 
 pub export fn zds_warm_o2a_optimal_estimation(
     ctx: ?*Context,
-    state_ids: ?[*]const u8,
-    requested_state_count: usize,
 ) c_int {
     // zds_warm_o2a_optimal_estimation ------------------------------------------------------------------------|
-    // Warm the session cache for the semi-analytical Jacobian state mask needed by OE.                        |
+    // Warm the session cache for the fixed two-lane semi-analytical Jacobian needed by OE.                    |
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
 
@@ -621,14 +622,9 @@ pub export fn zds_warm_o2a_optimal_estimation(
         return @intFromEnum(ZdsStatus.failure);
     });
 
-    const selection = jacobianSelection(state_ids, requested_state_count, true) catch |err| {
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
-
     var solve_config = zdisamar.solveConfig(prepared.scene);
-    solve_config.derivative_state_mask = selection.mask;
     solve_config.derivative_mode = .semi_analytical;
+    solve_config.wants_jacobian = true;
 
     zdisamar.warmSessionMemory(
         allocator,
@@ -645,28 +641,16 @@ pub export fn zds_warm_o2a_optimal_estimation(
 
 pub export fn zds_run_spectrum(ctx: ?*Context, out: ?*ZdsSpectrum) c_int {
     // zds_run_spectrum ---------------------------------------------------------------------------------------|
-    // Run the prepared case without returning Jacobian columns.                                               |
+    // Run the prepared scene without returning Jacobian columns.                                               |
     // --------------------------------------------------------------------------------------------------------|
-    return runSpectrum(ctx, out, null, 0, false);
+    return runSpectrum(ctx, out, false);
 }
 
 export fn zds_run_spectrum_jacobian(ctx: ?*Context, out: ?*ZdsSpectrum) c_int {
     // zds_run_spectrum_jacobian ------------------------------------------------------------------------------|
-    // Run the prepared case with all fixed Jacobian columns in public order.                                  |
+    // Run the prepared scene with all fixed Jacobian columns in public order.                                  |
     // --------------------------------------------------------------------------------------------------------|
-    return runSpectrum(ctx, out, null, 0, true);
-}
-
-export fn zds_run_spectrum_jacobian_for_states(
-    ctx: ?*Context,
-    out: ?*ZdsSpectrum,
-    state_ids: ?[*]const u8,
-    state_count: usize,
-) c_int {
-    // zds_run_spectrum_jacobian_for_states -------------------------------------------------------------------|
-    // Run the prepared case with a caller-selected compact Jacobian column order.                             |
-    // --------------------------------------------------------------------------------------------------------|
-    return runSpectrum(ctx, out, state_ids, state_count, true);
+    return runSpectrum(ctx, out, true);
 }
 
 export fn zds_spectrum_report(ctx: ?*Context, spectrum: ?*const ZdsSpectrum, out: ?*ZdsDiagnosticReport) c_int {
@@ -771,27 +755,26 @@ const OptimalEstimationMeasurementSlices = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// OptimalEstimationStateSpecs --------------------------------------------------------------------------------|
-// Request-scoped native state specs plus pressure-profile spline scratch.                                     |
+// OptimalEstimationFixedState --------------------------------------------------------------------------------|
+// Request-scoped fixed native state plus pressure-profile spline scratch.                                     |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 312 B (0.305 KiB), align: 8 B                                                                         |
+// size: 200 B (0.195 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
-// [  0.. 95] profiles   : [2]PressureAltitudeProfile                                                          |
-// [ 96..303] state_specs: [2]StateSpec                                                                        |
-// [304..311] state_count: usize                                                                               |
+// [ 0..95] profiles: [2]PressureAltitudeProfile                                                               |
+// [96..199] state   : RetrievalState                                                                          |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Pressure-profile second-derivative arrays are owned until the C call returns and deinit frees them.       |
-const OptimalEstimationStateSpecs = struct {
+//   retrievalState refreshes borrowed profile pointers from this owner before native solver calls.            |
+const OptimalEstimationFixedState = struct {
     profiles: [zdisamar.optimal_estimation.max_state_count]zdisamar.RetrievalPressureAltitudeProfile =
         [_]zdisamar.RetrievalPressureAltitudeProfile{.{}} ** zdisamar.optimal_estimation.max_state_count,
-    state_specs: [zdisamar.optimal_estimation.max_state_count]zdisamar.RetrievalStateSpec = undefined,
-    state_count: usize = 0,
+    state: zdisamar.RetrievalState = undefined,
 
-    fn deinit(self: *OptimalEstimationStateSpecs) void {
-        // OptimalEstimationStateSpecs.deinit -----------------------------------------------------------------|
+    fn deinit(self: *OptimalEstimationFixedState) void {
+        // OptimalEstimationFixedState.deinit -----------------------------------------------------------------|
         // Release request-scoped pressure-profile spline scratch.                                             |
         // ----------------------------------------------------------------------------------------------------|
         for (&self.profiles) |*profile| {
@@ -802,11 +785,13 @@ const OptimalEstimationStateSpecs = struct {
         }
     }
 
-    fn slice(self: *const OptimalEstimationStateSpecs) []const zdisamar.RetrievalStateSpec {
-        // OptimalEstimationStateSpecs.slice ------------------------------------------------------------------|
-        // Return the active leading state-spec rows in caller order.                                          |
+    fn retrievalState(self: *const OptimalEstimationFixedState) zdisamar.RetrievalState {
+        // OptimalEstimationFixedState.retrievalState ---------------------------------------------------------|
+        // Return the fixed native state parsed from the named C request fields.                               |
         // ----------------------------------------------------------------------------------------------------|
-        return self.state_specs[0..self.state_count];
+        var state = self.state;
+        state.aerosol_layer_mid_pressure.placement.pressure_altitude_profile = &self.profiles[1];
+        return state;
     }
 };
 // ------------------------------------------------------------------------------------------------------------|
@@ -820,17 +805,17 @@ const OptimalEstimationStateSpecs = struct {
 // memory                                                                                                      |
 // [  0.. 47] measurement: OptimalEstimationMeasurementSlices                                                  |
 // [ 48.. 71] controls   : Controls                                                                            |
-// [ 72..383] state_specs: OptimalEstimationStateSpecs                                                         |
+// [ 72..383] fixed_state: OptimalEstimationFixedState                                                         |
 const OptimalEstimationRequestView = struct {
     measurement: OptimalEstimationMeasurementSlices,
     controls: zdisamar.optimal_estimation.Controls,
-    state_specs: OptimalEstimationStateSpecs,
+    fixed_state: OptimalEstimationFixedState,
 
     fn deinit(self: *OptimalEstimationRequestView) void {
         // OptimalEstimationRequestView.deinit ----------------------------------------------------------------|
-        // Release request-scoped state-spec side data.                                                        |
+        // Release request-scoped fixed-state side data.                                                       |
         // ----------------------------------------------------------------------------------------------------|
-        self.state_specs.deinit();
+        self.fixed_state.deinit();
     }
 };
 // ------------------------------------------------------------------------------------------------------------|
@@ -844,7 +829,7 @@ const OptimalEstimationRequestView = struct {
 // memory                                                                                                      |
 // [  0.. 47] measurement        : OptimalEstimationMeasurementSlices                                          |
 // [ 48.. 71] controls           : Controls                                                                    |
-// [ 72..383] state_template     : OptimalEstimationStateSpecs                                                 |
+// [ 72..383] state_template     : OptimalEstimationFixedState                                                 |
 // [384..399] initial            : []const f64                                                                 |
 // [400..415] prior              : []const f64                                                                 |
 // [416..423] run_count          : usize                                                                       |
@@ -854,7 +839,7 @@ const OptimalEstimationRequestView = struct {
 const OptimalEstimationBatchRequestView = struct {
     measurement: OptimalEstimationMeasurementSlices,
     controls: zdisamar.optimal_estimation.Controls,
-    state_template: OptimalEstimationStateSpecs,
+    state_template: OptimalEstimationFixedState,
     initial: []const f64,
     prior: []const f64,
     run_count: usize,
@@ -911,7 +896,7 @@ pub export fn zds_run_o2a_optimal_estimation(
         request_view.measurement.wavelength_nm,
         request_view.measurement.reflectance,
         request_view.measurement.variance,
-        request_view.state_specs.slice(),
+        request_view.fixed_state.retrievalState(),
         request_view.controls,
     ) catch |err| {
         resolved.setError(@errorName(err));
@@ -935,7 +920,7 @@ pub export fn zds_run_o2a_optimal_estimation_correction(
     out: ?*ZdsOptimalEstimationResult,
 ) c_int {
     // zds_run_o2a_optimal_estimation_correction --------------------------------------------------------------|
-    // Run one prepared-case full-physics correction step and return a Context-owned result handle.            |
+    // Run one prepared-scene full-physics correction step and return a Context-owned result handle.            |
     // --------------------------------------------------------------------------------------------------------|
     const resolved = ctx orelse return @intFromEnum(ZdsStatus.failure);
 
@@ -969,7 +954,7 @@ pub export fn zds_run_o2a_optimal_estimation_correction(
         request_view.measurement.wavelength_nm,
         request_view.measurement.reflectance,
         request_view.measurement.variance,
-        request_view.state_specs.slice(),
+        request_view.fixed_state.retrievalState(),
         request_view.controls,
     ) catch |err| {
         resolved.setError(@errorName(err));
@@ -1027,7 +1012,7 @@ pub export fn zds_run_o2a_optimal_estimation_batch(
         request_view.measurement.wavelength_nm,
         request_view.measurement.reflectance,
         request_view.measurement.variance,
-        request_view.state_template.slice(),
+        request_view.state_template.retrievalState(),
         request_view.initial,
         request_view.prior,
         request_view.controls,
@@ -1097,9 +1082,7 @@ pub export fn zds_run_o2a_fastmode_optimal_estimation_batch(
     };
     defer correction_view.deinit();
 
-    if (fast_view.state_count != correction_view.state_count or
-        fast_view.run_count != correction_view.run_count)
-    {
+    if (fast_view.run_count != correction_view.run_count) {
         resolved.setError("fastmode request shapes do not match");
         return @intFromEnum(ZdsStatus.failure);
     }
@@ -1117,7 +1100,7 @@ pub export fn zds_run_o2a_fastmode_optimal_estimation_batch(
         fast_view.measurement.wavelength_nm,
         fast_view.measurement.reflectance,
         fast_view.measurement.variance,
-        fast_view.state_template.slice(),
+        fast_view.state_template.retrievalState(),
         fast_view.initial,
         fast_view.prior,
         fast_view.controls,
@@ -1125,7 +1108,7 @@ pub export fn zds_run_o2a_fastmode_optimal_estimation_batch(
         correction_view.measurement.wavelength_nm,
         correction_view.measurement.reflectance,
         correction_view.measurement.variance,
-        correction_view.state_template.slice(),
+        correction_view.state_template.retrievalState(),
         correction_view.prior,
         correction_view.controls,
     ) catch |err| {
@@ -1268,19 +1251,19 @@ fn optimalEstimationRequestView(
     // --------------------------------------------------------------------------------------------------------|
     const resolved_request = request orelse {
         resolved.setError("null optimal-estimation request");
-        return error.InvalidStateSpec;
+        return error.InvalidRetrievalState;
     };
 
     const measurement = optimalEstimationMeasurementSlices(resolved, resolved_request) orelse {
         return error.InvalidMeasurement;
     };
     const controls = optimalEstimationControls(resolved, resolved_request) orelse {
-        return error.InvalidStateSpec;
+        return error.InvalidRetrievalState;
     };
-    var state_specs = try optimalEstimationStateSpecs(resolved, resolved_request);
-    errdefer state_specs.deinit();
+    var fixed_state = try optimalEstimationFixedState(resolved, resolved_request);
+    errdefer fixed_state.deinit();
 
-    zdisamar.optimal_estimation.validateStateSpecs(state_specs.slice()) catch |err| {
+    zdisamar.optimal_estimation.validateRetrievalState(fixed_state.retrievalState()) catch |err| {
         resolved.setError(@errorName(err));
         return err;
     };
@@ -1288,7 +1271,7 @@ fn optimalEstimationRequestView(
     return .{
         .measurement = measurement,
         .controls = controls,
-        .state_specs = state_specs,
+        .fixed_state = fixed_state,
     };
 }
 
@@ -1304,57 +1287,48 @@ fn optimalEstimationBatchRequestView(
     // --------------------------------------------------------------------------------------------------------|
     const resolved_request = request orelse {
         resolved.setError("null optimal-estimation batch request");
-        return error.InvalidStateSpec;
+        return error.InvalidRetrievalState;
     };
 
     const measurement = optimalEstimationMeasurementSlices(resolved, resolved_request) orelse {
         return error.InvalidMeasurement;
     };
     const controls = optimalEstimationControls(resolved, resolved_request) orelse {
-        return error.InvalidStateSpec;
-    };
-
-    const state_template_ptr = resolved_request.state_template orelse {
-        resolved.setError("null state template");
-        return error.InvalidStateSpec;
+        return error.InvalidRetrievalState;
     };
 
     const run_count = resolved_request.run_count;
-    const state_count = resolved_request.state_count;
+    const state_count = zdisamar.optimal_estimation.max_state_count;
     if (run_count == 0) {
         resolved.setError("empty optimal-estimation batch");
-        return error.InvalidStateSpec;
+        return error.InvalidRetrievalState;
     }
 
     const batch_worker_count = resolved_request.batch_worker_count;
     if (batch_worker_count != 1) {
         resolved.setError("invalid optimal-estimation batch_worker_count");
-        return error.InvalidStateSpec;
+        return error.InvalidRetrievalState;
     }
 
     const total_state_count = std.math.mul(usize, run_count, state_count) catch {
         resolved.setError("optimal-estimation batch is too large");
-        return error.InvalidStateSpec;
+        return error.InvalidRetrievalState;
     };
 
     const initial_ptr = resolved_request.initial orelse {
         resolved.setError("null batch initial states");
-        return error.InvalidStateSpec;
+        return error.InvalidRetrievalState;
     };
 
     const prior_ptr = resolved_request.prior orelse {
         resolved.setError("null batch prior states");
-        return error.InvalidStateSpec;
+        return error.InvalidRetrievalState;
     };
 
-    var state_template = try optimalEstimationStateSpecsFromRaw(
-        resolved,
-        state_count,
-        state_template_ptr,
-    );
+    var state_template = try optimalEstimationFixedStateFromRaw(resolved, resolved_request);
     errdefer state_template.deinit();
 
-    zdisamar.optimal_estimation.validateStateSpecs(state_template.slice()) catch |err| {
+    zdisamar.optimal_estimation.validateRetrievalState(state_template.retrievalState()) catch |err| {
         resolved.setError(@errorName(err));
         return err;
     };
@@ -1427,94 +1401,81 @@ fn optimalEstimationControls(
     };
 }
 
-fn optimalEstimationStateSpecs(
+fn optimalEstimationFixedState(
     resolved: *Context,
     request: *const ZdsOptimalEstimationRequest,
-) !OptimalEstimationStateSpecs {
-    // optimalEstimationStateSpecs ----------------------------------------------------------------------------|
-    // Convert the single-run state row pointer into native fixed-state rows.                                  |
+) !OptimalEstimationFixedState {
+    // optimalEstimationFixedState ----------------------------------------------------------------------------|
+    // Convert the single-run fixed state fields into native fixed-state rows.                                 |
     // --------------------------------------------------------------------------------------------------------|
-    const state_specs_ptr = request.states orelse {
-        resolved.setError("null state specs");
-        return error.InvalidStateSpec;
-    };
-    return optimalEstimationStateSpecsFromRaw(resolved, request.state_count, state_specs_ptr);
+    return optimalEstimationFixedStateFromRaw(resolved, request);
 }
 
-fn optimalEstimationStateSpecsFromRaw(
+fn optimalEstimationFixedStateFromRaw(
     resolved: *Context,
-    state_count: usize,
-    state_specs_ptr: [*]const ZdsOptimalEstimationStateSpec,
-) !OptimalEstimationStateSpecs {
-    // optimalEstimationStateSpecsFromRaw ---------------------------------------------------------------------|
-    // Convert raw C rows into native StateSpec rows, owning only pressure-profile spline curvature.           |
+    request: anytype,
+) !OptimalEstimationFixedState {
+    // optimalEstimationFixedStateFromRaw ---------------------------------------------------------------------|
+    // Convert named C fixed-state fields into native retrieval state plus pressure-profile curvature.         |
     //                                                                                                         |
-    // guard                                                                                                   |
-    //   Public state ids are exactly 0 aerosol optical depth and 1 aerosol-layer pressure; id 2 was the       |
-    //   removed surface-albedo lane and is rejected before any native state-space math sees it.               |
     // --------------------------------------------------------------------------------------------------------|
-    if (state_count == 0 or state_count > zdisamar.optimal_estimation.max_state_count) {
-        resolved.setError("invalid state count");
-        return error.InvalidStateCount;
-    }
-
-    var parsed: OptimalEstimationStateSpecs = .{ .state_count = state_count };
+    var parsed: OptimalEstimationFixedState = .{};
     errdefer parsed.deinit();
 
-    const raw_states = state_specs_ptr[0..state_count];
-    for (raw_states, 0..) |raw, index| {
-        if (raw.state_id >= zdisamar.jacobian_state_count) {
-            resolved.setError("UnsupportedState");
-            return error.UnsupportedState;
-        }
+    parsed.profiles[1] = try optimalEstimationPressureProfile(resolved, request.aerosol_layer_pressure);
+    parsed.state = .{
+        .aerosol_optical_depth = try optimalEstimationScalarSpec(
+            resolved,
+            request.aerosol_optical_depth,
+        ),
+        .aerosol_layer_mid_pressure = .{
+            .scalar = try optimalEstimationScalarSpec(
+                resolved,
+                request.aerosol_layer_pressure.scalar,
+            ),
+            .placement = .{
+                .thickness_hpa = request.aerosol_layer_pressure.thickness_hpa,
+                .interval_index_1based = request.aerosol_layer_pressure.interval_index_1based,
+                .pressure_altitude_profile = &parsed.profiles[1],
+            },
+        },
+    };
+    try zdisamar.optimal_estimation.validateRetrievalState(parsed.retrievalState());
+    return parsed;
+}
 
-        const state = std.meta.intToEnum(zdisamar.JacobianState, raw.state_id) catch unreachable;
-        const has_pressure_profile_side_data =
-            raw.pressure_profile_count != 0 or
-            raw.pressure_profile_altitude_km != null or
-            raw.pressure_profile_pressure_hpa != null;
-
-        if (state == .aerosol_layer_mid_pressure_hpa) {
-            parsed.profiles[index] = try optimalEstimationPressureProfile(resolved, raw);
-        } else if (has_pressure_profile_side_data) {
-            resolved.setError("invalid pressure profile state");
-            return error.InvalidStateSpec;
-        }
-
-        if (raw.has_lower != 0 and !std.math.isFinite(raw.lower)) {
-            resolved.setError("invalid optimal-estimation lower bound");
-            return error.InvalidStateSpec;
-        }
-
-        if (raw.has_upper != 0 and !std.math.isFinite(raw.upper)) {
-            resolved.setError("invalid optimal-estimation upper bound");
-            return error.InvalidStateSpec;
-        }
-
-        const lower_bound =
-            if (raw.has_lower != 0) raw.lower else zdisamar.optimal_estimation.no_lower_bound;
-        const upper_bound =
-            if (raw.has_upper != 0) raw.upper else zdisamar.optimal_estimation.no_upper_bound;
-
-        parsed.state_specs[index] = .{
-            .state = state,
-            .initial = raw.initial,
-            .prior = raw.prior,
-            .variance = raw.variance,
-            .lower_bound = lower_bound,
-            .upper_bound = upper_bound,
-            .thickness_hpa = raw.thickness_hpa,
-            .interval_index_1based = raw.interval_index_1based,
-            .pressure_altitude_profile = parsed.profiles[index],
-        };
+fn optimalEstimationScalarSpec(
+    resolved: *Context,
+    raw: ZdsOptimalEstimationScalarSpec,
+) !zdisamar.RetrievalStateScalar {
+    // optimalEstimationScalarSpec ----------------------------------------------------------------------------|
+    // Convert one named C scalar field into the native fixed-lane scalar.                                     |
+    // --------------------------------------------------------------------------------------------------------|
+    if (raw.has_lower != 0 and !std.math.isFinite(raw.lower)) {
+        resolved.setError("invalid optimal-estimation lower bound");
+        return error.InvalidRetrievalState;
     }
 
-    return parsed;
+    if (raw.has_upper != 0 and !std.math.isFinite(raw.upper)) {
+        resolved.setError("invalid optimal-estimation upper bound");
+        return error.InvalidRetrievalState;
+    }
+
+    const lower_bound = if (raw.has_lower != 0) raw.lower else zdisamar.optimal_estimation.no_lower_bound;
+    const upper_bound = if (raw.has_upper != 0) raw.upper else zdisamar.optimal_estimation.no_upper_bound;
+
+    return .{
+        .initial = raw.initial,
+        .prior = raw.prior,
+        .variance = raw.variance,
+        .lower_bound = lower_bound,
+        .upper_bound = upper_bound,
+    };
 }
 
 fn optimalEstimationPressureProfile(
     resolved: *Context,
-    raw: ZdsOptimalEstimationStateSpec,
+    raw: ZdsOptimalEstimationPressureSpec,
 ) !zdisamar.RetrievalPressureAltitudeProfile {
     // optimalEstimationPressureProfile -----------------------------------------------------------------------|
     // Build the request-scoped pressure-profile spline for aerosol-layer pressure retrieval rows.             |
@@ -1626,7 +1587,7 @@ fn runWavelengthDiagnostic(
     };
     output.* = .{};
 
-    var result = buildWavelengthDiagnostic(
+    const result = buildWavelengthDiagnostic(
         diagnostic,
         prepared,
         wavelengths_ptr[0..wavelength_count],
@@ -1635,10 +1596,8 @@ fn runWavelengthDiagnostic(
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
-    errdefer result.deinit(allocator);
 
-    marshalWavelengthDiagnostic(diagnostic, output, &result);
-    result.rows = &.{};
+    publishWavelengthDiagnostic(diagnostic, output, result);
     resolved.setError("");
     return @intFromEnum(ZdsStatus.ok);
 }
@@ -1672,12 +1631,12 @@ fn buildWavelengthDiagnostic(
     };
 }
 
-fn marshalWavelengthDiagnostic(
+fn publishWavelengthDiagnostic(
     comptime diagnostic: WavelengthDiagnostic,
     output: *DiagnosticOutput(diagnostic),
-    result: *const DiagnosticResult(diagnostic),
+    result: DiagnosticResult(diagnostic),
 ) void {
-    // marshalWavelengthDiagnostic --------------------------------------------------------------------------- |
+    // publishWavelengthDiagnostic --------------------------------------------------------------------------- |
     // Move native row ownership to the stable C-facing output struct without copying rows.                    |
     // --------------------------------------------------------------------------------------------------------|
     switch (diagnostic) {
@@ -1713,8 +1672,6 @@ fn diagnosticRowsPointer(comptime Row: type, rows: []const Row) ?[*]const Row {
 fn runSpectrum(
     ctx: ?*Context,
     out: ?*ZdsSpectrum,
-    state_ids: ?[*]const u8,
-    requested_state_count: usize,
     wants_jacobian: bool,
 ) c_int {
     // runSpectrum --------------------------------------------------------------------------------------------|
@@ -1732,14 +1689,9 @@ fn runSpectrum(
         return @intFromEnum(ZdsStatus.failure);
     });
 
-    const selection = jacobianSelection(state_ids, requested_state_count, wants_jacobian) catch |err| {
-        resolved.setError(@errorName(err));
-        return @intFromEnum(ZdsStatus.failure);
-    };
-
     var solve_config = zdisamar.solveConfig(prepared.scene);
-    solve_config.derivative_state_mask = selection.mask;
     solve_config.derivative_mode = if (wants_jacobian) .semi_analytical else .none;
+    solve_config.wants_jacobian = wants_jacobian;
 
     const result = allocator.create(CResult) catch |err| {
         resolved.setError(@errorName(err));
@@ -1758,17 +1710,15 @@ fn runSpectrum(
     };
     errdefer result.native.deinit(allocator);
 
-    if (selection.state_count != 0) {
-        const selected_ids = selection.ids[0..selection.state_count];
-        result.compact_jacobian = compactRadianceJacobian(
+    if (wants_jacobian) {
+        result.compact_jacobian = radianceJacobianRows(
             result.native.spectrum,
-            selected_ids,
             solarMu0(prepared.scene),
         ) catch |err| {
             resolved.setError(@errorName(err));
             return @intFromEnum(ZdsStatus.failure);
         };
-        result.state_count = selection.state_count;
+        result.state_count = zdisamar.jacobian_state_count;
     }
     errdefer allocator.free(result.compact_jacobian);
 
@@ -1791,71 +1741,27 @@ fn runSpectrum(
     return @intFromEnum(ZdsStatus.ok);
 }
 
-const JacobianSelection = struct {
-    ids: [zdisamar.jacobian_state_count]u8 = .{0} ** zdisamar.jacobian_state_count,
-    state_count: usize = 0,
-    mask: u8 = 0,
-};
-
-fn jacobianSelection(
-    state_ids: ?[*]const u8,
-    requested_state_count: usize,
-    wants_jacobian: bool,
-) !JacobianSelection {
-    // jacobianSelection --------------------------------------------------------------------------------------|
-    // Validate Python state ids and build the fixed root SolveConfig mask plus compact output order.          |
-    // --------------------------------------------------------------------------------------------------------|
-    if (!wants_jacobian) return .{};
-    if (requested_state_count > zdisamar.jacobian_state_count) return error.UnsupportedJacobianState;
-
-    var selection = JacobianSelection{};
-    if (requested_state_count == 0) {
-        for (0..zdisamar.jacobian_state_count) |index| {
-            selection.ids[index] = @intCast(index);
-            selection.mask |= @as(u8, 1) << @intCast(index);
-        }
-        selection.state_count = zdisamar.jacobian_state_count;
-        return selection;
-    }
-
-    const ids = state_ids orelse return error.UnsupportedJacobianState;
-
-    for (ids[0..requested_state_count]) |id| {
-        if (id >= zdisamar.jacobian_state_count) return error.UnsupportedJacobianState;
-
-        const bit = @as(u8, 1) << @intCast(id);
-        if ((selection.mask & bit) != 0) return error.UnsupportedJacobianState;
-
-        selection.ids[selection.state_count] = id;
-        selection.state_count += 1;
-        selection.mask |= bit;
-    }
-
-    return selection;
-}
-
-fn compactRadianceJacobian(
+fn radianceJacobianRows(
     spectrum: zdisamar.Spectrum,
-    state_ids: []const u8,
     solar_mu0: f64,
 ) ![]f64 {
-    // compactRadianceJacobian --------------------------------------------------------------------------------|
-    // Convert native reflectance Jacobian rows into Python's compact radiance-Jacobian ABI table.             |
+    // radianceJacobianRows -----------------------------------------------------------------------------------|
+    // Convert native reflectance Jacobian rows into Python's fixed two-column radiance-Jacobian ABI table.    |
     //                                                                                                         |
     // boundary                                                                                                |
     //   Python `Spectrum.reflectance_jacobian()` treats the C `jacobian` pointer as dL/dx and divides by      |
     //   mu0 * irradiance / pi. Internal root output already stores dR/dx after reflectance assembly, so the   |
     //   C boundary inverts that scale exactly once before exposing the fixed ABI buffer.                      |
     // --------------------------------------------------------------------------------------------------------|
-    const state_count = state_ids.len;
+    const state_count = zdisamar.jacobian_state_count;
     if (spectrum.jacobian.len != spectrum.irradiance.len) return error.ShapeMismatch;
 
     const compact = try allocator.alloc(f64, spectrum.jacobian.len * state_count);
     for (spectrum.jacobian, spectrum.irradiance, 0..) |row, irradiance, sample_index| {
         const reflectance_to_radiance_scale = solar_mu0 * irradiance / std.math.pi;
-        for (state_ids, 0..) |state_id, compact_index| {
-            compact[sample_index * state_count + compact_index] =
-                row[state_id] * reflectance_to_radiance_scale;
+        for (0..state_count) |state_index| {
+            compact[sample_index * state_count + state_index] =
+                row[state_index] * reflectance_to_radiance_scale;
         }
     }
     return compact;

@@ -8,14 +8,14 @@ def test_fastmode_oe_runs_single_full_correction() -> None:
 
     from zdisamar.input.wavelength_band.o2a import Scene
     from zdisamar.input.wavelength_band.optimisation import Optimisation
-    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
-    from zdisamar.inverse_method.optimal_estimation.retrieval import (
+    from zdisamar.optimal_estimation import o2a as o2a_oe
+    from zdisamar.optimal_estimation.retrieval import (
         Iteration,
         Measurement,
         Result,
         RetrievalControls,
     )
-    from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
+    from zdisamar.optimal_estimation.state_vector import StateVector
     from zdisamar.rtm.session_cache import SessionCache
 
     @dataclass(frozen=True)
@@ -209,13 +209,13 @@ def test_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
         FastModeWavelengthWindow,
         Optimisation,
     )
-    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
-    from zdisamar.inverse_method.optimal_estimation.retrieval import (
+    from zdisamar.optimal_estimation import o2a as o2a_oe
+    from zdisamar.optimal_estimation.retrieval import (
         Measurement,
         Result,
         RetrievalControls,
     )
-    from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
+    from zdisamar.optimal_estimation.state_vector import StateVector
     from zdisamar.rtm.session_cache import SessionCache
 
     optimisation = Optimisation.defaults()
@@ -240,7 +240,18 @@ def test_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
         ),
         instrument_response=SimpleNamespace(measured_wavelengths_nm=wavelengths),
     )
-    state_vector = cast(StateVector, SimpleNamespace(parameters=(), names=()))
+    state_names = ("aerosol_optical_depth", "aerosol_layer_mid_pressure_hpa")
+    state_vector = cast(
+        StateVector,
+        SimpleNamespace(
+            parameters=(
+                SimpleNamespace(name="aerosol_optical_depth"),
+                SimpleNamespace(name="aerosol_layer_mid_pressure_hpa"),
+            ),
+            names=state_names,
+            jacobian_names=state_names,
+        ),
+    )
     calls: list[dict[str, object]] = []
     loads: list[tuple[object, bool]] = []
 
@@ -249,15 +260,15 @@ def test_fastmode_oe_uses_sparse_fast_stage_sampling() -> None:
         calls.append(kwargs)
 
         return Result(
-            state_names=(),
-            state=(),
+            state_names=state_names,
+            state=(0.2, 800.0),
             iterations=1,
             converged=True,
             history=(),
-            posterior_covariance=(),
-            averaging_kernel=(),
+            posterior_covariance=((1.0, 0.0), (0.0, 1.0)),
+            averaging_kernel=((1.0, 0.0), (0.0, 1.0)),
             measurement=kwargs["measurement"],
-            initial_state=(),
+            initial_state=(0.2, 800.0),
         )
 
     class Cache:
@@ -319,12 +330,12 @@ def test_fastmode_batch_uses_native_fused_correction() -> None:
 
     from zdisamar.input.wavelength_band.o2a import Scene
     from zdisamar.input.wavelength_band.optimisation import Optimisation
-    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
-    from zdisamar.inverse_method.optimal_estimation.retrieval import (
+    from zdisamar.optimal_estimation import o2a as o2a_oe
+    from zdisamar.optimal_estimation.retrieval import (
         Measurement,
         RetrievalControls,
     )
-    from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
+    from zdisamar.optimal_estimation.state_vector import StateVector
 
     @dataclass(frozen=True)
     class Parameter:
@@ -514,13 +525,13 @@ def test_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
     from zdisamar.input.instrument import SpectralGrid
     from zdisamar.input.wavelength_band.o2a import Scene
     from zdisamar.input.wavelength_band.optimisation import Optimisation
-    from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe
-    from zdisamar.inverse_method.optimal_estimation.retrieval import (
+    from zdisamar.optimal_estimation import o2a as o2a_oe
+    from zdisamar.optimal_estimation.retrieval import (
         Measurement,
         Result,
         RetrievalControls,
     )
-    from zdisamar.inverse_method.optimal_estimation.state_vector import StateVector
+    from zdisamar.optimal_estimation.state_vector import StateVector
     from zdisamar.rtm.session_cache import SessionCache
 
     @dataclass(frozen=True)
@@ -585,7 +596,19 @@ def test_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
         ),
         instrument_response=SimpleNamespace(measured_wavelengths_nm=wavelengths),
     )
-    state_vector = StateVector((PressureParameter(),))
+    state_vector = StateVector(
+        (
+            ResolvedParameter(
+                name="aerosol_optical_depth",
+                initial=0.2,
+                prior=0.2,
+                prior_uncertainty=0.1,
+                lower=0.0,
+                upper=1.0,
+            ),
+            PressureParameter(),
+        )
+    )
     loads: list[tuple[object, bool]] = []
     match_checks: list[object] = []
     profile_calls: list[tuple[object, object]] = []
@@ -620,12 +643,12 @@ def test_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
 
         return Result(
             state_names=kwargs["state_vector"].names,
-            state=(800.0,),
+            state=(0.2, 800.0),
             iterations=1,
             converged=True,
             history=(),
-            posterior_covariance=((1.0,),),
-            averaging_kernel=((1.0,),),
+            posterior_covariance=((1.0, 0.0), (0.0, 1.0)),
+            averaging_kernel=((1.0, 0.0), (0.0, 1.0)),
             measurement=kwargs["measurement"],
             initial_state=kwargs["state_vector"].initial_state(),
         )
@@ -658,4 +681,4 @@ def test_fastmode_pressure_profile_uses_loaded_sparse_cache() -> None:
     active_controls = cast(RetrievalControls, retrieval_calls[0]["controls"])
     assert active_controls.max_iterations == 4
     resolved_state_vector = cast(StateVector, retrieval_calls[0]["state_vector"])
-    assert isinstance(resolved_state_vector.parameters[0], ResolvedParameter)
+    assert isinstance(resolved_state_vector.parameters[1], ResolvedParameter)

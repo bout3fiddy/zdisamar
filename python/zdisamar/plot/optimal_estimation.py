@@ -110,7 +110,7 @@ def state_history_rows(result) -> list[dict[str, object]]:
 
 def fit_rows(result) -> list[dict[str, float]]:
 
-    from ..inverse_method.optimal_estimation.measurement import require_matching_wavelength_grid
+    from ..optimal_estimation.measurement import require_matching_wavelength_grid
 
     measurement = require_measurement(result)
     evaluation = require_final_evaluation(result)
@@ -141,7 +141,7 @@ def fit_rows(result) -> list[dict[str, float]]:
 def jacobian_frame(result) -> list[dict[str, object]]:
     """Put final reflectance Jacobians into one table for all states."""
 
-    from ..inverse_method.optimal_estimation.measurement import require_matching_wavelength_grid
+    from ..optimal_estimation.measurement import require_matching_wavelength_grid
 
     measurement = require_measurement(result)
     evaluation = require_final_evaluation(result)

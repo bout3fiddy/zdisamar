@@ -9,7 +9,7 @@ const jacobian = internal.rtm.jacobian_states;
 const allocator = std.testing.allocator;
 
 // SupportEvidence ------------------------------------------------------------------------------------------- |
-// Test-local support-row optics evidence from O2 A baseline artifact:                                         |
+// Test-local support-row optics evidence from baseline artifact:                                         |
 // Canonical expected values owned by this repository.                                                         |
 // public-python-baseline.json .diagnostics.atmospheric_budget.rows.                                           |
 //                                                                                                             |
@@ -168,7 +168,7 @@ const layer_zero_758_rows = [_]SupportEvidence{
 };
 
 // LayerAerosolEvidence ---------------------------------------------------------------------------------------|
-// Test-local aerosol layer evidence from O2 A baseline artifact:                                              |
+// Test-local aerosol layer evidence from baseline artifact:                                              |
 // Canonical expected values owned by this repository.                                                         |
 // internal-dump-baseline.json .probe_forward_inputs[0].layers.                                                |
 //                                                                                                             |
@@ -430,11 +430,7 @@ test "layer optics fill aerosol optical-depth jacobian lanes from current route 
     const layers = try allocator.alloc(layer_depths.LayerOptics, tables.layers.layer_pressures_hpa.len);
     defer allocator.free(layers);
     try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, support_rows, layers, null);
-    layer_depths.fillLayerAerosolJacobians(
-        tables.aerosol,
-        jacobian.stateMask(.aerosol_optical_depth),
-        layers,
-    );
+    layer_depths.fillLayerAerosolJacobians(tables.aerosol, layers);
 
     for (aerosol_jacobian_layers_758) |expected| {
         const layer_index: usize = @intCast(expected.layer_index);

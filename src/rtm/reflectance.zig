@@ -205,7 +205,7 @@ pub fn integratedSourceCoefficient(
     // integratedSourceCoefficient --------------------------------------------------------------------------- |
     // Integrated-source LABOS reflectance for one Fourier term.                                               |
     //                                                                                                         |
-    //   O2 A `SourceLevel` rows. This route uses the RTM-quadrature branch: level weight, scattering carrier, |
+    //   `SourceLevel` rows. This route uses the RTM-quadrature branch: level weight, scattering carrier, |
     //   and source phase mixture are already explicit on each source level.                                   |
     //                                                                                                         |
     // math                                                                                                    |

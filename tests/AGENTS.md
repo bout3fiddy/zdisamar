@@ -22,10 +22,11 @@
 - Allocation-failure and `std.heap.DebugAllocator` coverage belong in the fast suites when they validate lifecycle or cleanup behavior.
 - Kernel and construction experiments live under `scaffolding/experiments/`; `tests/` contains asserting coverage.
 - `tests/validation/o2a_vendor_reflectance_assessment_test.zig` is an opt-in DISAMAR-reference assessment lane, not a default correctness gate.
-- Run it with `zig build test-validation-o2a-vendor` when you need to compare zdisamar's O2 A forward reflectance against the stored DISAMAR reference for `Config_O2_with_CIA.in`.
+- Run it with `zig build test-validation-o2a-vendor` when you need to compare zdisamar's forward reflectance against the stored DISAMAR reference for `Config_O2_with_CIA.in`.
 - The lane emits JSON on every run and only fails when the tracked metrics regress beyond the stored baseline tolerances. Treat the emitted JSON as the real output: compare `current` against `baseline`, look at `trend`, and decide whether `improved`, `flat`, or `regressed` matches the files that changed.
-- A `flat` result is acceptable when the change did not touch forward physics or O2 A reference assets. A `regressed` result is a concern when work touched `src/rtm/`, `src/optics/`, `src/spectrum/`, `src/setup/`, `src/input/case.zig`, `data/reference_data/cross_sections`, or the O2 A reference CSV. A zero-difference pass is exceptional and should be called out explicitly.
+- A `flat` result is acceptable when the change did not touch forward physics or reference assets. A `regressed` result is a concern when work touched `src/rtm/`, `src/optics/`, `src/spectrum/`, `src/setup/`, `src/input/case.zig`, `data/reference_data/cross_sections`, or the reference CSV. A zero-difference pass is exceptional and should be called out explicitly.
 - New config/control surfaces should get three kinds of coverage when practical: one valid-path test, one invalid or unsupported-input test, and one DISAMAR-reference test against the legacy or alternate path when both are meant to agree.
 - Shard and focused-lane tests must assert the intended case set or semantic outcome directly, not merely that some cases ran.
 - When a change introduces derived hints, prepared metadata, or delayed config application, add at least one test that omits redundant legacy fields so stale fallback values cannot mask ordering bugs.
 - Wavelength-dependent controls need at least two-point coverage when they affect prepared optics or morphology, so reference-only sampling mistakes fail deterministically.
+- Use narrow bands for testing control flow and narrow-band physics; full band only for full-band-specific tests.

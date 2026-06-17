@@ -1,7 +1,7 @@
 # 08. Keep Program Setup Out Of The Forward Timer
 
 This is a measurement and architecture boundary rather than one checkpoint win.
-The forward timer should measure a prepared O2 A forward call, not full program
+The forward timer should measure a prepared forward call, not full program
 startup, config parsing, or asset loading.
 
 In short: measure prepared forward calls separately from full executable setup.

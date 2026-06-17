@@ -1,8 +1,9 @@
 const std = @import("std");
 const internal = @import("internal");
 const o2a_scene = @import("../support/o2a_scene.zig");
+const CountingAllocator = @import("../support/counting_allocator.zig").CountingAllocator;
 
-test "RunTables match O2 A baseline table evidence" {
+test "RunTables match baseline table evidence" {
     var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
         o2a_scene.reference(),
@@ -163,6 +164,26 @@ test "LayerGrid refill from prepared profiles matches fresh builds for pressure 
     }
 }
 
+test "LayerGrid build keeps hydrostatic scratch out of retained allocations" {
+    const allocator = std.testing.allocator;
+    const atmosphere_layers = internal.setup.atmosphere_layers;
+    const scene = o2a_scene.reference();
+
+    var expected = try atmosphere_layers.build(allocator, scene);
+    defer expected.deinit(allocator);
+
+    var counter = CountingAllocator.init(allocator);
+    const counting_allocator = counter.allocator();
+    var actual = try atmosphere_layers.build(counting_allocator, scene);
+    errdefer actual.deinit(counting_allocator);
+
+    try std.testing.expectEqual(@as(usize, 22), counter.live_allocations);
+    try expectLayerGridEqual(expected, actual);
+
+    actual.deinit(counting_allocator);
+    try std.testing.expectEqual(@as(usize, 0), counter.live_allocations);
+}
+
 fn findLineByWavenumber(
     rows: []const internal.assets.readers.LineAssetRow,
     center_wavenumber_cm1: f64,
@@ -213,7 +234,7 @@ fn moveAerosolLayerPressure(
         }
     }
 
-    if (!updated) return error.InvalidStateSpec;
+    if (!updated) return error.InvalidRetrievalState;
 }
 
 fn expectEqualF64Slices(expected: []const f64, actual: []const f64) !void {

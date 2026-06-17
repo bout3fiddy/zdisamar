@@ -6,7 +6,7 @@ const units = @import("../common/units.zig");
 const Allocator = std.mem.Allocator;
 
 // VendorBranchMetadata ---------------------------------------------------------------------------------------|
-// Optional O2 A branch metadata uses partition weak lines from LISA strong-line sidecars.                     |
+// Optional branch metadata uses partition weak lines from LISA strong-line sidecars.                     |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 7 B (0.007 KiB), align: 1 B                                                                           |
@@ -24,7 +24,7 @@ const VendorBranchMetadata = struct {
 
     fn present(self: VendorBranchMetadata) bool {
         // VendorBranchMetadata.present -----------------------------------------------------------------------|
-        // True when all O2 A branch fields were recovered from the HITRAN row.                                |
+        // True when all branch fields were recovered from the HITRAN row.                                |
         // ----------------------------------------------------------------------------------------------------|
         return self.branch_ic1 != null and self.branch_ic2 != null and self.rotational_nf != null;
     }
@@ -32,7 +32,7 @@ const VendorBranchMetadata = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // readers.zig ------------------------------------------------------------------------------------------------|
-// Asset readers for O2 A setup tables.                                                                        |
+// Asset readers for setup tables.                                                                        |
 //                                                                                                             |
 // file boundary                                                                                               |
 //   Runtime file I/O and text parsing live here. Setup builders call these functions before table assembly.   |
@@ -40,7 +40,7 @@ const VendorBranchMetadata = struct {
 //                                                                                                             |
 // supported formats                                                                                           |
 //   profile_csv         : altitude, pressure, temperature, air-number-density CSV rows                        |
-//   hitran_par_o2a      : fixed-width HITRAN line rows for the O2 A line list                                 |
+//   hitran_par_o2a      : fixed-width HITRAN line rows for the O2A line list                                 |
 //   lisa_sdf            : LISA/DISAMAR O2 strong-line sidecar rows                                            |
 //   lisa_rmf            : LISA/DISAMAR O2 relaxation-matrix sidecar rows                                      |
 //   bira_cia            : BIRA O2-O2 polynomial table with scale/header rows                                  |
@@ -415,7 +415,7 @@ pub fn readCiaTable(allocator: Allocator, path: []const u8) !CiaAsset {
     // readCiaTable -------------------------------------------------------------------------------------------|
     // Parse the BIRA header scale and every numeric polynomial coefficient row into an owned table.           |
     //                                                                                                         |
-    //   parseBiraCiaPolynomial: the vendor count is a lower-bound check, while appended O2 A rows after the   |
+    //   parseBiraCiaPolynomial: the vendor count is a lower-bound check, while appended rows after the   |
     //   nominal count are retained because the optical route samples them at 758-776 nm.                      |
     // --------------------------------------------------------------------------------------------------------|
     const bytes = try readSmallFile(allocator, path, 4 << 20);
@@ -558,7 +558,7 @@ fn parseOptionalFixedInt(comptime T: type, value: []const u8) !?T {
 
 fn inlineVendorBranchMetadata(line: []const u8) !VendorBranchMetadata {
     // inlineVendorBranchMetadata -----------------------------------------------------------------------------|
-    // Recover optional O2 A branch metadata from fixed HITRAN vendor columns when present.                    |
+    // Recover optional branch metadata from fixed HITRAN vendor columns when present.                    |
     // --------------------------------------------------------------------------------------------------------|
     if (line.len < 85) return .{};
 
@@ -575,7 +575,7 @@ fn inlineVendorBranchMetadata(line: []const u8) !VendorBranchMetadata {
 
 fn fallbackVendorBranchMetadata(line: []const u8, center_wavenumber_cm1: f64) !?VendorBranchMetadata {
     // fallbackVendorBranchMetadata ---------------------------------------------------------------------------|
-    // Reconstruct O2 A P-branch metadata from trailing branch tokens when fixed fields are absent.            |
+    // Reconstruct P-branch metadata from trailing branch tokens when fixed fields are absent.            |
     // --------------------------------------------------------------------------------------------------------|
     if (center_wavenumber_cm1 < 12800.0 or center_wavenumber_cm1 > 13250.0) return null;
 

@@ -6,7 +6,7 @@ const jacobian_states = @import("../rtm/jacobian_states.zig");
 const Allocator = std.mem.Allocator;
 
 // spectrum.zig -----------------------------------------------------------------------------------------------|
-// Public spectrum output owner for the explicit O2 A forward route.                                           |
+// Public spectrum output owner for the explicit forward route.                                           |
 //                                                                                                             |
 // ownership boundary                                                                                          |
 //   Spectrum owns copied product-grid arrays returned across the root/API boundary. Session cache rows,       |

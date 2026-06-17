@@ -41,7 +41,6 @@ def run_no_session(
             lambda: rtm.spectrum(
                 case,
                 jacobian=True,
-                jacobian_state_names=config.FORWARD_STATE_NAMES,
             )
         )
         samples.append((timing, spectrum))
@@ -107,7 +106,6 @@ def run_session(
         first_timing, first_sample = timed(
             lambda: cache.spectrum(
                 jacobian=True,
-                jacobian_state_names=config.FORWARD_STATE_NAMES,
             )
         )
         db.sample(
@@ -126,7 +124,6 @@ def run_session(
             timing, _ = timed(
                 lambda: cache.spectrum(
                     jacobian=True,
-                    jacobian_state_names=config.FORWARD_STATE_NAMES,
                 )
             )
             cached.append(timing)

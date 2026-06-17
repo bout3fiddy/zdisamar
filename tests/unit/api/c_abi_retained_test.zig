@@ -4,45 +4,27 @@ const c_api = @import("c_api");
 const o2a_json = @import("o2a_json.zig");
 
 test "optimal-estimation C ABI result rows keep ctypes layout" {
-    try std.testing.expectEqual(@as(usize, 80), @sizeOf(c_api.ZdsOptimalEstimationStateSpec));
+    try std.testing.expectEqual(@as(usize, 48), @sizeOf(c_api.ZdsOptimalEstimationScalarSpec));
+    try std.testing.expectEqual(@as(usize, 88), @sizeOf(c_api.ZdsOptimalEstimationPressureSpec));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(c_api.ZdsOptimalEstimationControls));
-    try std.testing.expectEqual(@as(usize, 72), @sizeOf(c_api.ZdsOptimalEstimationRequest));
+    try std.testing.expectEqual(@as(usize, 192), @sizeOf(c_api.ZdsOptimalEstimationRequest));
     try std.testing.expectEqual(@as(usize, 120), @sizeOf(c_api.ZdsOptimalEstimationResult));
-    try std.testing.expectEqual(@as(usize, 104), @sizeOf(c_api.ZdsOptimalEstimationBatchRequest));
+    try std.testing.expectEqual(@as(usize, 224), @sizeOf(c_api.ZdsOptimalEstimationBatchRequest));
     try std.testing.expectEqual(@as(usize, 72), @sizeOf(c_api.ZdsOptimalEstimationBatchResult));
     try std.testing.expectEqual(@as(usize, 104), @sizeOf(c_api.ZdsOptimalEstimationFastmodeBatchResult));
 }
 
-test "warm optimal-estimation cache accepts the two retained Jacobian states" {
+test "warm optimal-estimation cache uses the fixed two-state Jacobian route" {
     const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
     defer c_api.zds_context_destroy(ctx);
 
-    try prepareDefault(ctx);
+    try prepareNarrow(ctx);
 
-    const state_ids = [_]u8{ 0, 1 };
     try std.testing.expectEqual(
         @intFromEnum(c_api.ZdsStatus.ok),
-        c_api.zds_warm_o2a_optimal_estimation(ctx, state_ids[0..].ptr, state_ids.len),
+        c_api.zds_warm_o2a_optimal_estimation(ctx),
     );
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(ctx)));
-}
-
-test "warm optimal-estimation cache rejects removed surface-albedo state lane" {
-    const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
-    defer c_api.zds_context_destroy(ctx);
-
-    try prepareDefault(ctx);
-
-    const removed_surface_albedo_id = [_]u8{2};
-    try std.testing.expectEqual(
-        @intFromEnum(c_api.ZdsStatus.failure),
-        c_api.zds_warm_o2a_optimal_estimation(
-            ctx,
-            removed_surface_albedo_id[0..].ptr,
-            removed_surface_albedo_id.len,
-        ),
-    );
-    try std.testing.expectEqualStrings("UnsupportedJacobianState", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
 test "optimal-estimation free hooks clear borrowed result rows" {
@@ -94,14 +76,17 @@ test "single-run optimal-estimation returns result handle for full-grid measurem
     defer std.testing.allocator.free(variance);
     @memset(variance, 1.0e-6);
 
-    var states = [_]c_api.ZdsOptimalEstimationStateSpec{aerosolOpticalDepthSpec()};
-    states[0].initial = 0.3;
-    states[0].prior = 0.3;
+    const altitude_km = [_]f64{ 0.0, 1.0 };
+    const pressure_hpa = [_]f64{ 900.0, 800.0 };
+    var aod = aerosolOpticalDepthSpec();
+    aod.initial = 0.3;
+    aod.prior = 0.3;
     var request = singleRequest(
         spectrum.wavelength_nm[0..spectrum.len],
         spectrum.reflectance[0..spectrum.len],
         variance,
-        &states,
+        aod,
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
     );
     request.controls.max_iterations = 1;
     var result: c_api.ZdsOptimalEstimationResult = .{};
@@ -113,20 +98,30 @@ test "single-run optimal-estimation returns result handle for full-grid measurem
     defer c_api.zds_optimal_estimation_result_free(ctx, &result);
 
     try std.testing.expect(result.result_handle != null);
-    try std.testing.expectEqual(@as(usize, 1), result.state_count);
+    try std.testing.expectEqual(@as(usize, 2), result.state_count);
     try std.testing.expectEqual(@as(usize, 1), result.iteration_count);
-    try std.testing.expectEqual(@as(u8, 1), result.converged);
+    try std.testing.expectEqual(@as(u8, 0), result.converged);
     try std.testing.expectEqual(@as(u8, 0), result.state_ids.?[0]);
-    try std.testing.expectApproxEqAbs(0.3, result.state.?[0], 1.0e-12);
+    try std.testing.expectEqual(@as(u8, 1), result.state_ids.?[1]);
+    try std.testing.expectApproxEqRel(0.3218022557145076, result.state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(841.0563427719196, result.state.?[1], 1.0e-12);
     try std.testing.expectApproxEqAbs(0.3, result.initial_state.?[0], 0.0);
-    try std.testing.expectApproxEqRel(1.3229305526174265e-7, result.posterior_covariance.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.9999867706944716, result.averaging_kernel.?[0], 1.0e-12);
-    try std.testing.expectApproxEqAbs(0.3, result.history_state.?[0], 0.0);
-    try std.testing.expectApproxEqAbs(0.0, result.history_chi2.?[0], 0.0);
-    try std.testing.expectApproxEqAbs(0.0, result.history_chi2_reflectance.?[0], 0.0);
-    try std.testing.expectApproxEqAbs(0.0, result.history_chi2_state_vector.?[0], 0.0);
-    try std.testing.expectApproxEqAbs(0.0, result.history_state_vector_convergence.?[0], 0.0);
-    try std.testing.expectEqual(@as(u8, 1), result.history_snr_normal.?[0]);
+    try std.testing.expectApproxEqAbs(850.0, result.initial_state.?[1], 0.0);
+    try std.testing.expectApproxEqRel(5.0327224966474805e-5, result.posterior_covariance.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.005484945752473451, result.posterior_covariance.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.005484945752473451, result.posterior_covariance.?[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(98.14024630925327, result.posterior_covariance.?[3], 1.0e-12);
+    try std.testing.expectApproxEqRel(313.7498523160241, result.averaging_kernel.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(-0.017296055445342524, result.averaging_kernel.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(-172.96055445340608, result.averaging_kernel.?[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(5.864488802889277, result.averaging_kernel.?[3], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.3218022557145076, result.history_state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(841.0563427719196, result.history_state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(17581.186238836166, result.history_chi2.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(17580.338814954608, result.history_chi2_reflectance.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.8474238815580228, result.history_chi2_state_vector.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(5.379307392874958, result.history_state_vector_convergence.?[0], 1.0e-12);
+    try std.testing.expectEqual(@as(u8, 0), result.history_snr_normal.?[0]);
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
@@ -147,12 +142,14 @@ test "correction optimal-estimation returns one-step result handle" {
     defer std.testing.allocator.free(variance);
     @memset(variance, 1.0e-6);
 
-    var states = [_]c_api.ZdsOptimalEstimationStateSpec{aerosolOpticalDepthSpec()};
+    const altitude_km = [_]f64{ 0.0, 1.0 };
+    const pressure_hpa = [_]f64{ 900.0, 800.0 };
     var request = singleRequest(
         spectrum.wavelength_nm[0..spectrum.len],
         spectrum.reflectance[0..spectrum.len],
         variance,
-        &states,
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
     );
     request.controls.max_iterations = 5;
     var result: c_api.ZdsOptimalEstimationResult = .{};
@@ -164,21 +161,30 @@ test "correction optimal-estimation returns one-step result handle" {
     defer c_api.zds_optimal_estimation_result_free(ctx, &result);
 
     try std.testing.expect(result.result_handle != null);
-    try std.testing.expectEqual(@as(usize, 1), result.state_count);
+    try std.testing.expectEqual(@as(usize, 2), result.state_count);
     try std.testing.expectEqual(@as(usize, 1), result.iteration_count);
     try std.testing.expectApproxEqAbs(0.1, result.initial_state.?[0], 0.0);
-    try std.testing.expectApproxEqRel(0.3358862191767914, result.state.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(2.3333920905514787e-7, result.posterior_covariance.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.9999766660790946, result.averaging_kernel.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.3358862191767914, result.history_state.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(242005.5066494241, result.history_chi2.?[0], 1.0e-12);
+    try std.testing.expectApproxEqAbs(850.0, result.initial_state.?[1], 0.0);
+    try std.testing.expectApproxEqRel(0.36656240097651505, result.state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(847.531818925324, result.state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(3.212187341505087e-7, result.posterior_covariance.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.0015179266918172764, result.posterior_covariance.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.0015179266918172764, result.posterior_covariance.?[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(72.29518736871741, result.posterior_covariance.?[3], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.9999678781265839, result.averaging_kernel.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(-1.5179266918172786e-5, result.averaging_kernel.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(-0.15179266918767098, result.averaging_kernel.?[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.2770481263128252, result.averaging_kernel.?[3], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.36656240097651505, result.history_state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(847.531818925324, result.history_state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(265603.46505356533, result.history_chi2.?[0], 1.0e-12);
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
 test "batch optimal-estimation returns run-major result handle" {
     const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
     defer c_api.zds_context_destroy(ctx);
-    try prepareDefault(ctx);
+    try prepareNarrow(ctx);
 
     var spectrum: c_api.ZdsSpectrum = .{};
     try std.testing.expectEqual(
@@ -186,20 +192,22 @@ test "batch optimal-estimation returns run-major result handle" {
         c_api.zds_run_spectrum(ctx, &spectrum),
     );
     defer c_api.zds_spectrum_free(ctx, &spectrum);
-    try expectDefaultProductSpectrum(spectrum);
+    try std.testing.expectEqual(@as(usize, 16), spectrum.len);
 
     const variance = try std.testing.allocator.alloc(f64, spectrum.len);
     defer std.testing.allocator.free(variance);
     @memset(variance, 1.0e-6);
 
-    var state_template = [_]c_api.ZdsOptimalEstimationStateSpec{aerosolOpticalDepthSpec()};
-    const initial = [_]f64{ 0.08, 0.09 };
-    const prior = [_]f64{ 0.10, 0.10 };
+    const altitude_km = [_]f64{ 0.0, 1.0 };
+    const pressure_hpa = [_]f64{ 900.0, 800.0 };
+    const initial = [_]f64{ 0.08, 850.0, 0.09, 850.0 };
+    const prior = [_]f64{ 0.10, 850.0, 0.10, 850.0 };
     var request = batchRequest(
         spectrum.wavelength_nm[0..spectrum.len],
         spectrum.reflectance[0..spectrum.len],
         variance,
-        &state_template,
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
         &initial,
         &prior,
     );
@@ -214,16 +222,23 @@ test "batch optimal-estimation returns run-major result handle" {
 
     try std.testing.expect(result.result_handle != null);
     try std.testing.expectEqual(@as(usize, 2), result.run_count);
-    try std.testing.expectEqual(@as(usize, 1), result.state_count);
+    try std.testing.expectEqual(@as(usize, 2), result.state_count);
     try std.testing.expectEqual(@as(usize, 1), result.history_capacity);
     try std.testing.expectEqual(@as(usize, 1), result.iteration_count.?[0]);
     try std.testing.expectEqual(@as(usize, 1), result.iteration_count.?[1]);
     try std.testing.expectEqual(@as(u8, 1), result.status.?[0]);
     try std.testing.expectEqual(@as(u8, 1), result.status.?[1]);
-    try std.testing.expectApproxEqRel(0.3488838954119376, result.state.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.3419559672154927, result.state.?[1], 1.0e-12);
+    // Narrow-band goldens (regenerated for the 759.5-761nm window). Canonical full-band OE
+    // physics is pinned by the single-run and correction tests above; this test pins the
+    // run-major batch layout and that history mirrors the final state.
+    try std.testing.expectApproxEqRel(0.1651899607587543, result.state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(849.8922457984752, result.state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.16665664954904796, result.state.?[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(849.8774905141596, result.state.?[3], 1.0e-12);
     try std.testing.expectApproxEqRel(result.state.?[0], result.history_state.?[0], 0.0);
     try std.testing.expectApproxEqRel(result.state.?[1], result.history_state.?[1], 0.0);
+    try std.testing.expectApproxEqRel(result.state.?[2], result.history_state.?[2], 0.0);
+    try std.testing.expectApproxEqRel(result.state.?[3], result.history_state.?[3], 0.0);
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
@@ -232,8 +247,8 @@ test "fastmode optimal-estimation batch returns per-stage metadata" {
     defer c_api.zds_context_destroy(fast_ctx);
     const correction_ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
     defer c_api.zds_context_destroy(correction_ctx);
-    try prepareDefault(fast_ctx);
-    try prepareDefault(correction_ctx);
+    try prepareNarrow(fast_ctx);
+    try prepareNarrow(correction_ctx);
 
     var spectrum: c_api.ZdsSpectrum = .{};
     try std.testing.expectEqual(
@@ -241,21 +256,22 @@ test "fastmode optimal-estimation batch returns per-stage metadata" {
         c_api.zds_run_spectrum(fast_ctx, &spectrum),
     );
     defer c_api.zds_spectrum_free(fast_ctx, &spectrum);
-    try expectDefaultProductSpectrum(spectrum);
+    try std.testing.expectEqual(@as(usize, 16), spectrum.len);
 
     const variance = try std.testing.allocator.alloc(f64, spectrum.len);
     defer std.testing.allocator.free(variance);
     @memset(variance, 1.0e-6);
 
-    var fast_state_template = [_]c_api.ZdsOptimalEstimationStateSpec{aerosolOpticalDepthSpec()};
-    var correction_state_template = [_]c_api.ZdsOptimalEstimationStateSpec{aerosolOpticalDepthSpec()};
-    const initial = [_]f64{ 0.08, 0.09 };
-    const prior = [_]f64{ 0.10, 0.10 };
+    const altitude_km = [_]f64{ 0.0, 1.0 };
+    const pressure_hpa = [_]f64{ 900.0, 800.0 };
+    const initial = [_]f64{ 0.08, 850.0, 0.09, 850.0 };
+    const prior = [_]f64{ 0.10, 850.0, 0.10, 850.0 };
     var fast_request = batchRequest(
         spectrum.wavelength_nm[0..spectrum.len],
         spectrum.reflectance[0..spectrum.len],
         variance,
-        &fast_state_template,
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
         &initial,
         &prior,
     );
@@ -265,7 +281,8 @@ test "fastmode optimal-estimation batch returns per-stage metadata" {
         spectrum.wavelength_nm[0..spectrum.len],
         spectrum.reflectance[0..spectrum.len],
         variance,
-        &correction_state_template,
+        aerosolOpticalDepthSpec(),
+        aerosolPressureSpec(&altitude_km, &pressure_hpa),
         &initial,
         &prior,
     );
@@ -286,7 +303,7 @@ test "fastmode optimal-estimation batch returns per-stage metadata" {
 
     try std.testing.expect(result.result_handle != null);
     try std.testing.expectEqual(@as(usize, 2), result.run_count);
-    try std.testing.expectEqual(@as(usize, 1), result.state_count);
+    try std.testing.expectEqual(@as(usize, 2), result.state_count);
     try std.testing.expectEqual(@as(usize, 2), result.history_capacity);
     try std.testing.expectEqual(@as(usize, 2), result.iteration_count.?[0]);
     try std.testing.expectEqual(@as(usize, 2), result.iteration_count.?[1]);
@@ -294,46 +311,40 @@ test "fastmode optimal-estimation batch returns per-stage metadata" {
     try std.testing.expectEqual(@as(usize, 1), result.full_correction_iteration_count.?[0]);
     try std.testing.expectEqual(@as(u8, 1), result.status.?[0]);
     try std.testing.expectEqual(@as(u8, 1), result.status.?[1]);
-    try std.testing.expectApproxEqRel(0.3007235613338587, result.state.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.30054519061204255, result.state.?[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.3488838954119376, result.history_state.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.3007235613338587, result.history_state.?[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.3419559672154927, result.history_state.?[2], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.30054519061204255, result.history_state.?[3], 1.0e-12);
+    // Narrow-band goldens (regenerated for the 759.5-761nm window). This test pins the
+    // two-stage fastmode history layout; canonical full-band physics lives in the single-run
+    // and correction tests. Final state and the stage-1 (batch) history rows are absolute;
+    // the full-correction history rows must mirror the final state, asserted relationally.
+    try std.testing.expectApproxEqRel(0.21803451863669004, result.state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(849.603112982948, result.state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.21821872416099974, result.state.?[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(849.5992085372817, result.state.?[3], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.1651899607587543, result.history_state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(849.8922457984752, result.history_state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.16665664954904796, result.history_state.?[4], 1.0e-12);
+    try std.testing.expectApproxEqRel(849.8774905141596, result.history_state.?[5], 1.0e-12);
+    try std.testing.expectApproxEqRel(result.state.?[0], result.history_state.?[2], 0.0);
+    try std.testing.expectApproxEqRel(result.state.?[1], result.history_state.?[3], 0.0);
+    try std.testing.expectApproxEqRel(result.state.?[2], result.history_state.?[6], 0.0);
+    try std.testing.expectApproxEqRel(result.state.?[3], result.history_state.?[7], 0.0);
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(fast_ctx)));
-}
-
-test "optimal-estimation request rejects removed surface-albedo state lane" {
-    const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
-    defer c_api.zds_context_destroy(ctx);
-    try prepareDefault(ctx);
-
-    const wavelength_nm = [_]f64{ 758.0, 760.0 };
-    const reflectance = [_]f64{ 0.12, 0.13 };
-    const variance = [_]f64{ 1.0e-4, 1.0e-4 };
-    var states = [_]c_api.ZdsOptimalEstimationStateSpec{aerosolOpticalDepthSpec()};
-    states[0].state_id = 2;
-    var request = singleRequest(&wavelength_nm, &reflectance, &variance, &states);
-    var result: c_api.ZdsOptimalEstimationResult = .{};
-
-    try std.testing.expectEqual(
-        @intFromEnum(c_api.ZdsStatus.failure),
-        c_api.zds_run_o2a_optimal_estimation(ctx, &request, &result),
-    );
-    try std.testing.expectEqual(c_api.ZdsOptimalEstimationResult{}, result);
-    try std.testing.expectEqualStrings("UnsupportedState", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
 test "optimal-estimation pressure state requires profile rows" {
     const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
     defer c_api.zds_context_destroy(ctx);
-    try prepareDefault(ctx);
+    try prepareNarrow(ctx);
 
     const wavelength_nm = [_]f64{ 758.0, 760.0 };
     const reflectance = [_]f64{ 0.12, 0.13 };
     const variance = [_]f64{ 1.0e-4, 1.0e-4 };
-    var states = [_]c_api.ZdsOptimalEstimationStateSpec{pressureStateWithoutProfile()};
-    var request = singleRequest(&wavelength_nm, &reflectance, &variance, &states);
+    var request = singleRequest(
+        &wavelength_nm,
+        &reflectance,
+        &variance,
+        aerosolOpticalDepthSpec(),
+        pressureStateWithoutProfile(),
+    );
     var result: c_api.ZdsOptimalEstimationResult = .{};
 
     try std.testing.expectEqual(
@@ -345,10 +356,18 @@ test "optimal-estimation pressure state requires profile rows" {
 }
 
 fn prepareDefault(ctx: *c_api.Context) !void {
-    const allocator = std.testing.allocator;
-    const rendered = try o2a_json.nativeJson(allocator);
-    defer allocator.free(rendered);
+    try prepareJson(ctx, try o2a_json.nativeJson(std.testing.allocator));
+}
 
+// prepareNarrow feeds the default scene over a narrow representative band. Tests that exercise
+// control flow, batching/fastmode structure, or error paths use it so the one-time prepare is
+// ~4x cheaper; tests pinning canonical full-band physics keep prepareDefault.
+fn prepareNarrow(ctx: *c_api.Context) !void {
+    try prepareJson(ctx, try o2a_json.narrowJson(std.testing.allocator));
+}
+
+fn prepareJson(ctx: *c_api.Context, rendered: []u8) !void {
+    defer std.testing.allocator.free(rendered);
     try std.testing.expectEqual(
         @intFromEnum(c_api.ZdsStatus.ok),
         c_api.zds_prepare_o2a_json(ctx, rendered.ptr, rendered.len),
@@ -356,9 +375,8 @@ fn prepareDefault(ctx: *c_api.Context) !void {
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(ctx)));
 }
 
-fn aerosolOpticalDepthSpec() c_api.ZdsOptimalEstimationStateSpec {
+fn aerosolOpticalDepthSpec() c_api.ZdsOptimalEstimationScalarSpec {
     return .{
-        .state_id = 0,
         .has_lower = 1,
         .has_upper = 1,
         .initial = 0.1,
@@ -369,18 +387,41 @@ fn aerosolOpticalDepthSpec() c_api.ZdsOptimalEstimationStateSpec {
     };
 }
 
-fn pressureStateWithoutProfile() c_api.ZdsOptimalEstimationStateSpec {
+fn pressureStateWithoutProfile() c_api.ZdsOptimalEstimationPressureSpec {
     return .{
-        .state_id = 1,
-        .has_lower = 1,
-        .has_upper = 1,
+        .scalar = .{
+            .has_lower = 1,
+            .has_upper = 1,
+            .initial = 850.0,
+            .prior = 850.0,
+            .variance = 100.0,
+            .lower = 600.0,
+            .upper = 1000.0,
+        },
         .interval_index_1based = 1,
-        .initial = 850.0,
-        .prior = 850.0,
-        .variance = 100.0,
-        .lower = 600.0,
-        .upper = 1000.0,
         .thickness_hpa = 10.0,
+    };
+}
+
+fn aerosolPressureSpec(
+    altitude_km: []const f64,
+    pressure_hpa: []const f64,
+) c_api.ZdsOptimalEstimationPressureSpec {
+    return .{
+        .scalar = .{
+            .has_lower = 1,
+            .has_upper = 1,
+            .initial = 850.0,
+            .prior = 850.0,
+            .variance = 100.0,
+            .lower = 600.0,
+            .upper = 1000.0,
+        },
+        .interval_index_1based = 2,
+        .thickness_hpa = 10.0,
+        .pressure_profile_count = altitude_km.len,
+        .pressure_profile_altitude_km = altitude_km.ptr,
+        .pressure_profile_pressure_hpa = pressure_hpa.ptr,
     };
 }
 
@@ -409,15 +450,16 @@ fn singleRequest(
     wavelength_nm: []const f64,
     reflectance: []const f64,
     variance: []const f64,
-    states: []const c_api.ZdsOptimalEstimationStateSpec,
+    aod: c_api.ZdsOptimalEstimationScalarSpec,
+    pressure: c_api.ZdsOptimalEstimationPressureSpec,
 ) c_api.ZdsOptimalEstimationRequest {
     return .{
         .sample_count = wavelength_nm.len,
         .wavelength_nm = wavelength_nm.ptr,
         .reflectance = reflectance.ptr,
         .variance = variance.ptr,
-        .state_count = states.len,
-        .states = states.ptr,
+        .aerosol_optical_depth = aod,
+        .aerosol_layer_pressure = pressure,
     };
 }
 
@@ -425,7 +467,8 @@ fn batchRequest(
     wavelength_nm: []const f64,
     reflectance: []const f64,
     variance: []const f64,
-    state_template: []const c_api.ZdsOptimalEstimationStateSpec,
+    aod: c_api.ZdsOptimalEstimationScalarSpec,
+    pressure: c_api.ZdsOptimalEstimationPressureSpec,
     initial: []const f64,
     prior: []const f64,
 ) c_api.ZdsOptimalEstimationBatchRequest {
@@ -434,9 +477,9 @@ fn batchRequest(
         .wavelength_nm = wavelength_nm.ptr,
         .reflectance = reflectance.ptr,
         .variance = variance.ptr,
-        .state_count = state_template.len,
-        .state_template = state_template.ptr,
-        .run_count = initial.len / state_template.len,
+        .aerosol_optical_depth = aod,
+        .aerosol_layer_pressure = pressure,
+        .run_count = initial.len / 2,
         .initial = initial.ptr,
         .prior = prior.ptr,
         .batch_worker_count = 1,

@@ -3,7 +3,6 @@ const std = @import("std");
 const internal = @import("internal");
 
 const controls = internal.rtm.controls;
-const jacobian_states = internal.rtm.jacobian_states;
 
 // ControlLayoutEvidence --------------------------------------------------------------------------------------|
 // Compile-time layout pins for transport control rows copied from the RTM control contract.                   |
@@ -116,15 +115,15 @@ test "performance thresholds keep order and Fourier cap helpers" {
     try std.testing.expect(uncapped.shouldEvaluateAerosolTangent(100));
 }
 
-test "prepare solve config validates controls and sanitizes Jacobian state mask" {
+test "prepare solve config validates controls and preserves Jacobian request" {
     const prepared = try controls.prepareSolveConfig(.{
         .derivative_mode = .semi_analytical,
-        .derivative_state_mask = 0xff,
+        .wants_jacobian = true,
         .controls = .{ .n_streams = 16 },
     });
 
     try std.testing.expectEqual(controls.DerivativeMode.semi_analytical, prepared.derivative_mode);
-    try std.testing.expectEqual(jacobian_states.all_states_mask, prepared.derivative_state_mask);
+    try std.testing.expect(prepared.wants_jacobian);
     try std.testing.expectEqual(@as(u16, 16), prepared.controls.n_streams);
 
     try std.testing.expectError(

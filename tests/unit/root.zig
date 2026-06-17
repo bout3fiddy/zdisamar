@@ -47,7 +47,7 @@ test {
     _ = @import("retrieval/state_layout_test.zig");
     _ = @import("retrieval/pressure_profile_test.zig");
     _ = @import("retrieval/measured_reflectance_rows_test.zig");
-    _ = @import("retrieval/state_spec_validation_test.zig");
+    _ = @import("retrieval/retrieval_state_validation_test.zig");
     _ = @import("retrieval/iteration_math_test.zig");
     _ = @import("validation/band_metrics_test.zig");
     _ = @import("instrumentation/facades_test.zig");

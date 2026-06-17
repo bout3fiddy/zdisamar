@@ -17,7 +17,7 @@ def parse_args() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Verify that the typed Python O2 A setup matches the default DISAMAR parity entrypoint."
+            "Verify that the typed Python setup matches the default DISAMAR parity entrypoint."
         )
     )
     parser.add_argument(
@@ -39,16 +39,23 @@ def spectrum_arrays(spectrum: Any) -> dict[str, np.ndarray]:
     }
 
 
-def run_roundtrip() -> dict[str, Any]:
+def run_roundtrip(scene_factory: Any = None) -> dict[str, Any]:
 
     from zdisamar import rtm
     from zdisamar.wavelength_bands import o2a
+
+    # scene_factory builds the scene under test. The contract checks below are all route
+    # parities and structural invariants (typed == reference, session == functional,
+    # jacobian shape/determinism), so they hold on any band; the test passes a narrow
+    # representative scene for speed while the CLI keeps the full default band.
+    if scene_factory is None:
+        scene_factory = o2a.reference_scene
 
     tolerance = 1.0e-12
     start_s = time.perf_counter()
 
     scene_start_s = time.perf_counter()
-    scene = o2a.reference_scene()
+    scene = scene_factory()
     scene_s = time.perf_counter() - scene_start_s
 
     typed_rtm_start_s = time.perf_counter()
@@ -58,7 +65,7 @@ def run_roundtrip() -> dict[str, Any]:
     typed_arrays = spectrum_arrays(typed_spectrum)
 
     reference_rtm_start_s = time.perf_counter()
-    reference_spectrum = rtm.spectrum(o2a.reference_scene())
+    reference_spectrum = rtm.spectrum(scene_factory())
     reference_rtm_s = time.perf_counter() - reference_rtm_start_s
     reference_report = reference_spectrum.diagnostic_report
     reference_arrays = spectrum_arrays(reference_spectrum)
@@ -86,37 +93,17 @@ def run_roundtrip() -> dict[str, Any]:
         perturbed_session_spectrum = cache.spectrum(jacobian=True)
         perturbed_session_rtm_s = time.perf_counter() - perturbed_session_rtm_start_s
         perturbed_session_arrays = spectrum_arrays(perturbed_session_spectrum)
-        perturbed_session_names = perturbed_session_spectrum.jacobian_state_names
         perturbed_session_jacobian = np.asarray(
             perturbed_session_spectrum.radiance_jacobian,
             dtype=np.float64,
         ).copy()
 
-        requested_jacobian_names = (
-            "aerosol_optical_depth",
-            "aerosol_layer_mid_pressure_hpa",
-        )
-        compact_session_spectrum = cache.spectrum(
-            jacobian=True,
-            jacobian_state_names=requested_jacobian_names,
-        )
-        compact_session_names = compact_session_spectrum.jacobian_state_names
-        compact_session_jacobian = np.asarray(
-            compact_session_spectrum.radiance_jacobian,
+        repeated_session_spectrum = cache.spectrum(jacobian=True)
+        repeated_session_names = repeated_session_spectrum.jacobian_state_names
+        repeated_session_jacobian = np.asarray(
+            repeated_session_spectrum.radiance_jacobian,
             dtype=np.float64,
         ).copy()
-        empty_jacobian_state_selection_rejected = False
-
-        try:
-            cache.spectrum(jacobian=True, jacobian_state_names=())
-        except ValueError:
-            empty_jacobian_state_selection_rejected = True
-
-    full_state_indices = {name: index for index, name in enumerate(perturbed_session_names)}
-    selected_full_jacobian = np.stack(
-        [perturbed_session_jacobian[:, full_state_indices[name]] for name in compact_session_names],
-        axis=1,
-    )
 
     perturbed_functional_spectrum = rtm.spectrum(perturbed_scene, jacobian=True)
     perturbed_functional_arrays = spectrum_arrays(perturbed_functional_spectrum)
@@ -215,26 +202,29 @@ def run_roundtrip() -> dict[str, Any]:
                 rtol=tolerance,
             )
         ),
-        "requested_jacobian_dimension_matches_state_vector": bool(
-            compact_session_names == requested_jacobian_names
-            and compact_session_jacobian.shape
-            == (perturbed_session_arrays["wavelength_nm"].size, len(requested_jacobian_names))
+        "jacobian_dimension_matches_fixed_state_vector": bool(
+            repeated_session_names
+            == (
+                "aerosol_optical_depth",
+                "aerosol_layer_mid_pressure_hpa",
+            )
+            and repeated_session_jacobian.shape
+            == (perturbed_session_arrays["wavelength_nm"].size, 2)
         ),
-        "requested_jacobian_columns_match_full_native_columns": bool(
+        "repeated_jacobian_matches_full_native_columns": bool(
             np.allclose(
-                compact_session_jacobian,
-                selected_full_jacobian,
+                repeated_session_jacobian,
+                perturbed_session_jacobian,
                 atol=tolerance,
                 rtol=tolerance,
             )
         ),
-        "empty_jacobian_state_selection_rejected": empty_jacobian_state_selection_rejected,
         "parity_route_used": True,
         "tolerance": tolerance,
     }
 
     return {
-        "question": "Does the typed Python O2 A setup match the default DISAMAR parity entrypoint?",
+        "question": "Does the typed Python setup match the default DISAMAR parity entrypoint?",
         "answer": {
             "matches": checks["reference_matches_typed_arrays"],
             "sample_count": checks["typed_sample_count"],
@@ -279,12 +269,10 @@ def main() -> int:
         f"session_matches_typed_arrays={checks['session_matches_typed_arrays']}, "
         "session_reload_matches_functional_jacobian="
         f"{checks['session_reload_matches_functional_jacobian']}, "
-        "requested_jacobian_dimension_matches_state_vector="
-        f"{checks['requested_jacobian_dimension_matches_state_vector']}, "
-        "requested_jacobian_columns_match_full_native_columns="
-        f"{checks['requested_jacobian_columns_match_full_native_columns']}, "
-        "empty_jacobian_state_selection_rejected="
-        f"{checks['empty_jacobian_state_selection_rejected']}"
+        "jacobian_dimension_matches_fixed_state_vector="
+        f"{checks['jacobian_dimension_matches_fixed_state_vector']}, "
+        "repeated_jacobian_matches_full_native_columns="
+        f"{checks['repeated_jacobian_matches_full_native_columns']}"
     )
     print(f"json: {output_path}")
     excluded = {"tolerance", "typed_sample_count", "reference_sample_count"}
@@ -298,10 +286,12 @@ if __name__ == "__main__":
 
 
 def test_o2a_setup_roundtrip_contracts() -> None:
-    summary = run_roundtrip()
+    from rtm_scene import narrow
+
+    summary = run_roundtrip(scene_factory=narrow)
     checks = summary["checks"]
     excluded = {"tolerance", "typed_sample_count", "reference_sample_count"}
 
     assert all(value for key, value in checks.items() if key not in excluded)
     assert summary["answer"]["matches"] is True
-    assert summary["answer"]["sample_count"] == 701
+    assert summary["answer"]["sample_count"] == 16

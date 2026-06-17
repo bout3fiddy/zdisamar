@@ -6,26 +6,26 @@ settings do not change the physical scene; they change when the solver decides
 that another Fourier term, multiple-scattering order, layer-doubling step, or
 small matrix product is no longer worth evaluating.
 
-The default O2 A thresholds are the reference-grade settings used by validation.
-The `fast()` preset returns the O2 A defaults plus the current aggressive fast
-override.  For an existing case, prefer
+The default thresholds are the reference-grade settings used by validation.
+The `fast()` preset returns the defaults plus the current aggressive fast
+override.  For an existing scene, prefer
 `performance_thresholds.with_fast_mode()` so scene- or validation-family-specific
 thresholds are preserved while the speed/accuracy override is applied.  The
-higher-level O2 A fast mode also applies O2 A adaptive-reference-grid settings;
+higher-level fast mode also applies adaptive-reference-grid settings;
 that combined preset is the user-facing speed mode.
 
 Threshold guide:
 
 - `fourier_tail_reflectance_epsilon`: stops the azimuthal Fourier expansion
   once a Fourier reflectance coefficient is smaller than this value after the
-  floor order.  It must be finite and positive; the O2 A default is `3e-14`.
-  In the O2 A sweep over default, azimuth, aerosol-loading, and bright-surface
+  floor order.  It must be finite and positive; the default is `3e-14`.
+  In the sweep over default, azimuth, aerosol-loading, and bright-surface
   scenes, raising it to `1e-11` produced a worst reflectance residual of about
   `1e-10`, but this was too conservative to provide the desired fast-mode
   speedup by itself.
 
 - `fourier_floor_scalar`: the earliest Fourier order where the Fourier-tail
-  stop may trigger.  It must fit in the model's 16-bit field; the O2 A
+  stop may trigger.  It must fit in the model's 16-bit field; the
   default is `2`.  Keeping this above the low orders protects the dominant
   angular structure in the reflectance field.  Lowering it would risk pruning
   physically important low-order azimuthal terms; we have not validated that as
@@ -34,7 +34,7 @@ Threshold guide:
 - `fourier_order_cap`: a hard maximum Fourier order, or `None` for the
   geometry-derived limit.  When set, it must fit in the model's 16-bit
   field.  It is useful for experiments because it skips whole Fourier-order
-  evaluations directly, but it is cruder than the tail threshold.  The O2 A
+  evaluations directly, but it is cruder than the tail threshold.  The
   fast preset uses `5`; in the retained four-scene spectra sweep this was the
   main contributor to the speedup while keeping the worst reflectance residual
   below `5e-4` when combined with the layer-doubling override.
@@ -42,7 +42,7 @@ Threshold guide:
 - `aerosol_tangent_order_cap`: a hard maximum Fourier order for aerosol AOD and
   aerosol-pressure tangent weighting functions, or `None` to evaluate every
   active order.  The perturbation sweep found orders `>=12` to be near-neutral,
-  so the O2 A fast preset uses `11`.  With the current generic Fourier cap of
+  so the fast preset uses `11`.  With the current generic Fourier cap of
   `5`, this is mainly a centrally exposed custom-fast-mode knob; it becomes
   active when callers relax the full Fourier cap but still want to skip
   high-order tangent work.
@@ -56,33 +56,33 @@ Threshold guide:
 
 - `threshold_conv_first`: after the first scattering-order transport pass,
   LABOS returns early when the estimated contribution is below this threshold.
-  It must be finite and positive; the O2 A default is `1.5e-7`.  In the sweep,
+  It must be finite and positive; the default is `1.5e-7`.  In the sweep,
   raising it into the `5e-7` to `1.5e-5` range produced residuals from roughly
   `3e-9` to `4e-8` but did not produce a reliable speed win, so it is not part
   of the fast preset.
 
 - `threshold_conv_mult`: convergence threshold for later multiple-scattering
-  orders.  It must be finite and positive; the O2 A default is `1.5e-9`.
+  orders.  It must be finite and positive; the default is `1.5e-9`.
   Raising it stops the order loop earlier after the initial pass.  In the
   tested range `5e-9` to `1.5e-7`, worst residuals were about `1e-9` to `8e-8`,
   again without a consistent timing win.
 
 - `threshold_doubl`: controls whether a layer is split to a thinner starting
   optical thickness and then rebuilt through doubling.  It must be finite and
-  positive; the O2 A default is `1e-6`.  Relaxing it can save layer-doubling
-  work, but this is a stronger approximation.  The O2 A fast preset uses
+  positive; the default is `1e-6`.  Relaxing it can save layer-doubling
+  work, but this is a stronger approximation.  The fast preset uses
   `3e-5`; by itself this was not fast enough, but in combination with the
   Fourier-order cap it kept the retained spectra sweep below the `5e-4`
   reflectance-residual envelope.
 
 - `threshold_mul`: suppresses matrix products when the product of known matrix
-  traces is small.  It must be finite and positive; the O2 A default is
+  traces is small.  It must be finite and positive; the default is
   `1e-8`.  This looked unsafe as a broad fast-mode control: even `3e-8`
   produced about `2.3e-5` worst reflectance residual in the sweep.
 
 - `phase_function_truncation_threshold`: controls how much aerosol
   phase-function structure is retained before the radiative-transfer solve.
-  It must be finite and positive; the O2 A default is `1e-8`.  It affects the
+  It must be finite and positive; the default is `1e-8`.  It affects the
   angular scattering physics before LABOS runs.  Raising it was also too lossy
   for a generic fast preset: even `3e-8` produced about `1.3e-6` worst residual
   in the sweep.
@@ -116,7 +116,7 @@ class RadiativeTransferPerformanceThresholds:
 
     @classmethod
     def o2a_default(cls) -> Self:
-        """Use the reference-grade O2 A thresholds unless fast mode is requested."""
+        """Use the reference-grade thresholds unless fast mode is requested."""
 
         return cls(
             num_orders_max=0,
@@ -133,7 +133,7 @@ class RadiativeTransferPerformanceThresholds:
 
     @classmethod
     def fast(cls) -> Self:
-        """Return the validated O2 A speed/accuracy threshold bundle."""
+        """Return the validated speed/accuracy threshold bundle."""
 
         thresholds = cls.o2a_default()
         thresholds.fourier_order_cap = cls.FAST_FOURIER_ORDER_CAP
@@ -146,7 +146,7 @@ class RadiativeTransferPerformanceThresholds:
     def with_fast_mode(self) -> Self:
         """Return a copy with the validated fast-mode overrides applied.
 
-        This preserves case-specific threshold choices, such as a validation
+        This preserves scene-specific threshold choices, such as a validation
         family's phase-function truncation threshold, and changes only the
         broadly validated speed knobs.  The current fast preset applies the
         Fourier-order cap, aerosol tangent cap, Fourier-tail reflectance
@@ -220,7 +220,7 @@ class RadiativeTransferPerformanceThresholds:
 
 @dataclass
 class RadiativeTransferControls:
-    """Radiative-transfer settings for one O2 A scene."""
+    """Radiative-transfer settings for one scene."""
 
     scattering: str
     n_streams: int

@@ -1,6 +1,6 @@
-# O2 A Forward Performance
+# Forward Performance
 
-Scope: one O2 A forward spectrum on the 755-776 nm, 701-output-wavelength
+Scope: one forward spectrum on the 755-776 nm, 701-output-wavelength
 validation route.
 
 The current retained trace is:

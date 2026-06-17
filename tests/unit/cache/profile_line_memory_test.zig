@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const internal = @import("internal");
 const o2a_scene = @import("../support/o2a_scene.zig");
+const CountingAllocator = @import("../support/counting_allocator.zig").CountingAllocator;
 
 const profile_line_test_sample_count = 7;
 
@@ -386,6 +387,53 @@ test "ProfileLineValues parallel wavelength build matches serial rows" {
     );
 }
 
+test "ProfileLineValues retain only output rows on the caller allocator" {
+    if (builtin.mode == .Debug) return error.SkipZigTest;
+
+    const wavelengths_nm = [_]f64{ 758.0, 760.0 };
+    var expected = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengthsWithCutoffGrid(
+        std.testing.allocator,
+        o2a_scene.reference(),
+        wavelengths_nm[0..],
+        wavelengths_nm[0..],
+        true,
+        false,
+        null,
+        1,
+        &.{},
+    );
+    defer expected.deinit(std.testing.allocator);
+
+    var counter = CountingAllocator.init(std.testing.allocator);
+    const counting_allocator = counter.allocator();
+    var actual = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengthsWithCutoffGrid(
+        counting_allocator,
+        o2a_scene.reference(),
+        wavelengths_nm[0..],
+        wavelengths_nm[0..],
+        true,
+        false,
+        null,
+        1,
+        &.{},
+    );
+    errdefer actual.deinit(counting_allocator);
+
+    try std.testing.expectEqual(@as(usize, 2), counter.live_allocations);
+    try std.testing.expectEqual(expected.wavelength_count, actual.wavelength_count);
+    try std.testing.expectEqual(expected.profile_node_count, actual.profile_node_count);
+    try std.testing.expectEqual(expected.support_profile_node_count, actual.support_profile_node_count);
+    try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(expected.values), std.mem.sliceAsBytes(actual.values));
+    try std.testing.expectEqualSlices(
+        u8,
+        std.mem.sliceAsBytes(expected.support_profile_total_sigma_cm2_per_molecule),
+        std.mem.sliceAsBytes(actual.support_profile_total_sigma_cm2_per_molecule),
+    );
+
+    actual.deinit(counting_allocator);
+    try std.testing.expectEqual(@as(usize, 0), counter.live_allocations);
+}
+
 test "ProfileLineValues fill support-row sigma from atmospheric-budget evidence" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
 
@@ -467,7 +515,7 @@ const SupportLineSigmaEvidence = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // Canonical expected values owned by this repository.
-// public-python-baseline.json .diagnostics.atmospheric_budget.rows, support row 1 at the five O2 A probes.
+// public-python-baseline.json .diagnostics.atmospheric_budget.rows, support row 1 at the five probes.
 const support_line_sigma_evidence = [_]SupportLineSigmaEvidence{
     .{
         .wavelength_nm = 758.0,
@@ -527,8 +575,8 @@ const ProfileLineTotalProbeEvidence = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-// Source: canonical O2 A profile-line evidence fixtures.
-// The O2 A artifacts do not expose per-profile-node total line sidecar rows, so this table is derived by running
+// Source: canonical profile-line evidence fixtures.
+// The artifacts do not expose per-profile-node total line sidecar rows, so this table is derived by running
 // nodes at the five diagnostic wavelengths used by public-python-baseline.json.
 const profile_line_total_probe_evidence = [_]ProfileLineTotalProbeEvidence{
     .{
@@ -651,8 +699,8 @@ fn findProfileLineProbeEvidence(
     return null;
 }
 
-// Source: canonical O2 A profile-line evidence fixtures.
-// The O2 A public artifacts contain diagnostic optical depths, not per-layer line-cache rows, so this table is
+// Source: canonical profile-line evidence fixtures.
+// The public artifacts contain diagnostic optical depths, not per-layer line-cache rows, so this table is
 // wavelengths used by public-python-baseline.json.
 const profile_line_probe_evidence = [_]ProfileLineProbeEvidence{
     .{

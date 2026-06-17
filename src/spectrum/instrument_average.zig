@@ -203,14 +203,10 @@ pub fn postprocessRadianceResults(
     }
     applyRadianceCalibration(calibration, out_rows);
 
-    const active_state_count = jacobian_states.activeStateCount(solve_config.derivative_state_mask);
-    const wants_jacobian = solve_config.derivative_mode != .none and active_state_count != 0;
+    const wants_jacobian = solve_config.derivative_mode != .none and solve_config.wants_jacobian;
     if (!wants_jacobian) return;
 
     for (0..jacobian_states.state_count) |state_index| {
-        const state: jacobian_states.State = @enumFromInt(state_index);
-        if (!jacobian_states.includes(solve_config.derivative_state_mask, state)) continue;
-
         for (raw_rows, out_rows, 0..) |raw_row, *out_row, index| {
             out_row.jacobian[state_index] = choose_jacobian: {
                 if (uses_integrated_sampling) break :choose_jacobian raw_row.jacobian[state_index];
@@ -247,8 +243,7 @@ pub fn assembleReflectanceResults(
     if (radiance.len != irradiance.len or radiance.len != out_reflectance.len) return error.ShapeMismatch;
     if (!std.math.isFinite(solar_cosine)) return error.InvalidSolarCosine;
 
-    const active_state_count = jacobian_states.activeStateCount(solve_config.derivative_state_mask);
-    const wants_jacobian = solve_config.derivative_mode != .none and active_state_count != 0;
+    const wants_jacobian = solve_config.derivative_mode != .none and solve_config.wants_jacobian;
     if (wants_jacobian and out_jacobian.len != radiance.len) return error.ShapeMismatch;
     if (!wants_jacobian and out_jacobian.len != 0 and out_jacobian.len != radiance.len) {
         return error.ShapeMismatch;
@@ -263,11 +258,7 @@ pub fn assembleReflectanceResults(
 
         var row_jacobian = jacobian_states.zero();
         if (wants_jacobian) {
-            row_jacobian = jacobian_states.scaleMasked(
-                radiance_row.jacobian,
-                scale,
-                solve_config.derivative_state_mask,
-            );
+            row_jacobian = jacobian_states.scale(radiance_row.jacobian, scale);
             out_jacobian[index] = row_jacobian;
             for (0..jacobian_states.state_count) |state_index| {
                 summary.jacobian_sum[state_index] += row_jacobian[state_index];

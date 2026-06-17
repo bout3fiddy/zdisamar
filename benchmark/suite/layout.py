@@ -1,4 +1,4 @@
-"""Memory-layout diagnostics derived from benchmark cases."""
+"""Memory-layout diagnostics derived from benchmark scenes."""
 
 from typing import Any
 
@@ -109,7 +109,7 @@ def optical_accumulation_layout() -> dict[str, Any]:
 
     return {
         "boundary": "post-timing diagnostic; excluded from benchmark wall time and peak RSS",
-        "source": "collision-complex profile cache used by benchmark O2 A optical accumulation",
+        "source": "collision-complex profile cache used by benchmark optical accumulation",
         "benchmark_profile_node_count": COLLISION_COMPLEX_PROFILE_NODE_COUNT,
         "collision_complex_profile_cache_capacity": (COLLISION_COMPLEX_PROFILE_CACHE_CAPACITY),
         "previous_collision_complex_profile_cache_bytes": (

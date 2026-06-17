@@ -10,9 +10,9 @@ Source links:
 
 - DISAMAR
   - [LABOS allocation region](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/LabosModule.f90#L268-L304): allocates general LABOS storage around repeated Fourier work.
-  - [LABOS cleanup region](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/LabosModule.f90#L421-L427): frees that storage after the loop, which is flexible but costly in repeated O2 A calls.
+  - [LABOS cleanup region](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/LabosModule.f90#L421-L427): frees that storage after the loop, which is flexible but costly in repeated calls.
 - zdisamar
-  - [LABOS workspace](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/radiative_transfer/labos/workspace.zig#L46-L140): owns reusable arrays sized for the O2 A route and resets them across repeated work.
+  - [LABOS workspace](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/radiative_transfer/labos/workspace.zig#L46-L140): owns reusable arrays sized for the route and resets them across repeated work.
 
 LABOS repeats the same storage shapes across wavelengths and Fourier terms. The
 arrays should live in a reusable workspace rather than being allocated and freed

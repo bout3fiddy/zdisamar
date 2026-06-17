@@ -1,9 +1,9 @@
 # Validation Assets
 
-This directory stores tracked O2 A output-validation evidence that is
+This directory stores tracked output-validation evidence that is
 intentionally kept in git. The scripts compare zdisamar outputs against DISAMAR
 reference outputs, zdisamar normal-mode outputs against fastmode outputs, and
-Python optimal-estimation retrieval outputs against retained reference cases.
+Python optimal-estimation retrieval outputs against retained reference scenes.
 Disposable validation traces, scratch runs, and exploratory analysis belong
 under `out/`, not under this directory.
 
@@ -13,7 +13,7 @@ The validation tree is split by target:
 
 - `spectra/`: forward reflectance and reflectance-Jacobian parity evidence.
 - `optimal_estimation/`: inverse-method retrieval evidence.
-- `o2a/`: shared O2 A scene, baseline, and measurement-noise helpers used by
+- `o2a/`: shared scene, baseline, and measurement-noise helpers used by
   both spectra and inverse-method validation.
 - `common/`: generic validation plumbing such as paths and timers.
 - `reference_data/`: committed DISAMAR/reference fixtures and baselines.
@@ -36,7 +36,7 @@ The validation tree is split by target:
 - `outputs/spectra/o2a_fast_mode_spectra.png`,
   `outputs/spectra/o2a_fast_mode_spectra_data.csv`, and
   `outputs/spectra/o2a_fast_mode_spectra_metrics.json`: retained comparison of
-  reference settings against the O2 A fastmode preset over several scene
+  reference settings against the fastmode preset over several scene
   geometries.
 - `reference_data/spectra/o2a_with_cia_disamar_reference.csv`: retained DISAMAR reference spectrum
   still consumed by older forward validation tests.
@@ -94,9 +94,9 @@ The tracked validation plot compares reflectance-space quantities because those
 are the retrieval-facing parity signal. The retained threshold for every row in
 the bundle is `1e-13` max absolute residual.
 
-## Baseline Case
+## Baseline Scene
 
-Validation lanes use the typed O2 A baseline exposed by `zdisamar.wavelength_bands.o2a.reference_scene()`
+Validation lanes use the typed baseline exposed by `zdisamar.wavelength_bands.o2a.reference_scene()`
 and mirrored in `validation/o2a/case.py`. Keep Zig validation
-tests and Python validation scripts aligned with that case instead of introducing
+tests and Python validation scripts aligned with that scene instead of introducing
 a second serialized validation input.

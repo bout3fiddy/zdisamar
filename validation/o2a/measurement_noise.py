@@ -1,11 +1,10 @@
-"""Retained O2 A baseline measurement-noise helpers."""
+"""Retained baseline measurement-noise helpers."""
 
 from dataclasses import dataclass
 from functools import cache
 
 import numpy as np
-from zdisamar import reference_data, rtm
-from zdisamar.inverse_method import optimal_estimation
+from zdisamar import optimal_estimation, reference_data, rtm
 
 from validation.o2a import baseline
 
@@ -32,7 +31,7 @@ class O2ANoiseComponents:
 
 
 def measurement_from_o2a_baseline_noise(case) -> optimal_estimation.Measurement:
-    """Build a reflectance measurement with retained O2 A baseline SNR semantics."""
+    """Build a reflectance measurement with retained baseline SNR semantics."""
 
     spectrum = rtm.spectrum(case)
     wavelength_nm = np.asarray(spectrum.wavelength_nm, dtype=np.float64).copy()
@@ -61,7 +60,7 @@ def components_from_spectrum(
     irradiance,
     reflectance,
 ) -> O2ANoiseComponents:
-    """Return SNR components for one O2 A spectrum."""
+    """Return SNR components for one O2A spectrum."""
 
     wavelength = _one_dimensional_array("wavelength_nm", wavelength_nm)
     radiance_values = _positive_array("radiance", radiance, wavelength.size)
@@ -114,7 +113,7 @@ def components_from_spectrum(
 def instrument_mapped_s5_reference_radiance(
     wavelength_nm,
 ) -> np.ndarray:
-    """Map the S5 reference radiance spectrum onto the O2 A instrument grid."""
+    """Map the S5 reference radiance spectrum onto the instrument grid."""
 
     target = _one_dimensional_array("wavelength_nm", wavelength_nm)
     reference_wavelength, reference_radiance = _load_s5_reference_radiance()

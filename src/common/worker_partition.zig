@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 
 // worker_partition.zig ---------------------------------------------------------------------------------------|
-// Shared worker partitioning and spawn orchestration for the explicit O2 A route.                             |
+// Shared worker partitioning and spawn orchestration for the explicit route.                                 |
 //                                                                                                             |
 //                                                                                                             |
 // boundary                                                                                                    |

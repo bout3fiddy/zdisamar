@@ -1,13 +1,13 @@
-# O2 A OE Inter-Iteration Hillclimb
+# OE Inter-Iteration Hillclimb
 
 This note records the May 2026 audit of repeated work in the session-backed
-O2 A optimal-estimation path.
+optimal-estimation path.
 
 ## Evidence
 
 The retained benchmark artifact is
 `validation/outputs/optimal_estimation/zdisamar_o2a_slow_rtm_jacobian_benchmark.json`.
-At that audit the slow retained case reported:
+At that audit the slow retained scene reported:
 
 - retrieval loop wall time: 3.142969 s
 - retrieval iteration RTM plus Jacobian: 3.142008 s
@@ -23,7 +23,7 @@ session caches:
 - cached forward-miss/profile spectroscopy count: 3736
 
 The lazy final-state evaluation also hits those caches once when requested. This
-means the slow case is not repeatedly rebuilding the wavelength sampling plan,
+means the slow scene is not repeatedly rebuilding the wavelength sampling plan,
 forward-miss list, or profile spectroscopy caches between OE iterations.
 
 The traced native Jacobian sweep is

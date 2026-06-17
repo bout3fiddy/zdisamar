@@ -24,7 +24,7 @@ from validation.common.native_binding import sync_release_fast_binding  # noqa: 
 sync_release_fast_binding(REPO_ROOT)
 
 from zdisamar import rtm  # noqa: E402
-from zdisamar.inverse_method.optimal_estimation import o2a as o2a_oe  # noqa: E402
+from zdisamar.optimal_estimation import o2a as o2a_oe  # noqa: E402
 from zdisamar.wavelength_bands import o2a  # noqa: E402
 
 from validation.common.paths import write_json  # noqa: E402
@@ -63,10 +63,7 @@ def stats(values: list[float]) -> dict[str, float]:
     }
 
 
-def probe_rtm_calls(
-    probe_case: o2a.Scene,
-    jacobian_names: tuple[str, ...],
-) -> dict[str, Any]:
+def probe_rtm_calls(probe_case: o2a.Scene) -> dict[str, Any]:
 
     # Cold no-session forwards: a warm SessionCache fully memoizes the forward
     # result, so repeated identical calls would measure cache hits, not RTM
@@ -78,11 +75,7 @@ def probe_rtm_calls(
 
     def radiance_reflectance_and_jacobian() -> None:
 
-        spectrum = rtm.spectrum(
-            probe_case,
-            jacobian=True,
-            jacobian_state_names=jacobian_names,
-        )
+        spectrum = rtm.spectrum(probe_case, jacobian=True)
         _ = list(spectrum.reflectance)
 
     rtm_only_s = [time_call(radiance_reflectance_only) for _ in range(PROBE_RUNS)]
@@ -147,7 +140,7 @@ def main() -> int:
         _ = result.final_evaluation
         lazy_final_evaluation_s = time.perf_counter() - lazy_final_start
 
-        probe = probe_rtm_calls(probe_case, state_vector.jacobian_names)
+        probe = probe_rtm_calls(probe_case)
     finally:
         cache.close()
 
@@ -155,7 +148,7 @@ def main() -> int:
         "validation_case": "zdisamar_o2a_slow_rtm_jacobian_latency",
         "source": "Slow retained scene from shared DISAMAR OE reference sweep case 71.",
         "regime": (
-            "Baseline O2 A per-wavelength noise; two-state aerosol retrieval "
+            "Baseline per-wavelength noise; two-state aerosol retrieval "
             "(AOD, mid-pressure); retrieval_controls(); reused SessionCache for "
             "the retrieval; cold no-session forwards for direct_rtm_call_probe."
         ),

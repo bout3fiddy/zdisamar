@@ -22,7 +22,7 @@ pub const Error = error{
 // transport_worker_memory.zig ------------------------------------------------------------------------------  |
 // Reusable optics and LABOS transport buffers for one forward worker.                                         |
 //                                                                                                             |
-//   named O2 A memory block. The borrowed row types come from the new `rtm/*` modules.                        |
+//   named memory block. The borrowed row types come from the new `rtm/*` modules.                        |
 //                                                                                                             |
 // ownership boundary                                                                                          |
 //   This owner stores arrays, geometry reuse state, and validity flags only. Optical-property values, phase   |

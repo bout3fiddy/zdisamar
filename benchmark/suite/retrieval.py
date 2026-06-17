@@ -3,7 +3,7 @@
 from typing import Any
 
 from zdisamar import rtm
-from zdisamar.inverse_method.optimal_estimation import o2a as band_retrieval
+from zdisamar.optimal_estimation import o2a as band_retrieval
 
 from validation.o2a.measurement_noise import measurement_from_o2a_baseline_noise
 from validation.optimal_estimation import setup
@@ -162,7 +162,8 @@ def run_once(
 
     setup_start = timing_start()
 
-    with rtm.SessionCache(case) as cache:
+    cache_context = rtm.SessionCache() if mode == "fast_mode" else rtm.SessionCache(case)
+    with cache_context as cache:
         setup_timing = elapsed_since(setup_start)
         retrieval_start = timing_start()
         result = band_retrieval.retrieve(

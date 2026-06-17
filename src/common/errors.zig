@@ -1,5 +1,5 @@
 // errors.zig -------------------------------------------------------------------------------------------------|
-// Shared setup/input errors for the O2 A table layer.                                                         |
+// Shared setup/input errors for the table layer.                                                         |
 // ------------------------------------------------------------------------------------------------------------|
 
 pub const Error = error{

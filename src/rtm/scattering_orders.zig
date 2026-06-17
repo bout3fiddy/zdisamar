@@ -409,7 +409,7 @@ fn solveOrdersInternal(
     // tradeoff: first-order convergence stop                                                                  |
     // Return after the first transported order when max outgoing upward light is below threshold_conv_first.  |
     // --------------------------------------------------------------------------------------------------------|
-    // threshold_conv_first is 1.0e-6 by generic default and 1.5e-7 in O2 A. Lower values keep more            |
+    // threshold_conv_first is 1.0e-6 by generic default and 1.5e-7 in O2A. Lower values keep more            |
     // scattering-order work. Higher values stop earlier and drop weak multiple-scattering feedback.           |
 
     // instrumentation: perturbation: initial stop ------------------------------------------------------------|
@@ -515,7 +515,7 @@ fn solveOrdersInternal(
         // tradeoff: multiple-order convergence stop                                                           |
         // Stop adding scattering orders when the order field is below threshold_conv_mult or the cap is hit.  |
         // ----------------------------------------------------------------------------------------------------|
-        // threshold_conv_mult is 1.0e-4 by generic default and 1.5e-9 in O2 A. num_orders_max is the hard     |
+        // threshold_conv_mult is 1.0e-4 by generic default and 1.5e-9 in O2A. num_orders_max is the hard     |
         // cap; when it is zero, the resolved cap is roughly max(scattering optical depth, 0) + 15.            |
 
         // instrumentation: perturbation: multiple stop -------------------------------------------------------|
@@ -1206,7 +1206,7 @@ fn transportToOtherLevels12(
     ud_orde: []rows.UDLocal,
 ) void {
     // transportToOtherLevels12 ------------------------------------------------------------------------------ |
-    // Fixed 12-direction transport for the O2 A LABOS stream shape.                                           |
+    // Fixed 12-direction transport for the LABOS stream shape.                                           |
     // --------------------------------------------------------------------------------------------------------|
     ud_orde[start_level].U = ud_local[start_level].U;
     for (start_level + 1..end_level + 1) |level| {

@@ -1,6 +1,6 @@
 # Repo Notes
 
-- `zdisamar` is an O2 A RTM lab. Treat DISAMAR as the reference family used for validation, not as the codebase architecture.
+- `zdisamar` is an O2A RTM lab. Treat DISAMAR as the reference family used for validation, not as the codebase architecture.
 - Keep the public flow simple: input -> RTM -> output.
 - Keep routines under `src/rtm/`, `src/optics/`, `src/spectrum/`, and `src/retrieval/` free of file I/O, CLI wiring, text parsing, and hidden global state.
 - Keep scientific assets under `data/reference_data/`; loaders and parsers live under `src/input/reference_data/`.

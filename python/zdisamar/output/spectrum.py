@@ -71,7 +71,7 @@ class Spectrum:
 
     @property
     def input(self) -> Scene | None:
-        """Return the wavelength-band case associated with this spectrum."""
+        """Return the wavelength-band scene associated with this spectrum."""
 
         return self.scene
 

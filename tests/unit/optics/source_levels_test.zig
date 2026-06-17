@@ -10,7 +10,7 @@ const source_levels = internal.optics.source_levels;
 const allocator = std.testing.allocator;
 
 // SourceLevelEvidence ----------------------------------------------------------------------------------------|
-// Test-local RTM source-level evidence from O2 A baseline artifact:                                           |
+// Test-local RTM source-level evidence from baseline artifact:                                           |
 // Canonical expected values owned by this repository.                                                         |
 // internal-dump-baseline.json .probe_forward_inputs[].rtm_quadrature_levels.                                  |
 //                                                                                                             |
@@ -316,11 +316,7 @@ test "source levels reproduce shared RTM quadrature evidence rows" {
                 null,
             );
             try layer_depths.reduceLayerOpticsFromSupportRows(tables.layers, support_rows, layer_rows, null);
-            layer_depths.fillLayerAerosolJacobians(
-                tables.aerosol,
-                jacobian.stateMask(.aerosol_optical_depth),
-                layer_rows,
-            );
+            layer_depths.fillLayerAerosolJacobians(tables.aerosol, layer_rows);
             try source_levels.fillSourceLevelsAtWavelength(
                 expected.wavelength_nm,
                 tables.layers,

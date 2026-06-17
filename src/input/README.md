@@ -7,7 +7,7 @@ and checks the scene before setup or compute sees it.
 
 ```
 +----------------+         +----------------------+
-| Python O2 A    |  JSON   |    parseSceneJson    |
+| Python    |  JSON   |    parseSceneJson    |
 | factory/scene  +-------->| buildScene+normalize |
 +----------------+         +----------+-----------+
                                       |
@@ -49,11 +49,11 @@ Two things hold for every `Scene`:
 
 A `Scene` enters the model through caller-provided typed data or through
 `parseSceneJson`; both end at the same validator. The packaged DISAMAR-family
-O2 A reference case lives in
+reference scene lives in
 `python/zdisamar/input/wavelength_band/o2a_default.py` as
 `default_o2a_scene()`. Python assembles the dataclass scene, resolves
 reference-data paths before preparation, and passes the native JSON shape over
-`zds_prepare_o2a_json`. Zig receives the packaged reference case as an ordinary
+`zds_prepare_o2a_json`. Zig receives the packaged reference scene as an ordinary
 caller-provided scene; there is no built-in Zig default scene or zero-JSON
 default preparation path.
 
@@ -62,7 +62,7 @@ Python's `Scene.to_native_json_bytes()` emits and produces a typed `Scene`. A
 few things to know here:
 
 - The JSON shape (`NativeSceneJson`) carries Python bookkeeping and some fields
-  that have no effect on this forward-only O2 A route. `buildScene` maps the
+  that have no effect on this forward-only route. `buildScene` maps the
   fields the model uses across to `Scene`, and rejects unsupported route changes
   (a different scattering mode, a Jacobian request, finite altitude bounds)
   instead of accepting them silently.

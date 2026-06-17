@@ -1,4 +1,4 @@
-"""Packaged O2 A reference scene factory."""
+"""Packaged reference scene factory."""
 
 from ..aerosol import Aerosol, AerosolPlacement
 from ..assets import ReferenceAsset, ReferenceAssets
@@ -19,13 +19,13 @@ def reference_asset(id: str, path: str, format: str) -> ReferenceAsset:
 
 
 def default_o2a_scene() -> Scene:
-    """Return the packaged DISAMAR-family O2 A reference scene."""
+    """Return the packaged DISAMAR-family reference scene."""
 
     return Scene(
         metadata={
             "id": "disamar_reference_o2a",
             "storage": "disamar-reference-o2a",
-            "description": "DISAMAR O2 A reference scene defined in Python.",
+            "description": "DISAMAR O2A reference scene defined in Python.",
         },
         plan={
             "derivative_mode": "none",

@@ -3,7 +3,7 @@ const std = @import("std");
 // rayleigh.zig -----------------------------------------------------------------------------------------------|
 // Dry-air Rayleigh scattering helpers for gas-scattering optical-depth and phase-coefficient paths.           |
 //                                                                                                             |
-//   O2 A optical-depth checks read Rayleigh scattering directly from atmospheric-budget rows.                 |
+//   optical-depth checks read Rayleigh scattering directly from atmospheric-budget rows.                 |
 //                                                                                                             |
 // math                                                                                                        |
 //   sigma_um_inv = 1000 / max(wavelength_nm, 1)                                                               |

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
+from rtm_scene import narrow
 from zdisamar import rtm
-from zdisamar.wavelength_bands import o2a
 
 pytestmark = pytest.mark.integration
 
@@ -18,11 +18,13 @@ def spectrum_arrays(spectrum) -> dict[str, np.ndarray]:
 def test_reference_data_resolves_from_external_cwd(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
 
-    scene = o2a.reference_scene()
+    # Narrow representative band: this test verifies external-cwd asset resolution, route
+    # determinism, and finiteness -- all independent of band width.
+    scene = narrow()
     assert "vendor/disamar-fortran" not in scene.o2_lines.line_list_asset.path
 
     spectrum = rtm.spectrum(scene)
-    reference_spectrum = rtm.spectrum(o2a.reference_scene())
+    reference_spectrum = rtm.spectrum(narrow())
 
     assert len(spectrum.wavelength_nm) == int(scene.spectral_grid.sample_count)
     assert len(reference_spectrum.wavelength_nm) == int(scene.spectral_grid.sample_count)

@@ -9,7 +9,7 @@ const setup = internal.setup.run_tables;
 const allocator = std.testing.allocator;
 
 // CurvedSampleEvidence ---------------------------------------------------------------------------------------|
-// Test-local pseudo-spherical evidence from O2 A baseline artifacts:                                          |
+// Test-local pseudo-spherical evidence from baseline artifacts:                                          |
 // Canonical expected values owned by this repository.                                                         |
 // internal-dump-baseline.json .probe_forward_inputs[].pseudo_spherical.samples plus                           |
 // public-python-baseline.json .diagnostics.atmospheric_budget.rows for the line-absorption support values.    |

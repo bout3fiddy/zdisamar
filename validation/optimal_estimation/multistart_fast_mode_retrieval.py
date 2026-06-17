@@ -9,7 +9,7 @@
 # ]
 # ///
 
-"""Prototype multi-start O2 A fast-mode optimal-estimation retrieval outputs."""
+"""Prototype multi-start fast-mode optimal-estimation retrieval outputs."""
 
 import argparse
 import copy
@@ -34,9 +34,8 @@ DEFAULT_NATIVE_WORKER_LIMIT = os.cpu_count() or 1
 os.environ.setdefault(NATIVE_WORKER_LIMIT_ENV, str(DEFAULT_NATIVE_WORKER_LIMIT))
 sys.path[:0] = [str(REPO_ROOT), str(PYTHON_ROOT)]
 
-from zdisamar import rtm  # noqa: E402
-from zdisamar.inverse_method import optimal_estimation  # noqa: E402
-from zdisamar.inverse_method.optimal_estimation.diagnosis import (  # noqa: E402
+from zdisamar import optimal_estimation, rtm  # noqa: E402
+from zdisamar.optimal_estimation.diagnosis import (  # noqa: E402
     diagnose_retrieval,
     diagnosis_batch_worker_count_for_limit,
 )
@@ -72,7 +71,7 @@ PLOT_SCALE_FACTOR = 2.0
 def parse_args() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(
-        description="Run multi-start fast-mode O2 A optimal-estimation retrievals."
+        description="Run multi-start fast-mode optimal-estimation retrievals."
     )
     parser.add_argument("--scene-count", type=int, default=DEFAULT_SCENE_COUNT)
     parser.add_argument(
@@ -1034,7 +1033,7 @@ def build_summary(
             "method": "case.optimisation.fastmode.enabled = True",
             "fast_stage_only": fast_stage_only,
             "note": (
-                "Uses the case-owned fast-mode OE path, including sparse fast-stage "
+                "Uses the scene-owned fast-mode OE path, including sparse fast-stage "
                 "sampling. The sparse full-physics final correction is disabled only "
                 "when --fast-stage-only is passed."
             ),

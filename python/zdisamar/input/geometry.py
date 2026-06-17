@@ -8,7 +8,7 @@ from .shared import to_float
 
 @dataclass
 class Geometry:
-    """Solar and viewing geometry for the O2 A radiance calculation."""
+    """Solar and viewing geometry for the radiance calculation."""
 
     model: str
     solar_zenith_deg: float
@@ -45,7 +45,7 @@ class Geometry:
 
 @dataclass
 class Surface:
-    """Lambertian surface parameters used by the current O2 A model."""
+    """Lambertian surface parameters used by the current model."""
 
     albedo: float
     pressure_hpa: float

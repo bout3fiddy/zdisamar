@@ -58,5 +58,5 @@ if layer_cannot_contribute:
 ```
 
 The generic helper path still writes zero matrices when no active mask is
-provided. The retained workspace route is residual-clean: the O2 A validation
+provided. The retained workspace route is residual-clean: the validation
 lanes passed, and the vendor-shaped residual stayed at numerical zero.

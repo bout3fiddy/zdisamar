@@ -1,11 +1,11 @@
-# Performance Cases
+# Performance Scenes
 
-This folder pins the cases behind the research measurements. Timing numbers are
-only useful when the case and artifact are clear.
+This folder pins the scenes behind the research measurements. Timing numbers are
+only useful when the scene and artifact are clear.
 
-Current case notes:
+Current scene notes:
 
-- [Original reference case](original-reference-case.md)
+- [Original reference scene](original-reference-case.md)
 - [Current baseline config](current-baseline-config.md)
-- [Slow OE case](slow-oe-case.md)
+- [Slow OE scene](slow-oe-case.md)
 - [Paired sweep scenes](paired-sweep-scenes.md)

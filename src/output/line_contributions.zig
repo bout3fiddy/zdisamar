@@ -431,7 +431,7 @@ fn strongLineRow(
 
 fn resolveStrongAnchorFields(anchor: ?StrongAnchorMatch) StrongAnchorFields {
     // resolveStrongAnchorFields ------------------------------------------------------------------------------|
-    // Copy weak-line metadata for sidecars, or keep the complete-row O2 defaults when no anchor exists.       |
+    // Copy weak-line metadata for sidecars, or keep the complete-row defaults when no anchor exists.       |
     // --------------------------------------------------------------------------------------------------------|
     if (anchor) |owned| {
         return .{
@@ -570,7 +570,7 @@ fn usesVendorStrongLinePartition(
     strong_lines: []const readers.StrongLineAssetRow,
 ) bool {
     // usesVendorStrongLinePartition --------------------------------------------------------------------------|
-    // Detect the O2 A sidecar partition from retained HITRAN branch metadata.                                 |
+    // Detect the sidecar partition from retained HITRAN branch metadata.                                 |
     // --------------------------------------------------------------------------------------------------------|
     if (strong_lines.len == 0) return false;
 

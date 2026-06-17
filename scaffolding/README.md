@@ -13,7 +13,7 @@ First-class gates stay in their own roots:
 
 ## Instrumentation
 
-- `instrumentation/trace/zig/` builds trace-enabled O2 A harnesses.
+- `instrumentation/trace/zig/` builds trace-enabled harnesses.
 - `instrumentation/trace/capture/` holds Tracy and Lauka capture scripts.
 - `instrumentation/trace/evidence/` holds intentionally retained compact trace summaries.
 - `instrumentation/telemetry/zig/` builds calculation telemetry sinks and CLIs.

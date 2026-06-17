@@ -1,6 +1,6 @@
 # Multistart Calculation Telemetry Probe
 
-Question: for repeated fastmode OE starts on one fixed O2 A scene, which
+Question: for repeated fastmode OE starts on one fixed scene, which
 calculations are invariant enough to justify session-level reuse?
 
 ## Probe
@@ -20,10 +20,10 @@ diagnose_retrieval
   -> runO2AFastmodeBatch
 ```
 
-The fast stage used the case-owned fastmode settings used by `diagnose()`:
+The fast stage used the scene-owned fastmode settings used by `diagnose()`:
 12 fast-stage wavelengths, sparse fast RTM settings, and then one sparse
-full-physics correction on 4 wavelengths. The run used one prepared fast case,
-one prepared correction case, and `batch_workers=2`, matching
+full-physics correction on 4 wavelengths. The run used one prepared fast scene,
+one prepared correction scene, and `batch_workers=2`, matching
 `diagnosis_batch_worker_count_for_limit(5, 10)`.
 
 Instrumentation added row context to the validation-only calculation telemetry:
@@ -58,7 +58,7 @@ script overhead.
 
 I rechecked the current worktree before adding more native optimization
 machinery. Same-boundary settings: ReleaseFast package sync,
-`ZDISAMAR_WORKER_LIMIT=10`, unchanged fastmode controls, fixed case and
+`ZDISAMAR_WORKER_LIMIT=10`, unchanged fastmode controls, fixed scene and
 measurement, one reused `rtm.SessionCache()`, no `final_evaluation` access
 inside timed loops, two native diagnosis workers, and 25 starts.
 
@@ -309,7 +309,7 @@ correction-stage LABOS/Fourier active-mask cache.
 ## Rejected Fused Worker-Session Probe
 
 I tested an internal native fastmode batch shape where each worker owned both
-the fast-stage prepared case and the correction prepared case, then processed a
+the fast-stage prepared scene and the correction prepared scene, then processed a
 start through fast stage and correction before claiming another start. The
 intent was to keep the worker's session resources hot across both stages and
 remove the separate fast-worker phase followed by a separate correction-worker

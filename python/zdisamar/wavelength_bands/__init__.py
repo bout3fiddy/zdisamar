@@ -1,4 +1,4 @@
-"""Wavelength-band case definitions."""
+"""Wavelength-band scene definitions."""
 
 from . import o2a
 

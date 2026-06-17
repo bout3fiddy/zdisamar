@@ -5,7 +5,7 @@ const CostTiming = @import("../instrumentation/cost_timing.zig");
 // hitran_partition_tables.zig ------------------------------------------------------------------------------- |
 // Embedded HITRAN TIPS partition-sum tables used by line-strength temperature scaling.                        |
 //                                                                                                             |
-//   temperature grids and partition sums for isotopologues used by the O2 A line route. The q_* names follow  |
+//   temperature grids and partition sums for isotopologues used by the line route. The q_* names follow  |
 //   HITRAN isotopologue codes: H2O uses 161/181/171/162/182/172, CO2 uses 626/636/628/627/638/637, and O2     |
 //   uses 66/68/67. Codes are the same compact gas-isotope identifiers produced by the spectroscopy            |
 //   `deriveIsotopologueCode` helper.                                                                          |
@@ -705,26 +705,26 @@ pub fn partitionSampleMatchesEndpointSecant(isotopologue_code: i32, temperature_
     // prepared sample directly; this rebuilds the endpoint-secant curvature once for equality checks.         |
     // --------------------------------------------------------------------------------------------------------|
     const table = preparedPartitionTable(isotopologue_code) orelse return null;
+    const rebuilt = rebuildEndpointSecantSample(table, temperature_k);
+    const prepared = interpolatePartitionTable(table, temperature_k);
+    return rebuilt == prepared;
+}
 
+fn rebuildEndpointSecantSample(table: PreparedPartitionView, temperature_k: f64) f64 {
+    // rebuildEndpointSecantSample ----------------------------------------------------------------------------|
+    // Recompute the endpoint-secant oracle sample with the same clamped temperature route as production.      |
+    // --------------------------------------------------------------------------------------------------------|
     const safe_temperature = std.math.clamp(
         temperature_k,
         temperature_grid[0],
         temperature_grid[temperature_grid.len - 1],
     );
+    if (safe_temperature <= temperature_grid[0]) return table.values[0];
+    if (safe_temperature >= temperature_grid[temperature_grid.len - 1]) return table.values[table.values.len - 1];
 
-    const rebuilt = choose_rebuilt_sample: {
-        if (safe_temperature <= temperature_grid[0]) break :choose_rebuilt_sample table.values[0];
-        if (safe_temperature >= temperature_grid[temperature_grid.len - 1]) {
-            break :choose_rebuilt_sample table.values[table.values.len - 1];
-        }
-
-        break :choose_rebuilt_sample spline.sampleEndpointSecant(
-            temperature_grid[0..],
-            table.values,
-            safe_temperature,
-        ) catch unreachable;
-    };
-
-    const prepared = interpolatePartitionTable(table, temperature_k);
-    return rebuilt == prepared;
+    return spline.sampleEndpointSecant(
+        temperature_grid[0..],
+        table.values,
+        safe_temperature,
+    ) catch unreachable;
 }

@@ -1,4 +1,4 @@
-# 01. Reuse The O2 A RTM Session Cache
+# 01. Reuse The RTM Session Cache
 
 Historical slow-case evidence from the session-reuse optimization:
 
@@ -8,7 +8,7 @@ session reused elapsed time         4.098390 s
 same retrieved state                true
 ```
 
-In short: reuse one O2 A RTM session cache across retrieval iterations for the
+In short: reuse one RTM session cache across retrieval iterations for the
 same scene.
 
 Current retained slow-case evidence after later Jacobian and lazy-final-state
@@ -26,7 +26,7 @@ Source links:
   - No direct Fortran analogue is used here. The optimisation is zdisamar's in-process session reuse around repeated state-vector evaluations.
 - zdisamar
   - `python/zdisamar/inverse_method/optimal_estimation/o2a.py`: routes every retrieval state through either a fresh RTM evaluation or the reusable session cache.
-  - `python/zdisamar/rtm/session_cache.py`: keeps reusable RTM storage alive and reloads only the changed case state.
+  - `python/zdisamar/rtm/session_cache.py`: keeps reusable RTM storage alive and reloads only the changed scene state.
   - [Paired sweep use](https://github.com/bout3fiddy/zdisamar/blob/aa3bdc776e605229b18b54a7999632fb276546e2/validation/optimal_estimation/paired_disamar_zdisamar_sweep.py#L200-L224): uses the session path in the current validation lane.
 
 The retrieval loop evaluates nearby state-vector points for the same scene. For

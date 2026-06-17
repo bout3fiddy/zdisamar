@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from numbers import Real
 from typing import Self
 
-from ...display import PrettyMapping
+from ..display import PrettyMapping
 from .rtm_evaluation import RtmEvaluation
 from .state_vector import StateName
 
@@ -52,7 +52,7 @@ class Measurement:
     """Observed retrieval vector and per-sample reflectance signal-to-noise ratio.
 
     The first implementation uses reflectance as the retrieval quantity because
-    the current O2 A validation bundle is expressed as sun-normalized
+    the current validation bundle is expressed as sun-normalized
     radiance/reflectance.  The native OE request converts signal-to-noise into
     reflectance sigma and then into the diagonal measurement covariance expected
     by the solver.
@@ -335,6 +335,6 @@ class Result:
     def plot(self):
         """Import plotting only when a caller asks for retrieval figures."""
 
-        from ...plot.optimal_estimation import OptimalEstimationPlot
+        from ..plot.optimal_estimation import OptimalEstimationPlot
 
         return OptimalEstimationPlot(self)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Record Apple Silicon PMU counters around the O2 A LABOS forward model.
+# Record Apple Silicon PMU counters around the LABOS forward model.
 # The run shape is intentionally fixed: one serial pass for clean per-kernel
 # ratios and one threaded pass for the real forward workload.
 
@@ -165,7 +165,7 @@ summary_path.parent.mkdir(parents=True, exist_ok=True)
 summary_path.write_text(json.dumps(summary, indent=2) + "\n")
 
 print()
-print("================ O2 A forward PMU: serial vs threaded ================")
+print("================ forward PMU: serial vs threaded ================")
 print(f"{'metric':24s} {'serial (1 worker)':>18s} {'threaded':>18s}")
 print(f"{'forward_wall_s':24s} {serial_forward['forward_wall_s']:18.3f} {threaded_forward['forward_wall_s']:18.3f}")
 print(f"{'fixed_cycles':24s} {serial['fixed_cycles'] / 1e9:17.2f}G {threaded['fixed_cycles'] / 1e9:17.2f}G")

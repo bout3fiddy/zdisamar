@@ -46,12 +46,12 @@ const phase_odd_reciprocal = build_phase_odd_reciprocal: {
 //                                                                                                             |
 // memory                                                                                                      |
 //   The functions write caller-owned Mat rows and allocate no storage. Fixed stream_count=12 keeps the        |
-//   constant-bound loop shape used by the O2 A LABOS route.                                                   |
+//   constant-bound loop shape used by the LABOS route.                                                   |
 //                                                                                                             |
 // hot path                                                                                                    |
 //   solve.zig enters fillLayerReflectTransmitRowsWithBasis for every retained Fourier term. Each active       |
 //   layer builds a Z+/Z- phase kernel, fills single-scatter R/T, and may run layer doubling. The 12x10 route  |
-//   keeps the O2 A loop order and cost-timing buckets so trace output remains comparable to LABOS.            |
+//   keeps the loop order and cost-timing buckets so trace output remains comparable to LABOS.            |
 //                                                                                                             |
 // instrumentation                                                                                             |
 //   Trace counters count layer visits, skip reasons, phase-row work, doubled layers, q-series decisions, and  |
@@ -340,7 +340,7 @@ pub fn fillLayerReflectTransmitRowsWithBasis(
 
             // instrumentation: trace counter: phase renormalization ----------------------------------------- |
             // captures: zero-Fourier phase-renormalization branch                                             |
-            // why: verify when O2 A uses the default normalized phase function path.                          |
+            // why: verify when the run uses the default normalized phase function path.                          |
 
             Trace.plotU("phase_renormalizations", 1);
 
@@ -852,7 +852,7 @@ pub fn classifyLayerDoubling(
     // layers, this branch keeps the single-scatter layer and avoids repeated matrix squaring. The cost is     |
     // that very small intra-layer multiple-scattering feedback is not added.                                  |
     //                                                                                                         |
-    // threshold_doubl is 0.1 by generic default and 1.0e-6 in the O2 A rtm_config. Lower values double more   |
+    // threshold_doubl is 0.1 by generic default and 1.0e-6 in the rtm_config. Lower values double more   |
     // layers.                                                                                                 |
     if (scattering != .multiple or !(effective_scattering_depth > threshold_doubl)) {
         return .{
@@ -1163,7 +1163,7 @@ fn doubleLayer12x10(
     stage_cost: ?CostTiming.Active,
 ) void {
     // doubleLayer12x10 ---------------------------------------------------------------------------------------|
-    // Fixed 12x10 layer doubling for the O2 A LABOS route.                                                    |
+    // Fixed 12x10 layer doubling for the LABOS route.                                                    |
     //                                                                                                         |
     //                                                                                                         |
     // memory                                                                                                  |
@@ -1609,7 +1609,7 @@ fn fillSingleScatterReflection12(
 
 inline fn squareAttenuation12(attenuation: *rows.Vec) void {
     // squareAttenuation12 ----------------------------------------------------------------------------------- |
-    // Fixed 12-direction attenuation square for the LABOS O2 A rtm_config.                                    |
+    // Fixed 12-direction attenuation square for the LABOS rtm_config.                                    |
     // --------------------------------------------------------------------------------------------------------|
 
     inline for (0..rows.max_stream_count) |direction_index| {

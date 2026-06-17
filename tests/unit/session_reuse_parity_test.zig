@@ -24,7 +24,7 @@ test "runForwardWithSessionMemory reuses profile-line rows across repeated scene
 
     const solve_config = zdisamar.SolveConfig{
         .derivative_mode = .none,
-        .derivative_state_mask = 0,
+        .wants_jacobian = false,
         .controls = .{
             .scattering = .none,
             .n_streams = @intCast(scene.rtm.stream_count),

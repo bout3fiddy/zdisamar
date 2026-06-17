@@ -33,10 +33,10 @@ The script runs:
 zig build calculation-telemetry -Doptimize=ReleaseFast -- --output-dir out/scaffolding/telemetry/data/o2a-default
 ```
 
-The default capture is a compact O2 A window: 760-761 nm, 21 output samples,
+The default capture is a compact window: 760-761 nm, 21 output samples,
 0.1 nm high-resolution spacing, forward-only, and single-scattering LABOS. That
 keeps the starter dataset quick enough to regenerate while still exercising the
-real O2 A preparation, wavelength plan, Fourier loop, order convergence, and
+real preparation, wavelength plan, Fourier loop, order convergence, and
 reflectance assembly paths.
 
 The same script forwards larger-capture controls to the Zig harness:

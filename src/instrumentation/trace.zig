@@ -14,7 +14,7 @@ const SourceLocation = std.builtin.SourceLocation;
 //   matrix builds, doubling decisions, q-series work, and fixed-kernel product gates.                         |
 //   rtm/scattering_orders.zig marks initial source setup, order transport, local source passes, retained      |
 //   order accumulation, convergence exits, and paired Gaussian dot products.                                  |
-//   cache/profile_line_memory.zig and setup refresh code may add retained setup zones as O2 A/O2 A land.      |
+//   cache/profile_line_memory.zig and setup refresh code may add retained setup zones as land.      |
 //                                                                                                             |
 // primary paths                                                                                               |
 //   enabled is true only when build_options.enable_ztracy is present and true. build.zig supplies either the  |

@@ -45,7 +45,7 @@ scratch/
 specs/
 docs/specs/
 
-# Disposable validation output. Tracked O2 A evidence lives directly in validation/.
+# Disposable validation output. Tracked evidence lives directly in validation/.
 validation/.cache/
 validation/function_diff/
 validation/latest/

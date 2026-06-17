@@ -316,7 +316,7 @@ pub fn build(b: *std.Build) void {
     const run_c_api_retained_tests = b.addRunArtifact(c_api_retained_tests);
     b.step(
         "test-api-c-retained",
-        "Run retained C ABI tests with the default O2 A product case",
+        "Run retained C ABI tests with the default product scene",
     ).dependOn(&run_c_api_retained_tests.step);
 
     const cost_timing_o2a_scene_module = b.createModule(.{
@@ -342,7 +342,7 @@ pub fn build(b: *std.Build) void {
     const run_cost_timing_analysis = b.addRunArtifact(cost_timing_analysis);
     b.step(
         "cost-timing-forward-analysis",
-        "Run one enabled O2 A forward analysis and emit merged cost timing",
+        "Run one enabled forward analysis and emit merged cost timing",
     ).dependOn(&run_cost_timing_analysis.step);
     const run_cost_timing_fast_analysis = b.addSystemCommand(&.{
         "uv",
@@ -353,7 +353,7 @@ pub fn build(b: *std.Build) void {
     run_cost_timing_fast_analysis.addArtifactArg(cost_timing_analysis);
     b.step(
         "cost-timing-fast-analysis",
-        "Run fast cost-timing analysis gate for one enabled O2 A forward",
+        "Run fast cost-timing analysis gate for one enabled forward",
     ).dependOn(&run_cost_timing_fast_analysis.step);
     const labos_bottleneck_trace = addTraceExecutable(
         b,
@@ -414,7 +414,7 @@ pub fn build(b: *std.Build) void {
 
     const test_retained_step = b.step(
         "test-retained",
-        "Run retained explicit-dataflow suite, including full default O2 A/OE coverage",
+        "Run retained explicit-dataflow suite, including full default OE coverage",
     );
     test_retained_step.dependOn(test_fast_step);
     test_retained_step.dependOn(&run_unit_tests.step);

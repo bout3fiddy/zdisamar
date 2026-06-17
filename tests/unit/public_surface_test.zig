@@ -20,7 +20,9 @@ test "public root exposes setup session and spectrum surface" {
     try std.testing.expect(@hasDecl(zdisamar, "Spectrum"));
     try std.testing.expect(@hasDecl(zdisamar, "SpectrumRunResult"));
     try std.testing.expect(@hasDecl(zdisamar, "optimal_estimation"));
-    try std.testing.expect(@hasDecl(zdisamar, "RetrievalStateSpec"));
+    try std.testing.expect(@hasDecl(zdisamar, "RetrievalState"));
+    try std.testing.expect(@hasDecl(zdisamar, "RetrievalStateScalar"));
+    try std.testing.expect(@hasDecl(zdisamar, "RetrievalPressureLayerPlacement"));
     try std.testing.expect(@hasDecl(zdisamar, "RetrievalPressureAltitudeProfile"));
     try std.testing.expect(@hasDecl(zdisamar, "RetrievalResult"));
     try std.testing.expect(@hasDecl(zdisamar, "RetrievalBatchResult"));
@@ -43,14 +45,14 @@ test "public root exposes setup session and spectrum surface" {
     try std.testing.expect(!@hasDecl(zdisamar, "zds_context_create"));
 }
 
-test "public O2 A root surface keeps route-only spectrum knobs internal" {
+test "public root surface keeps route-only spectrum knobs internal" {
     const zdisamar = internal.public;
 
-    // Source: canonical O2 A evidence fixtures owned by this repository.
+    // Source: canonical evidence fixtures owned by this repository.
     // Canonical expected values owned by this repository.
     // integrated irradiance rows. `python-reference-case-native.json` exposes no calibration, slit-kernel,
     // radiance-integration, or irradiance-integration override keys, so the root call keeps those six
-    // `runForwardSpectrum` arguments as fixed route constants rather than public case fields.
+    // `runForwardSpectrum` arguments as fixed route constants rather than public scene fields.
     try std.testing.expect(!@hasDecl(zdisamar, "buildReferenceRunTables"));
     try std.testing.expect(!@hasDecl(zdisamar, "deinitReferenceRunTables"));
     try std.testing.expect(!@hasDecl(zdisamar, "deinitRunTables"));

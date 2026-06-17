@@ -1,7 +1,7 @@
 # Full-Spectrum Calculation Telemetry Sweep
 
 This sweep is the first retained data set for expression-level math analysis
-across a retrieval-like O2 A window.
+across a retrieval-like window.
 
 ## Capture Settings
 

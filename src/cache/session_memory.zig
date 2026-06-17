@@ -11,7 +11,7 @@ const transport_worker_memory = @import("transport_worker_memory.zig");
 const Allocator = std.mem.Allocator;
 
 // session_memory.zig -------------------------------------------------------------------------------------    |
-// Named memory owners retained by one O2 forward session.                                                     |
+// Named memory owners retained by one forward session.                                                     |
 //                                                                                                             |
 // ownership boundary                                                                                          |
 //   The session memory owns computed rows and reusable work arrays only. It stores no scene, request, RTM     |
@@ -19,7 +19,7 @@ const Allocator = std.mem.Allocator;
 // ------------------------------------------------------------------------------------------------------------|
 
 // SessionMemory -------------------------------------------------------------------------------------------   |
-// Top-level allocation owner for reusable O2 A setup, spectrum, solar, workers, and transport work.           |
+// Top-level allocation owner for reusable setup, spectrum, solar, workers, and transport work.           |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // Debug build: size 448 B (0.438 KiB), align 8                                                                |

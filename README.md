@@ -8,7 +8,7 @@ spectral response all affect the measured spectrum.
 
 The Fortran DISAMAR code family is the scientific reference for this work.
 `zdisamar` keeps the same radiative-transfer problem and reorganizes the
-repeated oxygen A-band calculations so validation cases can be run, timed, and
+repeated oxygen A-band calculations so validation scenes can be run, timed, and
 inspected through generated spectra and timing files.
 
 The Python wrapper is demonstrated in executable notebooks under
@@ -26,9 +26,9 @@ uv run --with jupyterlab --with ipykernel python -m jupyter lab scripts/demo
 
 The two demos are
 [`o2a_plot_bundle.ipynb`](./scripts/demo/o2a_plot_bundle.ipynb), which shows the
-Python-facing O2 A output and plotting accessors, and
+Python-facing output and plotting accessors, and
 [`optimal_estimation_demo.ipynb`](./scripts/demo/optimal_estimation_demo.ipynb),
-which shows a two-state O2 A optimal-estimation flow.
+which shows a two-state optimal-estimation flow.
 
 The published Python package has no third-party runtime dependencies: the RTM,
 optimal-estimation helpers, and notebook-facing SVG plots ship with the native
@@ -53,7 +53,7 @@ clouds, so aerosol retrievals need a detailed RTM.
 
 ![Aerosol scene and oxygen A-band reflectance](./docs/assets/o2a-aerosol-spectrum-context.png)
 
-The figure links a visible aerosol scene to the O2 A reflectance spectrum seen
+The figure links a visible aerosol scene to the O2A reflectance spectrum seen
 by the instrument: the aerosol contribution changes both the absolute
 reflectance and the structure inside the absorption band. Aerosol optical
 thickness, aerosol vertical distribution, and surface reflection all affect the
@@ -81,11 +81,11 @@ it reads a retrieval configuration, prepares atmospheric and surface inputs,
 calculates spectra and Jacobians, and runs inverse methods such as optimal
 estimation. Its strength is breadth. It supports many retrieval families,
 spectral ranges, configuration options, and operational/research use cases. That
-breadth also makes focused O2 A benchmarking difficult: a single aerosol-height
-case still passes through general setup, broad configuration handling, and
+breadth also makes focused benchmarking difficult: a single aerosol-height
+scene still passes through general setup, broad configuration handling, and
 general numerical routines built for a much wider set of retrieval problems.
 
-Both implementations target the same O2 A retrieval RTM: line-by-line
+Both implementations target the same retrieval RTM: line-by-line
 oxygen absorption, multiple scattering, instrument-grid convolution, and
 reflectance derivatives for optimal estimation. The performance improvements
 come from reducing repeated setup around that calculation:
@@ -94,17 +94,17 @@ come from reducing repeated setup around that calculation:
   across repeated RTM calls;
 - optimal-estimation retrievals call the RTM several times while the
   scene, instrument grid, spectroscopy, and many optical inputs stay the same.
-  Each iteration reuses that O2 A calculation state in memory;
+  Each iteration reuses that calculation state in memory;
 - retrieval Jacobians are calculated for the active state-vector columns;
-- common O2 A LABOS matrix shapes for the 20-stream case use specialized
+- common LABOS matrix shapes for the 20-stream case use specialized
   implementations in the repeated layer-doubling calculations;
 - validation and benchmark evidence is stored under
   [`validation/outputs/`](./validation/outputs/).
 
-The benchmark cases use `nstreamsSim = 20` and `nstreamsRetr = 20`. Streams are
+The benchmark scenes use `nstreamsSim = 20` and `nstreamsRetr = 20`. Streams are
 the angular quadrature directions used by the multiple-scattering
 radiative-transfer solver; more streams resolve the angular radiation field more
-finely, but each RTM call costs more. The production DISAMAR O2 A
+finely, but each RTM call costs more. The production DISAMAR
 setup usually uses 16 streams, so these retained 20-stream timings are
 deliberately slower than a production-tuned Fortran run.
 
@@ -122,12 +122,12 @@ optimal-estimation retrieval timing.
 The timings in this section were recorded on the local benchmark machine: Mac
 mini `Mac16,10`, Apple M4, 10 CPU cores (4 performance, 6 efficiency), 24 GB
 RAM. Treat the absolute seconds as machine-specific wall-clock measurements; the
-linked validation artifacts are the source for the reported case counts,
+linked validation artifacts are the source for the reported scene counts,
 retrieved-state deltas, and timing summaries.
 
 ### RTM
 
-The RTM benchmark calculates one O2 A spectrum over 755-776 nm. The
+The RTM benchmark calculates one O2A spectrum over 755-776 nm. The
 reported spectrum has 701 instrument-grid wavelengths, but each instrument
 channel is an average over sharper oxygen absorption structure at higher
 spectral resolution:
@@ -172,8 +172,8 @@ aerosol optical depth:       median +1.688e-08, mean -3.025e-07, range -3.703e-0
 aerosol mid pressure [hPa]:  median -0.0016,    mean -0.0020,    range -0.0522 to +0.0821
 ```
 
-Fastmode retrieval is a zdisamar-only optimisation lane on the same O2 A case.
-The normal case remains the full-physics reference. Enabling
+Fastmode retrieval is a zdisamar-only optimisation lane on the same scene.
+The normal scene remains the full-physics reference. Enabling
 `case.optimisation.fastmode.enabled` resolves inspectable RTM, adaptive-grid,
 OE, sparse fast-stage wavelength sampling, and final-correction defaults before
 execution. The shipped fastmode path solves the fast stage on the sparse
@@ -192,7 +192,7 @@ correction wavelengths on the validation measurement grid. Median speedup versus
 fullmode is `+1.382 s`. The maximum fastmode-minus-fullmode deltas are
 `4.197e-04` aerosol optical depth and `0.551 hPa` aerosol mid pressure.
 These timings are wall-clock durations around the public retrieval call. They
-include session/cache creation, native case load and preparation, native OE work,
+include session/cache creation, native scene load and preparation, native OE work,
 and the sparse full-physics correction; they do not include scene construction,
 simulated measurement construction, CSV writing, or plot rendering.
 The technical note is
@@ -215,13 +215,13 @@ OE 5-case fastmode sweep retrieval total       4.516 s
 
 That benchmark artifact is
 [`benchmark/results.json`](./benchmark/results.json). It is a shorter
-production-path timing check; the retained 100-case validation sweep above
+production-path timing check; the retained 100-scene validation sweep above
 remains the accuracy and convergence contract.
 
-The wrapper-overhead probe used the 10-worker baseline case directly. Under that
+The wrapper-overhead probe used the 10-worker baseline scene directly. Under that
 boundary, the current one-shot fastmode public call is `0.230 s` median, and a
 repeated-start loop with a caller-owned session cache is `0.179 s` median after
-the first sparse-case load. That focused evidence is tracked in
+the first sparse-scene load. That focused evidence is tracked in
 [`scaffolding/reports/performance/retrieval/fastmode-session-overhead.md`](./scaffolding/reports/performance/retrieval/fastmode-session-overhead.md).
 
 The tracked paired DISAMAR/zdisamar summary is
@@ -256,26 +256,26 @@ counts are in
 ## Python Package
 
 Use `uv` to download the published package into an isolated environment. The
-wheel includes the native RTM library and bundled O2 A reference data. The
+wheel includes the native RTM library and bundled reference data. The
 Python package has no third-party runtime dependencies.
 
 ```bash
 uv run --with zdisamar python
 ```
 
-The public flow is one case object: configure the simulated O2 A scene, pass it
+The public flow is one scene object: configure the simulated scene, pass it
 to the RTM, and pass it to optimal estimation when you want a retrieval.
 
 ```python
 from zdisamar import rtm
-from zdisamar.inverse_method import optimal_estimation as oe
+from zdisamar import optimal_estimation as oe
 from zdisamar.rtm import SessionCache
 from zdisamar.wavelength_bands import o2a
 ```
 
 ### Simulated Scene
 
-Start from the packaged O2 A reference case and set the aerosol state directly.
+Start from the packaged reference scene and set the aerosol state directly.
 
 ```python
 case = o2a.reference_scene()
@@ -285,7 +285,7 @@ case.aerosol_layer.mid_pressure_hpa = 760.0
 
 ### Forward Model
 
-Run the native forward model on the case. The result exposes wavelength,
+Run the native forward model on the scene. The result exposes wavelength,
 radiance, irradiance, reflectance, optional Jacobians, and dependency-free SVG
 plot accessors.
 
@@ -296,7 +296,6 @@ spectrum.plot.reflectance()
 jacobian_spectrum = rtm.spectrum(
     case,
     jacobian=True,
-    jacobian_state_names=("aerosol_optical_depth",),
 )
 jacobian_spectrum.plot.jacobian("aerosol_optical_depth")
 ```
@@ -330,9 +329,9 @@ profile_spectrum = rtm.spectrum(profile_case)
 
 ### Fastmode Controls
 
-Fastmode is a case-owned optimisation mode. The case keeps the physical scene
-and exposes the RTM, adaptive-grid, OE, sparse fast-stage, and final-correction
-controls in one place.
+Fastmode is a scene-owned optimisation mode. The scene keeps the physical
+configuration and exposes the RTM, adaptive-grid, OE, sparse fast-stage, and
+final-correction controls in one place.
 
 ```python
 fast_case = o2a.reference_scene()
@@ -359,7 +358,7 @@ fastmode.oe.final_correction.wavelength_count = 4
 
 ### Optimal Estimation
 
-Create a simulated measurement from a truth case. Public measurement noise is
+Create a simulated measurement from a truth scene. Public measurement noise is
 expressed as signal-to-noise ratio; pass one scalar SNR or one value per
 wavelength. State-vector prior uncertainty is the one-sigma prior spread in the
 same units as the state value.

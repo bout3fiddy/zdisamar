@@ -15,7 +15,7 @@ work.
 ## LABOS Fourier Transport
 
 The forward route still expands one spectrum into `120,390` LABOS Fourier terms.
-This is expected: O2 A reflectance is azimuth dependent, so the model evaluates
+This is expected: O2A reflectance is azimuth dependent, so the model evaluates
 many Fourier terms before the tail is small enough.
 
 ## RT-Layer Construction
@@ -59,4 +59,4 @@ Phase matrix construction costs `1.040362 s`. The PLM basis cost is only
 and `Zmin`.
 
 The next large gain probably needs to reduce one of these counts, or introduce a
-new reuse boundary that preserves the same O2 A result.
+new reuse boundary that preserves the same result.

@@ -7,7 +7,7 @@ from typing import Self
 
 @dataclass
 class ReferenceAsset:
-    """Named reference-data file used by an O2 A scene."""
+    """Named reference-data file used by a scene."""
 
     id: str
     path: str
@@ -39,7 +39,7 @@ class ReferenceAsset:
 
 @dataclass
 class ReferenceAssets:
-    """Reference-data files required to reproduce one O2 A calculation."""
+    """Reference-data files required to reproduce one calculation."""
 
     atmosphere_profile: ReferenceAsset
     vendor_reference_csv: ReferenceAsset

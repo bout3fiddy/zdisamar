@@ -11,7 +11,7 @@ geometry across those samples.
 Source links:
 
 - DISAMAR
-  - [Wavelength setup](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/DISAMARModule.f90#L2716-L2732): prepares broad wavelength tables for the general executable, so the O2 A path does not start from the smallest unique radiance list.
+  - [Wavelength setup](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/DISAMARModule.f90#L2716-L2732): prepares broad wavelength tables for the general executable, so the path does not start from the smallest unique radiance list.
   - [Layer setup](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/DISAMARModule.f90#L2734-L2744): builds vertical layer state in the broad setup flow rather than exposing a narrow scene-stable geometry cache.
   - [LABOS layer use](https://gitlab.com/KNMI-OSS/disamar/disamar/-/blob/d17c52884a875cb87b98e4c4ea7f722659e685ac/src/LabosModule.f90#L472-L483): consumes the general layer structures inside repeated transport work.
 - zdisamar
@@ -20,7 +20,7 @@ Source links:
   - [Shared geometry](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/optical_properties/state_build/shared_geometry.zig#L127-L150): prepares scene-stable vertical geometry once.
   - [Forward input](https://github.com/bout3fiddy/zdisamar/blob/36598b67287c918b410ae25ca54319cbe63ade4b/src/forward_model/instrument_grid/grid_calculation/forward_input.zig#L21-L53): combines cached geometry with wavelength-dependent optical values.
 
-The useful O2 A boundary is the full set of work that is stable for the scene.
+The useful boundary is the full set of work that is stable for the scene.
 The output grid needs repeated high-resolution radiance samples, and each sample
 uses the same vertical geometry with wavelength-dependent optical values.
 

@@ -52,7 +52,7 @@ pub const radiance_prefetch_pooled_chunk_size: usize = 8;
 const RadiancePrefetchErrorState = worker_partition.FirstWorkerErrorState(anyerror);
 
 // SamplingPolicy -----------------------------------------------------------------------------------------    |
-// Product-channel sampling and calibration policy for the exercised O2 A spectrum route.                      |
+// Product-channel sampling and calibration policy for the exercised spectrum route.                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 104 B (0.102 KiB), align: 8 B                                                                         |
@@ -128,7 +128,7 @@ pub const RadianceWorkRows = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // RadiancePrefetchWorker ------------------------------------------------------------------------------------ |
-// Site-local worker row for dense O2 A radiance prefetch.                                                     |
+// Site-local worker row for dense radiance prefetch.                                                     |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // The row is intentionally not size-pinned because Telemetry.Context is sink-selected: zero-size in normal    |
@@ -216,7 +216,7 @@ pub fn radianceAtWavelength(
 
     // instrumentation: trace zone: one exact-wavelength forward sample -------------------------------------- |
     // captures: setup-optics, optional source/curved rows, transport, and radiance scaling for one wavelength |
-    // why: separates solve-count effects from per-solve cost when O2 A compares same-sitting reruns.          |
+    // why: separates solve-count effects from per-solve cost when comparing same-sitting reruns.          |
     var sample_zone = Trace.staticZone(@src(), "spectrum.radiance_at_wavelength");
     defer sample_zone.end();
     Trace.plotU("forward_samples", 1);
@@ -249,7 +249,9 @@ pub fn radianceAtWavelength(
             stage_cost,
         );
         try layer_depths.reduceLayerOpticsFromSupportRows(layer_grid, work_rows.support, work_rows.layers, stage_cost);
-        layer_depths.fillLayerAerosolJacobians(aerosol, prepared_solve_config.derivative_state_mask, work_rows.layers);
+        if (prepared_solve_config.derivative_mode != .none and prepared_solve_config.wants_jacobian) {
+            layer_depths.fillLayerAerosolJacobians(aerosol, work_rows.layers);
+        }
     }
 
     const source_rows = source_rows: {
@@ -288,14 +290,13 @@ pub fn radianceAtWavelength(
                 angles,
                 surface_albedo,
                 totalOpticalDepth(work_rows.layers),
-                prepared_solve_config.derivative_mode,
-                prepared_solve_config.derivative_state_mask,
             );
         }
 
         const needs_order_local_sum =
             prepared_solve_config.controls.integrate_source_function and
-            prepared_solve_config.derivative_mode != .none;
+            prepared_solve_config.derivative_mode != .none and
+            prepared_solve_config.wants_jacobian;
         var work = try worker_memory.solveWorkArrays(
             layer_count,
             prepared_solve_config.controls.n_streams,
@@ -377,13 +378,13 @@ fn prefetchRadianceRows(
     if (wavelengths.wavelengths.len == 0) return;
 
     // instrumentation: trace counter: forward worker count ---------------------------------------------------|
-    // captures: selected O2 A dense-prefetch worker count                                                     |
+    // captures: selected dense-prefetch worker count                                                     |
     // why: ties dense-prefetch wall time to the concurrency shape selected by root/session code.              |
     Trace.plotU("forward_worker_count", @intCast(worker_count));
     // end instrumentation: trace counter: forward worker count -----------------------------------------------|
 
     // instrumentation: trace counter: high-resolution radiance rows ------------------------------------------|
-    // captures: unique exact radiance wavelengths evaluated by this O2 A prefetch pass                        |
+    // captures: unique exact radiance wavelengths evaluated by this prefetch pass                        |
     // why: distinguishes fewer transport solves from cheaper work per solve.                                  |
     Trace.plotU("high_resolution_misses", @intCast(wavelengths.wavelengths.len));
     // end instrumentation: trace counter: high-resolution radiance rows --------------------------------------|
@@ -462,7 +463,7 @@ fn transportWorkerShapeMatches(
 
 fn radiancePrefetchWorkerMain(worker: *RadiancePrefetchWorker) void {
     // radiancePrefetchWorkerMain -----------------------------------------------------------------------------|
-    // Worker loop for dense O2 A radiance rows. Each worker drains either a static range or the pooled queue, |
+    // Worker loop for dense radiance rows. Each worker drains either a static range or the pooled queue, |
     // writes disjoint dense rows, and stores the first error for the joined caller to return.                 |
     // --------------------------------------------------------------------------------------------------------|
     var thread_name_buffer: [64]u8 = undefined;
@@ -488,13 +489,13 @@ fn radiancePrefetchWorkerMain(worker: *RadiancePrefetchWorker) void {
 
     while (nextRadiancePrefetchChunk(worker)) |chunk| {
 
-        // instrumentation: trace zone: O2 A radiance prefetch chunk ------------------------------------------|
-        // captures: one O2 A prefetch chunk size and wall time                                                |
+        // instrumentation: trace zone: radiance prefetch chunk ------------------------------------------|
+        // captures: one prefetch chunk size and wall time                                                |
         // why: preserves the chunk boundary while keeping per-wavelength optics visible separately.           |
         const chunk_zone = Trace.deepStaticZone(@src(), "forward_prefetch.chunk");
         chunk_zone.value(@intCast(chunk.len()));
         defer chunk_zone.end();
-        // end instrumentation: trace zone: O2 A radiance prefetch chunk --------------------------------------|
+        // end instrumentation: trace zone: radiance prefetch chunk --------------------------------------|
 
         for (chunk.start..chunk.end) |index| {
             const wavelength = worker.wavelengths.wavelengths[index];
@@ -580,7 +581,7 @@ pub fn runForwardSpectrum(
     solar_memory: *solar_irradiance_memory.SolarIrradianceMemory,
 ) !instrument_average.ReflectanceAssemblySummary {
     // runForwardSpectrum -------------------------------------------------------------------------------------|
-    // Run the explicit O2 A spectrum path from exact radiance wavelengths to product reflectance.             |
+    // Run the explicit spectrum path from exact radiance wavelengths to product reflectance.             |
     //                                                                                                         |
     //   `grid_calculation/spectral_forward.zig` dense prefetch and `grid_calculation/simulate.zig` nominal    |
     //   gather, channel postprocess, and reflectance assembly. The individual formulas stay in the stage      |
@@ -611,13 +612,13 @@ pub fn runForwardSpectrum(
         product_rows.reflectance.len == row_count;
     if (!product_shapes_match) return error.ShapeMismatch;
 
-    // instrumentation: trace zone: O2 A spectrum run ---------------------------------------------------------|
+    // instrumentation: trace zone: spectrum run ---------------------------------------------------------|
     // captures: dense prefetch, product gather, channel postprocess, and reflectance assembly wall time       |
-    // why: gives O2 A a same-boundary phase around the full explicit spectrum path.                           |
+    // why: gives a same-boundary phase around the full explicit spectrum path.                           |
     const run_zone = Trace.staticZone(@src(), "spectrum.o2a_run");
     run_zone.value(@intCast(row_count));
     defer run_zone.end();
-    // end instrumentation: trace zone: O2 A spectrum run -----------------------------------------------------|
+    // end instrumentation: trace zone: spectrum run -----------------------------------------------------|
 
     if (prefetch_dense_radiance) {
         try prefetchRadianceRows(

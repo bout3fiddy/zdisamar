@@ -1,11 +1,11 @@
-"""Shared O2 A optimal-estimation validation setup."""
+"""Shared optimal-estimation validation setup."""
 
 import copy
 import math
 from typing import Any
 
 import numpy as np
-from zdisamar.inverse_method import optimal_estimation
+from zdisamar import optimal_estimation
 
 from validation.o2a import baseline as oe_baseline
 

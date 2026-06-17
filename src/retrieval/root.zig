@@ -9,17 +9,25 @@ const Vector = algebra.Vector;
 
 pub const max_state_count = algebra.max_state_count;
 pub const max_iteration_count: usize = 1000;
+const small_pressure_profile_spline_nodes: usize = 64;
+const spline_work_vector_count: usize = 4;
+const pressure_profile_spline_stack_bytes: usize =
+    small_pressure_profile_spline_nodes * spline_work_vector_count * @sizeOf(f64);
 pub const StateVector = Vector;
 pub const StateMatrix = Matrix;
 pub const no_lower_bound = -std.math.inf(f64);
 pub const no_upper_bound = std.math.inf(f64);
 
+comptime {
+    std.debug.assert(max_state_count == jacobian_states.state_count);
+}
+
 // root.zig ---------------------------------------------------------------------------------------------------|
-// Retrieval value layer, fixed state-space scratch, and retained result owners for O2 A O2 A release.         |
+// Retrieval value layer, fixed state-space scratch, and retained result owners for release.         |
 //                                                                                                             |
 // route map                                                                                                   |
-//   api/c.zig converts Python/C request rows into StateSpec, MeasuredReflectanceRows, and result owners.      |
-//   Future O2 A solver slices mutate these retrieval values and call root.zig forward functions with updated  |
+//   api/c.zig converts Python/C request rows into RetrievalState, MeasuredReflectanceRows, and result owners. |
+//   Future solver slices mutate these retrieval values and call root.zig forward functions with updated  |
 //   aerosol/scalar state, while session memory stays warm.                                                    |
 //                                                                                                             |
 // primary paths                                                                                               |
@@ -35,8 +43,7 @@ pub const no_upper_bound = std.math.inf(f64);
 pub const Error = error{
     EmptyMeasurement,
     InvalidMeasurement,
-    InvalidStateCount,
-    InvalidStateSpec,
+    InvalidRetrievalState,
     InvalidPressureProfile,
     WavelengthGridMismatch,
     MissingJacobian,
@@ -46,40 +53,58 @@ pub const Error = error{
     InvalidPriorCovariance,
 };
 
-// StateSpec --------------------------------------------------------------------------------------------------|
-// Scalar retrieval variable description passed from Python and C into native OE.                              |
-//                                                                                                             |
-// layout(64-bit)                                                                                              |
-// size: 104 B (0.102 KiB), align: 8 B                                                                         |
-//                                                                                                             |
-// memory                                                                                                      |
-// [  0..  7] initial                  : f64                                                                   |
-// [  8.. 15] prior                    : f64                                                                   |
-// [ 16.. 23] variance                 : f64                                                                   |
-// [ 24.. 31] lower_bound              : f64                                                                   |
-// [ 32.. 39] upper_bound              : f64                                                                   |
-// [ 40.. 47] thickness_hpa            : f64                                                                   |
-// [ 48.. 95] pressure_altitude_profile: PressureAltitudeProfile                                               |
-// [ 96.. 99] interval_index_1based    : u32                                                                   |
-// [100..100] state                    : jacobian_states.State                                                 |
-// [101..103] trailing padding         : 3 B                                                                   |
-//                                                                                                             |
-// encoded fields                                                                                              |
-//   bounds use +/-inf for absence. An empty pressure profile means no pressure-state metadata.                |
-//                                                                                                             |
-// unused bits: 24 padding + 0 bool-storage slack = 24 bits                                                    |
-// cache span: 2 cache lines at 64 B per line                                                                  |
-// footprint: per instance = 104 B (0.102 KiB); total = per instance * state count                             |
-pub const StateSpec = struct {
-    state: jacobian_states.State,
+// StateScalar ------------------------------------------------------------------------------------------------|
+// Scalar OE lane knobs shared by both fixed retrieval states.                                                 |
+// ------------------------------------------------------------------------------------------------------------|
+pub const StateScalar = struct {
     initial: f64,
     prior: f64,
     variance: f64,
     lower_bound: f64 = no_lower_bound,
     upper_bound: f64 = no_upper_bound,
-    thickness_hpa: f64 = 0.0,
-    interval_index_1based: u32 = 0,
-    pressure_altitude_profile: PressureAltitudeProfile = .{},
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// PressureLayerPlacement -------------------------------------------------------------------------------------|
+// Pressure-lane-only side data for moving the single retrieved aerosol layer. The profile is borrowed from    |
+// request-scoped storage that owns and frees the spline curvature.                                            |
+// ------------------------------------------------------------------------------------------------------------|
+pub const PressureLayerPlacement = struct {
+    thickness_hpa: f64,
+    interval_index_1based: u32,
+    pressure_altitude_profile: *const PressureAltitudeProfile,
+
+    pub fn hasPressureAltitudeProfile(self: PressureLayerPlacement) bool {
+        // PressureLayerPlacement.hasPressureAltitudeProfile --------------------------------------------------|
+        // Check whether the borrowed pressure-altitude profile has the rows needed for pressure conversion.   |
+        // ----------------------------------------------------------------------------------------------------|
+        return self.pressure_altitude_profile.*.hasSamples();
+    }
+
+    pub fn altitudeDerivativeAtPressure(self: PressureLayerPlacement, pressure_hpa: f64) !f64 {
+        // PressureLayerPlacement.altitudeDerivativeAtPressure ------------------------------------------------|
+        // Convert a retrieved pressure step through the borrowed pressure-altitude profile.                   |
+        // ----------------------------------------------------------------------------------------------------|
+        return self.pressure_altitude_profile.*.altitudeDerivativeAtPressure(pressure_hpa);
+    }
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// PressureState ----------------------------------------------------------------------------------------------|
+// Fixed pressure retrieval lane: scalar OE knobs plus required placement metadata.                            |
+// ------------------------------------------------------------------------------------------------------------|
+pub const PressureState = struct {
+    scalar: StateScalar,
+    placement: PressureLayerPlacement,
+};
+// ------------------------------------------------------------------------------------------------------------|
+
+// RetrievalState ---------------------------------------------------------------------------------------------|
+// Complete fixed two-lane OE state, in public Jacobian order.                                            |
+// ------------------------------------------------------------------------------------------------------------|
+pub const RetrievalState = struct {
+    aerosol_optical_depth: StateScalar,
+    aerosol_layer_mid_pressure: PressureState,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -348,21 +373,20 @@ pub const Result = struct {
     history_state_vector_convergence: []f64 = &.{},
     history_snr_normal: []u8 = &.{},
 
-    pub fn init(allocator: Allocator, state_count: usize, max_iterations: usize) !Result {
+    pub fn init(allocator: Allocator, max_iterations: usize) !Result {
         // Result.init ----------------------------------------------------------------------------------------|
         // Allocate C/Python-borrowable result arrays for one retrieval run.                                   |
         // ----------------------------------------------------------------------------------------------------|
-        if (state_count > max_state_count) return error.InvalidStateCount;
-        if (max_iterations > max_iteration_count) return error.InvalidStateSpec;
+        if (max_iterations > max_iteration_count) return error.InvalidRetrievalState;
 
-        var result: Result = .{ .state_count = @intCast(state_count) };
+        var result: Result = .{ .state_count = @intCast(max_state_count) };
         errdefer result.deinit(allocator);
-        result.state_ids = try allocator.alloc(jacobian_states.State, state_count);
-        result.state = try allocator.alloc(f64, state_count);
-        result.initial_state = try allocator.alloc(f64, state_count);
-        result.posterior_covariance = try allocator.alloc(f64, state_count * state_count);
-        result.averaging_kernel = try allocator.alloc(f64, state_count * state_count);
-        result.history_state = try allocator.alloc(f64, max_iterations * state_count);
+        result.state_ids = try allocator.alloc(jacobian_states.State, max_state_count);
+        result.state = try allocator.alloc(f64, max_state_count);
+        result.initial_state = try allocator.alloc(f64, max_state_count);
+        result.posterior_covariance = try allocator.alloc(f64, max_state_count * max_state_count);
+        result.averaging_kernel = try allocator.alloc(f64, max_state_count * max_state_count);
+        result.history_state = try allocator.alloc(f64, max_iterations * max_state_count);
         result.history_chi2 = try allocator.alloc(f64, max_iterations);
         result.history_chi2_reflectance = try allocator.alloc(f64, max_iterations);
         result.history_chi2_state_vector = try allocator.alloc(f64, max_iterations);
@@ -423,25 +447,24 @@ pub const BatchResult = struct {
     state: []f64 = &.{},
     history_state: []f64 = &.{},
 
-    pub fn init(allocator: Allocator, run_count: usize, state_count: usize, history_capacity: usize) !BatchResult {
+    pub fn init(allocator: Allocator, run_count: usize, history_capacity: usize) !BatchResult {
         // BatchResult.init -----------------------------------------------------------------------------------|
         // Allocate run-major SoA arrays for a full-physics retrieval batch.                                   |
         // ----------------------------------------------------------------------------------------------------|
-        if (run_count == 0) return error.InvalidStateSpec;
-        if (state_count == 0 or state_count > max_state_count) return error.InvalidStateCount;
-        if (history_capacity == 0 or history_capacity > max_iteration_count) return error.InvalidStateSpec;
+        if (run_count == 0) return error.InvalidRetrievalState;
+        if (history_capacity == 0 or history_capacity > max_iteration_count) return error.InvalidRetrievalState;
 
         var result: BatchResult = .{
             .run_count = run_count,
-            .state_count = state_count,
+            .state_count = max_state_count,
             .history_capacity = history_capacity,
         };
         errdefer result.deinit(allocator);
         result.iteration_count = try allocator.alloc(usize, run_count);
         result.converged = try allocator.alloc(u8, run_count);
         result.status = try allocator.alloc(u8, run_count);
-        result.state = try allocator.alloc(f64, run_count * state_count);
-        result.history_state = try allocator.alloc(f64, run_count * history_capacity * state_count);
+        result.state = try allocator.alloc(f64, run_count * max_state_count);
+        result.history_state = try allocator.alloc(f64, run_count * history_capacity * max_state_count);
 
         const batch = result.output();
         for (0..batch.run_count) |run_index| resetBatchRun(batch, run_index, .pending);
@@ -567,31 +590,28 @@ pub const FastmodeBatchResult = struct {
     pub fn init(
         allocator: Allocator,
         run_count: usize,
-        state_count: usize,
         history_capacity: usize,
     ) !FastmodeBatchResult {
         // FastmodeBatchResult.init ---------------------------------------------------------------------------|
         // Allocate final, fast-stage, and exact-correction result arrays for a fastmode batch.                |
         // ----------------------------------------------------------------------------------------------------|
-        if (run_count == 0) return error.InvalidStateSpec;
-
-        if (state_count == 0 or state_count > max_state_count) return error.InvalidStateCount;
+        if (run_count == 0) return error.InvalidRetrievalState;
 
         if (history_capacity == 0 or history_capacity > max_iteration_count * 2) {
-            return error.InvalidStateSpec;
+            return error.InvalidRetrievalState;
         }
 
         var result: FastmodeBatchResult = .{
             .run_count = run_count,
-            .state_count = state_count,
+            .state_count = max_state_count,
             .history_capacity = history_capacity,
         };
         errdefer result.deinit(allocator);
         result.iteration_count = try allocator.alloc(usize, run_count);
         result.converged = try allocator.alloc(u8, run_count);
         result.status = try allocator.alloc(u8, run_count);
-        result.state = try allocator.alloc(f64, run_count * state_count);
-        result.history_state = try allocator.alloc(f64, run_count * history_capacity * state_count);
+        result.state = try allocator.alloc(f64, run_count * max_state_count);
+        result.history_state = try allocator.alloc(f64, run_count * history_capacity * max_state_count);
         result.fast_stage_iteration_count = try allocator.alloc(usize, run_count);
         result.fast_stage_converged = try allocator.alloc(u8, run_count);
         result.full_correction_iteration_count = try allocator.alloc(usize, run_count);
@@ -644,30 +664,27 @@ pub const Controls = struct {
 // Dense state-space vectors derived once before an OE run or correction step.                                 |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 88 B (0.086 KiB), align: 8 B                                                                          |
+// size: 80 B (0.078 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [ 0..15] state                : Vector                                                                      |
-// [16..31] prior                : Vector                                                                      |
-// [32..47] variance             : Vector                                                                      |
-// [48..63] lower                : Vector                                                                      |
-// [64..79] upper                : Vector                                                                      |
-// [80..80] derivative_state_mask: jacobian_states.StateMask                                                   |
-// [81..87] trailing padding     : 7 B                                                                         |
+// [ 0..15] state   : Vector                                                                                   |
+// [16..31] prior   : Vector                                                                                   |
+// [32..47] variance: Vector                                                                                   |
+// [48..63] lower   : Vector                                                                                   |
+// [64..79] upper   : Vector                                                                                   |
 //                                                                                                             |
 // ownership                                                                                                   |
 //   No heap references. Copied by value so correction paths reuse prepared scalar state without aliases.      |
 //                                                                                                             |
-// unused bits: 56 padding + 0 bool-storage slack = 56 bits                                                    |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // cache span: 2 cache lines at 64 B per line                                                                  |
-// footprint: per instance = 88 B (0.086 KiB); one stack value per active retrieval or correction              |
+// footprint: per instance = 80 B (0.078 KiB); one stack value per active retrieval or correction              |
 pub const StateSpace = struct {
     state: Vector,
     prior: Vector,
     variance: Vector,
     lower: Vector,
     upper: Vector,
-    derivative_state_mask: jacobian_states.StateMask,
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -718,15 +735,12 @@ pub const Accumulation = struct {
 // size: 32 B (0.031 KiB), align: 8 B                                                                          |
 //                                                                                                             |
 // memory                                                                                                      |
-// [ 0.. 1] source_index: [max_state_count]u8                                                                  |
-// [ 2..15] padding     : 14 B                                                                                 |
-// [16..31] state_scale : Vector                                                                               |
+// [0..15] state_scale : Vector                                                                                |
 //                                                                                                             |
-// unused bits: 112 padding + 0 bool-storage slack = 112 bits                                                  |
+// unused bits: 0 padding + 0 bool-storage slack = 0 bits                                                      |
 // cache span: 1 cache line at 64 B per line                                                                   |
-// footprint: per instance = 32 B (0.031 KiB); one stack value per OE iteration                                |
+// footprint: per instance = 16 B (0.016 KiB); one stack value per OE iteration                                |
 const JacobianProjection = struct {
-    source_index: [max_state_count]u8 = [_]u8{0} ** max_state_count,
     state_scale: Vector = algebra.zeroVector(),
 };
 // ------------------------------------------------------------------------------------------------------------|
@@ -753,13 +767,11 @@ pub const Step = struct {
 };
 // ------------------------------------------------------------------------------------------------------------|
 
-pub fn initializeStateSpace(state_specs: []const StateSpec, result: ?*Result) Error!StateSpace {
-    // initializeStateSpace ---------------------------------------------------------------------------------- |
-    // Convert validated state-spec rows into fixed two-lane vectors used by the Rodgers update.               |
-    //                                                                                                         |
-    //   removed from the state vector.                                                                        |
+pub fn initializeStateSpace(retrieval_state: RetrievalState, result: ?*Result) Error!StateSpace {
+    // initializeStateSpace -----------------------------------------------------------------------------------|
+    // Convert the fixed two-lane state into vectors used by the Rodgers update.                               |
     // --------------------------------------------------------------------------------------------------------|
-    if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
+    try validateRetrievalState(retrieval_state);
 
     var state_space: StateSpace = .{
         .state = algebra.zeroVector(),
@@ -767,40 +779,44 @@ pub fn initializeStateSpace(state_specs: []const StateSpec, result: ?*Result) Er
         .variance = algebra.zeroVector(),
         .lower = algebra.zeroVector(),
         .upper = algebra.zeroVector(),
-        .derivative_state_mask = 0,
     };
 
-    for (state_specs, 0..) |spec, index| {
-        try validateStateSpec(spec);
-        state_space.state[index] = spec.initial;
-        state_space.prior[index] = spec.prior;
-        state_space.variance[index] = spec.variance;
-        state_space.lower[index] = spec.lower_bound;
-        state_space.upper[index] = spec.upper_bound;
-        state_space.derivative_state_mask |= jacobian_states.stateMask(spec.state);
-        if (result) |full_result| {
-            full_result.state_ids[index] = spec.state;
-            full_result.initial_state[index] = spec.initial;
-        }
+    const aod = retrieval_state.aerosol_optical_depth;
+    const pressure = retrieval_state.aerosol_layer_mid_pressure.scalar;
+    state_space.state[0] = aod.initial;
+    state_space.prior[0] = aod.prior;
+    state_space.variance[0] = aod.variance;
+    state_space.lower[0] = aod.lower_bound;
+    state_space.upper[0] = aod.upper_bound;
+    state_space.state[1] = pressure.initial;
+    state_space.prior[1] = pressure.prior;
+    state_space.variance[1] = pressure.variance;
+    state_space.lower[1] = pressure.lower_bound;
+    state_space.upper[1] = pressure.upper_bound;
+
+    if (result) |full_result| {
+        full_result.state_ids[0] = .aerosol_optical_depth;
+        full_result.state_ids[1] = .aerosol_layer_mid_pressure_hpa;
+        full_result.initial_state[0] = aod.initial;
+        full_result.initial_state[1] = pressure.initial;
     }
     return state_space;
 }
 
 pub fn preparePriorScales(
     state_space: StateSpace,
-    state_count: usize,
     scratch: *RetrievalIterationScratch,
 ) Error!void {
     // preparePriorScales ------------------------------------------------------------------------------------ |
     // Fill sqrt(Sa) and sqrt(Sa)^-1 scratch lanes from the diagonal prior covariance.                         |
     // --------------------------------------------------------------------------------------------------------|
-    try algebra.choleskyLowerDiagonal(state_space.variance[0..state_count], &scratch.sqrt_sa, &scratch.sqrt_inv_sa);
+    try algebra.choleskyLowerDiagonal(state_space.variance, &scratch.sqrt_sa, &scratch.sqrt_inv_sa);
 }
 
 pub fn accumulateNormalSystem(
     measurement: MeasuredReflectanceRows,
     evaluation: ReflectanceEvaluationRows,
-    state_specs: []const StateSpec,
+    retrieval_state: RetrievalState,
     previous: Vector,
     prior: Vector,
     sqrt_sa: Vector,
@@ -830,24 +846,23 @@ pub fn accumulateNormalSystem(
     {
         return error.WavelengthGridMismatch;
     }
-    if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
+    try validateRetrievalState(retrieval_state);
 
     scratch.b = algebra.zeroVector();
     scratch.g = algebra.zeroMatrix();
     scratch.jt_invse_j = algebra.zeroMatrix();
 
-    var projection: JacobianProjection = .{};
-    for (state_specs, 0..) |spec, index| {
-        scratch.dx_white[index] = (previous[index] - prior[index]) / sqrt_sa[index];
-        projection.source_index[index] = @intCast(jacobian_states.stateIndex(spec.state));
-        projection.state_scale[index] = if (spec.state == .aerosol_layer_mid_pressure_hpa)
-            try spec.pressure_altitude_profile.altitudeDerivativeAtPressure(previous[index])
-        else
-            1.0;
-    }
+    scratch.dx_white[0] = (previous[0] - prior[0]) / sqrt_sa[0];
+    scratch.dx_white[1] = (previous[1] - prior[1]) / sqrt_sa[1];
+
+    const projection = JacobianProjection{
+        .state_scale = .{
+            1.0,
+            try retrieval_state.aerosol_layer_mid_pressure.placement.altitudeDerivativeAtPressure(previous[1]),
+        },
+    };
 
     var chi2_reflectance: f64 = 0.0;
-    var column_values = algebra.zeroVector();
     for (measurement.wavelength_nm, 0..) |wavelength_nm, sample_index| {
         if (evaluation.wavelength_nm[sample_index] != wavelength_nm) return error.WavelengthGridMismatch;
 
@@ -855,21 +870,25 @@ pub fn accumulateNormalSystem(
         const inv_variance = measurement.inv_variance[sample_index];
         chi2_reflectance += residual * residual * inv_variance;
 
-        for (0..state_specs.len) |state_index| {
-            column_values[state_index] =
-                evaluation.jacobian[sample_index][projection.source_index[state_index]] *
-                projection.state_scale[state_index];
-        }
+        const column0 = evaluation.jacobian[sample_index][0] * projection.state_scale[0];
+        const column1 = evaluation.jacobian[sample_index][1] * projection.state_scale[1];
+        const weighted0 = column0 * inv_variance;
+        const weighted1 = column1 * inv_variance;
+        const normal00 = weighted0 * column0;
+        const normal01 = weighted0 * column1;
+        const normal10 = weighted1 * column0;
+        const normal11 = weighted1 * column1;
 
-        for (0..state_specs.len) |row| {
-            const weighted_row = column_values[row] * inv_variance;
-            scratch.b[row] += sqrt_sa[row] * weighted_row * residual;
-            for (0..state_specs.len) |col| {
-                const normal = weighted_row * column_values[col];
-                scratch.jt_invse_j[row][col] += normal;
-                scratch.g[row][col] += sqrt_sa[row] * normal * sqrt_sa[col];
-            }
-        }
+        scratch.b[0] += sqrt_sa[0] * weighted0 * residual;
+        scratch.b[1] += sqrt_sa[1] * weighted1 * residual;
+        scratch.jt_invse_j[0][0] += normal00;
+        scratch.jt_invse_j[0][1] += normal01;
+        scratch.jt_invse_j[1][0] += normal10;
+        scratch.jt_invse_j[1][1] += normal11;
+        scratch.g[0][0] += sqrt_sa[0] * normal00 * sqrt_sa[0];
+        scratch.g[0][1] += sqrt_sa[0] * normal01 * sqrt_sa[1];
+        scratch.g[1][0] += sqrt_sa[1] * normal10 * sqrt_sa[0];
+        scratch.g[1][1] += sqrt_sa[1] * normal11 * sqrt_sa[1];
     }
     return .{
         .chi2_reflectance = chi2_reflectance,
@@ -878,7 +897,6 @@ pub fn accumulateNormalSystem(
 }
 
 pub fn solveStep(
-    state_count: usize,
     g: Matrix,
     b: Vector,
     prior: Vector,
@@ -898,13 +916,13 @@ pub fn solveStep(
     //   state   = prior + sqrt(Sa) * eigenvectors * dx_new                                                    |
     //                                                                                                         |
     // --------------------------------------------------------------------------------------------------------|
-    const eig = algebra.jacobiEigenSymmetric(g, state_count);
+    const eig = algebra.jacobiEigenSymmetric(g);
     scratch.eigenvectors = eig.vectors;
-    scratch.dx_trans = algebra.transposeMatrixVector(eig.vectors, scratch.dx_white, state_count);
-    scratch.rhs_trans = algebra.transposeMatrixVector(eig.vectors, b, state_count);
+    scratch.dx_trans = algebra.transposeMatrixVector(eig.vectors, scratch.dx_white);
+    scratch.rhs_trans = algebra.transposeMatrixVector(eig.vectors, b);
 
     var max_dx_trans: f64 = 0.0;
-    for (0..state_count) |index| max_dx_trans = @max(max_dx_trans, @abs(scratch.dx_trans[index]));
+    inline for (0..max_state_count) |index| max_dx_trans = @max(max_dx_trans, @abs(scratch.dx_trans[index]));
     const max_change = @max(max_change_transformed_state, max_dx_trans);
     var lambda_scale: f64 = 1.0;
     var snr_normal = true;
@@ -912,11 +930,10 @@ pub fn solveStep(
         eig.values,
         scratch.rhs_trans,
         scratch.dx_trans,
-        state_count,
         lambda_scale,
         &scratch.dx_trans_new,
     );
-    var change = transformedChange(scratch.dx_trans_new, scratch.dx_trans, state_count);
+    var change = transformedChange(scratch.dx_trans_new, scratch.dx_trans);
     if (change > 1.01 * max_change) {
         snr_normal = false;
         var factor_total: f64 = 1.0;
@@ -927,11 +944,10 @@ pub fn solveStep(
                 eig.values,
                 scratch.rhs_trans,
                 scratch.dx_trans,
-                state_count,
                 scale2,
                 &scratch.dx_trans_new,
             );
-            change = transformedChange(scratch.dx_trans_new, scratch.dx_trans, state_count);
+            change = transformedChange(scratch.dx_trans_new, scratch.dx_trans);
             if (change < max_change) {
                 lambda_scale = scale2;
                 break;
@@ -939,18 +955,18 @@ pub fn solveStep(
         }
     }
 
-    const rotated = algebra.matrixVector(eig.vectors, scratch.dx_trans_new, state_count);
+    const rotated = algebra.matrixVector(eig.vectors, scratch.dx_trans_new);
     var state = algebra.zeroVector();
-    for (0..state_count) |index| {
+    inline for (0..max_state_count) |index| {
         scratch.dx_physical[index] = sqrt_sa[index] * rotated[index];
         state[index] = prior[index] + scratch.dx_physical[index];
     }
 
-    var posterior_white = algebra.identityMatrix(state_count);
-    for (0..state_count) |row| {
-        for (0..state_count) |col| {
+    var posterior_white = algebra.identityMatrix();
+    inline for (0..max_state_count) |row| {
+        inline for (0..max_state_count) |col| {
             var value: f64 = 0.0;
-            for (0..state_count) |k| {
+            inline for (0..max_state_count) |k| {
                 value += eig.vectors[row][k] * (lambda_scale * eig.values[k]) * eig.vectors[col][k];
             }
             posterior_white[row][col] += value;
@@ -958,8 +974,8 @@ pub fn solveStep(
     }
 
     var posterior_precision = algebra.zeroMatrix();
-    for (0..state_count) |row| {
-        for (0..state_count) |col| {
+    inline for (0..max_state_count) |row| {
+        inline for (0..max_state_count) |col| {
             posterior_precision[row][col] = sqrt_inv_sa[row] * posterior_white[row][col] * sqrt_inv_sa[col];
         }
     }
@@ -970,65 +986,54 @@ pub fn solveStep(
     };
 }
 
-pub fn quadraticForm(matrix: Matrix, vector: Vector, state_count: usize) f64 {
+pub fn quadraticForm(matrix: Matrix, vector: Vector) f64 {
     // quadraticForm ----------------------------------------------------------------------------------------- |
-    // Return vector^T * matrix * vector over the active leading state lanes.                                  |
+    // Return vector^T * matrix * vector over the fixed two state lanes.                                       |
     // --------------------------------------------------------------------------------------------------------|
-    var value: f64 = 0.0;
-    for (0..state_count) |row| {
-        var row_value: f64 = 0.0;
-        for (0..state_count) |col| row_value += matrix[row][col] * vector[col];
-        value += vector[row] * row_value;
-    }
-    return value;
+    const row0 = matrix[0][0] * vector[0] + matrix[0][1] * vector[1];
+    const row1 = matrix[1][0] * vector[0] + matrix[1][1] * vector[1];
+    return vector[0] * row0 + vector[1] * row1;
 }
 
 fn computeTransformedUpdate(
     eigenvalues: Vector,
     rhs_trans: Vector,
     dx_trans: Vector,
-    state_count: usize,
     lambda_scale: f64,
     out: *Vector,
 ) void {
     // computeTransformedUpdate ------------------------------------------------------------------------------ |
     // Build the damped transformed-state update for the current eigenvalue scale.                             |
     // --------------------------------------------------------------------------------------------------------|
-    for (0..state_count) |index| {
+    inline for (0..max_state_count) |index| {
         const lambda = lambda_scale * eigenvalues[index];
         out[index] = (lambda_scale * rhs_trans[index] + lambda * dx_trans[index]) / (lambda + 1.0);
     }
 }
 
-fn transformedChange(next: Vector, previous: Vector, state_count: usize) f64 {
+fn transformedChange(next: Vector, previous: Vector) f64 {
     // transformedChange ------------------------------------------------------------------------------------- |
     // Return the largest absolute transformed-state lane change.                                              |
     // --------------------------------------------------------------------------------------------------------|
     var change: f64 = 0.0;
-    for (0..state_count) |index| change = @max(change, @abs(next[index] - previous[index]));
+    inline for (0..max_state_count) |index| change = @max(change, @abs(next[index] - previous[index]));
     return change;
 }
 
-pub fn validateStateSpecs(state_specs: []const StateSpec) Error!void {
-    // validateStateSpecs -------------------------------------------------------------------------------------|
-    // Validate one C/Python OE state vector before the solver mutates the O2 A case.                          |
-    //                                                                                                         |
-    // guard                                                                                                   |
-    //   fixed state count     : 1..2                                                                          |
-    //   covariance lanes      : finite and positive                                                           |
-    //   pressure-state lanes  : carry interval placement, thickness, and pressure-to-altitude profile rows    |
-    //   non-pressure lanes    : carry no pressure-placement side data                                         |
-    //                                                                                                         |
+pub fn validateRetrievalState(retrieval_state: RetrievalState) Error!void {
+    // validateRetrievalState ---------------------------------------------------------------------------------|
+    // Validate the fixed two-lane OE state before the solver mutates the scene.                           |
     // --------------------------------------------------------------------------------------------------------|
-    if (state_specs.len == 0 or state_specs.len > max_state_count) return error.InvalidStateCount;
+    try validateStateScalar(retrieval_state.aerosol_optical_depth);
+    try validateStateScalar(retrieval_state.aerosol_layer_mid_pressure.scalar);
 
-    var seen = [_]bool{false} ** jacobian_states.state_count;
-    for (state_specs) |spec| {
-        const state_index = @intFromEnum(spec.state);
-        if (seen[state_index]) return error.InvalidStateSpec;
-
-        seen[state_index] = true;
-        try validateStateSpec(spec);
+    const placement = retrieval_state.aerosol_layer_mid_pressure.placement;
+    if (!std.math.isFinite(placement.thickness_hpa) or
+        placement.thickness_hpa <= 0.0 or
+        placement.interval_index_1based == 0 or
+        !placement.hasPressureAltitudeProfile())
+    {
+        return error.InvalidRetrievalState;
     }
 }
 
@@ -1065,46 +1070,26 @@ pub fn freePressureProfile(allocator: Allocator, profile: PressureAltitudeProfil
     allocator.free(profile.second);
 }
 
-fn validateStateSpec(spec: StateSpec) Error!void {
-    // validateStateSpec --------------------------------------------------------------------------------------|
-    // Validate scalar values and side-data shape for one retrieval state.                                     |
+fn validateStateScalar(scalar: StateScalar) Error!void {
+    // validateStateScalar ----------------------------------------------------------------------------------- |
+    // Validate scalar values shared by both fixed retrieval lanes.                                            |
     // --------------------------------------------------------------------------------------------------------|
-    if (!std.math.isFinite(spec.initial) or
-        !std.math.isFinite(spec.prior) or
-        !std.math.isFinite(spec.variance) or
-        spec.variance <= 0.0)
+    if (!std.math.isFinite(scalar.initial) or
+        !std.math.isFinite(scalar.prior) or
+        !std.math.isFinite(scalar.variance) or
+        scalar.variance <= 0.0)
     {
-        return error.InvalidStateSpec;
+        return error.InvalidRetrievalState;
     }
 
-    if (std.math.isNan(spec.lower_bound) or std.math.isNan(spec.upper_bound)) return error.InvalidStateSpec;
-    if (spec.lower_bound != no_lower_bound and !std.math.isFinite(spec.lower_bound)) {
-        return error.InvalidStateSpec;
+    if (std.math.isNan(scalar.lower_bound) or std.math.isNan(scalar.upper_bound)) return error.InvalidRetrievalState;
+    if (scalar.lower_bound != no_lower_bound and !std.math.isFinite(scalar.lower_bound)) {
+        return error.InvalidRetrievalState;
     }
-    if (spec.upper_bound != no_upper_bound and !std.math.isFinite(spec.upper_bound)) {
-        return error.InvalidStateSpec;
+    if (scalar.upper_bound != no_upper_bound and !std.math.isFinite(scalar.upper_bound)) {
+        return error.InvalidRetrievalState;
     }
-    if (spec.lower_bound > spec.upper_bound) return error.InvalidStateSpec;
-
-    switch (spec.state) {
-        .aerosol_layer_mid_pressure_hpa => {
-            if (!std.math.isFinite(spec.thickness_hpa) or
-                spec.thickness_hpa <= 0.0 or
-                spec.interval_index_1based == 0 or
-                !spec.pressure_altitude_profile.hasSamples())
-            {
-                return error.InvalidStateSpec;
-            }
-        },
-        .aerosol_optical_depth => {
-            if (spec.thickness_hpa != 0.0 or
-                spec.interval_index_1based != 0 or
-                spec.pressure_altitude_profile.hasSamples())
-            {
-                return error.InvalidStateSpec;
-            }
-        },
-    }
+    if (scalar.lower_bound > scalar.upper_bound) return error.InvalidRetrievalState;
 }
 
 fn initializeFastmodeBatchResult(result: *FastmodeBatchResult) void {
@@ -1210,36 +1195,7 @@ fn endpointSplineSecondDerivatives(
         second[1] = 0.0;
         return;
     }
-    if (count > max_state_count) {
-        return endpointSplineSecondDerivativesDynamic(allocator, x, pressure_hpa, second);
-    }
-
-    var matrix = algebra.zeroMatrix();
-    var rhs = algebra.zeroVector();
-    const width0 = x[1] - x[0];
-    matrix[0][0] = 2.0 * width0;
-    matrix[0][1] = width0;
-    rhs[0] = 0.0;
-
-    for (1..count - 1) |index| {
-        const width_left = x[index] - x[index - 1];
-        const width_right = x[index + 1] - x[index];
-        const slope_left = (@log(pressure_hpa[index]) - @log(pressure_hpa[index - 1])) / width_left;
-        const slope_right = (@log(pressure_hpa[index + 1]) - @log(pressure_hpa[index])) / width_right;
-        matrix[index][index - 1] = width_left;
-        matrix[index][index] = 2.0 * (width_left + width_right);
-        matrix[index][index + 1] = width_right;
-        rhs[index] = 6.0 * (slope_right - slope_left);
-    }
-
-    const last = count - 1;
-    const width_last = x[last] - x[last - 1];
-    matrix[last][last - 1] = width_last;
-    matrix[last][last] = 2.0 * width_last;
-
-    const inverse = try algebra.invertSymmetric(matrix, count);
-    const solved = algebra.matrixVector(inverse, rhs, count);
-    for (0..count) |index| second[index] = solved[index];
+    return endpointSplineSecondDerivativesDynamic(allocator, x, pressure_hpa, second);
 }
 
 fn endpointSplineSecondDerivativesDynamic(
@@ -1252,14 +1208,16 @@ fn endpointSplineSecondDerivativesDynamic(
     // Solve the same log-pressure spline equations for profiles too large for fixed two-state storage.        |
     // --------------------------------------------------------------------------------------------------------|
     const count = x.len;
-    var lower = try allocator.alloc(f64, count);
-    defer allocator.free(lower);
-    var diag = try allocator.alloc(f64, count);
-    defer allocator.free(diag);
-    var upper = try allocator.alloc(f64, count);
-    defer allocator.free(upper);
-    var rhs = try allocator.alloc(f64, count);
-    defer allocator.free(rhs);
+    var stack_allocator = std.heap.stackFallback(pressure_profile_spline_stack_bytes, allocator);
+    const scratch_allocator = stack_allocator.get();
+    var lower = try scratch_allocator.alloc(f64, count);
+    defer scratch_allocator.free(lower);
+    var diag = try scratch_allocator.alloc(f64, count);
+    defer scratch_allocator.free(diag);
+    var upper = try scratch_allocator.alloc(f64, count);
+    defer scratch_allocator.free(upper);
+    var rhs = try scratch_allocator.alloc(f64, count);
+    defer scratch_allocator.free(rhs);
 
     @memset(lower, 0.0);
     @memset(diag, 0.0);

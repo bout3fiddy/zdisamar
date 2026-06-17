@@ -11,8 +11,6 @@ const rows = internal.rtm.rows;
 const solve = internal.rtm.solve;
 const source_levels = internal.optics.source_levels;
 
-const tangent_step: f64 = 1.0e-5;
-
 test "direct surface solve applies scalar formula without retrieval Jacobian lanes" {
     var storage = TestSolveWorkStorage{};
     var work = storage.work();
@@ -25,8 +23,8 @@ test "direct surface solve applies scalar formula without retrieval Jacobian lan
         .view_mu = 0.25,
     };
     const config = controls.SolveConfig{
-        .derivative_mode = .semi_analytical,
-        .derivative_state_mask = jacobian_states.all_states_mask,
+        .derivative_mode = .none,
+        .wants_jacobian = false,
         .controls = .{ .scattering = .none },
     };
     const result = try solve.solveReflectance(
@@ -47,23 +45,19 @@ test "direct surface solve applies scalar formula without retrieval Jacobian lan
 }
 
 test "direct surface solve keeps retrieval Jacobian zero and respects public clamp" {
-    const masked = solve.directSurfaceOnly(
+    const direct = solve.directSurfaceOnly(
         .{ .solar_mu = 1.0, .view_mu = 1.0 },
         0.3,
         0.0,
-        .semi_analytical,
-        jacobian_states.stateMask(.aerosol_optical_depth),
     );
     const clamped = solve.directSurfaceOnly(
         .{ .solar_mu = 1.0, .view_mu = 1.0 },
         3.0,
         0.0,
-        .semi_analytical,
-        jacobian_states.all_states_mask,
     );
 
-    try std.testing.expectEqual(@as(f64, 0.3), masked.reflectance);
-    try std.testing.expectEqual(jacobian_states.zero(), masked.jacobian);
+    try std.testing.expectEqual(@as(f64, 0.3), direct.reflectance);
+    try std.testing.expectEqual(jacobian_states.zero(), direct.jacobian);
     try std.testing.expectEqual(@as(f64, 2.0), clamped.reflectance);
     try std.testing.expectEqual(jacobian_states.zero(), clamped.jacobian);
 }
@@ -272,9 +266,6 @@ test "integrated scattering route propagates aerosol AOD and pressure tangents" 
     var work = storage.work();
     const layers = integratedAerosolLayers();
     const levels = integratedAerosolSourceLevels();
-    const mask =
-        jacobian_states.stateMask(.aerosol_optical_depth) |
-        jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa);
 
     const result = try solve.solveReflectance(
         .{ .solar_mu = 0.58, .view_mu = 0.64 },
@@ -286,7 +277,7 @@ test "integrated scattering route propagates aerosol AOD and pressure tangents" 
         0.5,
         .{
             .derivative_mode = .semi_analytical,
-            .derivative_state_mask = mask,
+            .wants_jacobian = true,
             .controls = .{
                 .scattering = .single,
                 .n_streams = 8,
@@ -303,10 +294,10 @@ test "integrated scattering route propagates aerosol AOD and pressure tangents" 
     try std.testing.expectApproxEqAbs(0.00926416296449234, pressure, 1.0e-15);
 }
 
-test "scattering route propagates AOD tangent and rejects pressure lane" {
+test "non-integrated scattering route rejects Jacobian requests" {
     var storage = TestSolveWorkStorage{};
     var work = storage.work();
-    var layers = [_]layer_depths.LayerOptics{
+    const layers = [_]layer_depths.LayerOptics{
         .{
             .gas_absorption_optical_depth = 0.08,
             .aerosol_optical_depth = 0.02,
@@ -316,61 +307,6 @@ test "scattering route propagates AOD tangent and rejects pressure lane" {
             .single_scatter_albedo = 0.10,
         },
     };
-    jacobian_states.set(&layers[0].optical_depth_jacobian, .aerosol_optical_depth, 1.0);
-    jacobian_states.set(&layers[0].scattering_optical_depth_jacobian, .aerosol_optical_depth, 0.5);
-    jacobian_states.set(&layers[0].single_scatter_albedo_jacobian, .aerosol_optical_depth, 4.0);
-
-    const aod = try solve.solveReflectance(
-        .{ .solar_mu = 0.58, .view_mu = 0.64 },
-        0.3,
-        &layers,
-        &.{},
-        &.{},
-        testPhase(),
-        0.5,
-        .{
-            .derivative_mode = .semi_analytical,
-            .derivative_state_mask = jacobian_states.stateMask(.aerosol_optical_depth),
-            .controls = .{
-                .scattering = .single,
-                .n_streams = 8,
-                .integrate_source_function = false,
-            },
-        },
-        &work,
-    );
-    var plus_layers = layers;
-    var minus_layers = layers;
-    perturbAodLayer(&plus_layers[0], tangent_step);
-    perturbAodLayer(&minus_layers[0], -tangent_step);
-    const plus = try solve.solveReflectance(
-        .{ .solar_mu = 0.58, .view_mu = 0.64 },
-        0.3,
-        &plus_layers,
-        &.{},
-        &.{},
-        testPhase(),
-        0.5,
-        .{ .controls = .{ .scattering = .single, .n_streams = 8, .integrate_source_function = false } },
-        &work,
-    );
-    const minus = try solve.solveReflectance(
-        .{ .solar_mu = 0.58, .view_mu = 0.64 },
-        0.3,
-        &minus_layers,
-        &.{},
-        &.{},
-        testPhase(),
-        0.5,
-        .{ .controls = .{ .scattering = .single, .n_streams = 8, .integrate_source_function = false } },
-        &work,
-    );
-    const expected_aod_tangent = (plus.reflectance - minus.reflectance) / (2.0 * tangent_step);
-    try std.testing.expectApproxEqAbs(
-        expected_aod_tangent,
-        aod.jacobian[jacobian_states.stateIndex(.aerosol_optical_depth)],
-        1.0e-8,
-    );
 
     try std.testing.expectError(
         error.UnsupportedDerivativeMode,
@@ -384,7 +320,7 @@ test "scattering route propagates AOD tangent and rejects pressure lane" {
             0.5,
             .{
                 .derivative_mode = .semi_analytical,
-                .derivative_state_mask = jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa),
+                .wants_jacobian = true,
                 .controls = .{
                     .scattering = .single,
                     .n_streams = 8,
@@ -518,28 +454,6 @@ fn anisotropicPhase() phase_table.PhaseTable {
         .aerosol_phase_max_index = 2,
         .aerosol_asymmetry_factor = 0.0,
     };
-}
-
-fn perturbAodLayer(layer: *layer_depths.LayerOptics, signed_step: f64) void {
-    // perturbAodLayer --------------------------------------------------------------------------------------- |
-    // Apply the non-integrated AOD finite-difference variables to one layer row.                              |
-    // --------------------------------------------------------------------------------------------------------|
-    layer.total_optical_depth = @max(
-        layer.total_optical_depth +
-            signed_step * jacobian_states.get(layer.optical_depth_jacobian, .aerosol_optical_depth),
-        0.0,
-    );
-    layer.total_scattering_optical_depth = @max(
-        layer.total_scattering_optical_depth +
-            signed_step * jacobian_states.get(layer.scattering_optical_depth_jacobian, .aerosol_optical_depth),
-        0.0,
-    );
-    layer.single_scatter_albedo = std.math.clamp(
-        layer.single_scatter_albedo +
-            signed_step * jacobian_states.get(layer.single_scatter_albedo_jacobian, .aerosol_optical_depth),
-        0.0,
-        1.0,
-    );
 }
 
 fn integratedAerosolLayers() [2]layer_depths.LayerOptics {

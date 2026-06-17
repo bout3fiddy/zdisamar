@@ -1,4 +1,4 @@
-zdisamar is an independent implementation of the O2 A radiative-transfer
+zdisamar is an independent implementation of the O2A radiative-transfer
 problem used in DISAMAR-family validation studies. The Fortran DISAMAR project
 is a scientific reference for validation; this repository does not include
 DISAMAR source code.

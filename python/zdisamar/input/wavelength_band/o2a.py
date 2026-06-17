@@ -1,4 +1,4 @@
-"""Typed O2 A wavelength-band input object and JSON conversion."""
+"""Typed wavelength-band input object and JSON conversion."""
 
 import json
 import math
@@ -25,7 +25,7 @@ def _object_dict(data: dict[str, object], key: str) -> dict[str, object]:
 
 @dataclass
 class Scene:
-    """Complete O2 A wavelength-band case passed to the zdisamar RTM."""
+    """Complete wavelength-band scene passed to the zdisamar RTM."""
 
     metadata: dict[str, object]
     plan: dict[str, object]
@@ -72,7 +72,7 @@ class Scene:
 
     @property
     def measurement_wavelengths_nm(self) -> tuple[float, ...]:
-        """Return the nominal measurement axis for the case."""
+        """Return the nominal measurement axis for the scene."""
 
         measured_wavelengths = self.instrument_response.measured_wavelengths_nm
 
@@ -140,7 +140,7 @@ class Scene:
         removed_metadata = {"outputs", "validation"}.intersection(data)
         if removed_metadata:
             joined = ", ".join(sorted(removed_metadata))
-            raise ValueError(f"unsupported O2 A input fields: {joined}")
+            raise ValueError(f"unsupported input fields: {joined}")
 
         return cls(
             metadata=_object_dict(data, "metadata"),
@@ -168,12 +168,12 @@ class Scene:
 
     @classmethod
     def from_json(cls, raw: str | bytes) -> Self:
-        """Read an O2 A scene emitted by the zdisamar model."""
+        """Read a scene emitted by the zdisamar model."""
 
         return cls.from_dict(json.loads(raw))
 
     def to_dict(self) -> dict[str, object]:
-        """Return the Python O2 A case shape, including optimisation controls."""
+        """Return the Python scene shape, including optimisation controls."""
 
         payload = self.to_native_dict()
         payload["optimisation"] = self.optimisation.to_dict()
@@ -181,7 +181,7 @@ class Scene:
         return payload
 
     def to_native_dict(self) -> dict[str, object]:
-        """Return the O2 A scene shape expected by the native zdisamar model."""
+        """Return the scene shape expected by the native zdisamar model."""
 
         return {
             "metadata": self.metadata,
@@ -204,7 +204,7 @@ class Scene:
         }
 
     def to_json_bytes(self) -> bytes:
-        """Encode the Python case deterministically, including optimisation controls."""
+        """Encode the Python scene deterministically, including optimisation controls."""
 
         return json.dumps(json_value(self.to_dict()), sort_keys=True, separators=(",", ":")).encode(
             "utf-8"
@@ -218,7 +218,7 @@ class Scene:
         ).encode("utf-8")
 
     def set_aerosol_profile(self, layers: object) -> None:
-        """Install a case-owned aerosol profile for forward simulations."""
+        """Install a scene-owned aerosol profile for forward simulations."""
 
         profile = coerce_profile_layers(layers)
 
@@ -254,7 +254,7 @@ class Scene:
         self.aerosol.set_profile_layers((layer,))
 
     def with_rtm_optimisation_applied(self) -> Self:
-        """Return the native RTM case after applying enabled optimisation modes."""
+        """Return the native RTM scene after applying enabled optimisation modes."""
 
         resolved = deepcopy(self)
 

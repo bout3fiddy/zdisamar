@@ -30,7 +30,7 @@ const min_hitran_temperature_k = line_physics.min_hitran_temperature_k;
 // Retained weak-line cross-section values for exact setup wavelengths and layer profile nodes.                |
 //                                                                                                             |
 // setup boundary                                                                                              |
-//   O2 A builds a preparation-time line-value grid from the parsed HITRAN rows and the computed layer grid.   |
+//   builds a preparation-time line-value grid from the parsed HITRAN rows and the computed layer grid.   |
 //   Rows are indexed as wavelength-major, then layer-node minor, so later optics code can read a contiguous   |
 //   profile column for each exact wavelength without rebuilding weak-line Voigt terms.                        |
 // ------------------------------------------------------------------------------------------------------------|
@@ -186,7 +186,7 @@ pub fn buildProfileLineValues(
     scene: scene_input.Scene,
 ) !ProfileLineValues {
     // buildProfileLineValues ---------------------------------------------------------------------------------|
-    // Build line values over the case's evenly spaced setup wavelengths.                                      |
+    // Build line values over the scene's evenly spaced setup wavelengths.                                      |
     // --------------------------------------------------------------------------------------------------------|
     const wavelength_count = scene.spectral_grid.sample_count;
     const wavelengths_nm = try allocator.alloc(f64, wavelength_count);
@@ -245,13 +245,15 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
     // row contract                                                                                            |
     //   Output rows stay wavelength-major and preserve the input wavelength order exactly. Dense spectrum     |
     //   prefetch can therefore use its `RadianceWavelengthList` index as the ProfileLineValues index.         |
-    //   `build_layer_values` keeps the O2 A diagnostic layer rows for evidence paths. The public spectrum     |
+    //   `build_layer_values` keeps the diagnostic layer rows for evidence paths. The public spectrum     |
     //   route uses only support-profile total sigma, so root skips preparing unused layer rows.               |
     // --------------------------------------------------------------------------------------------------------|
-    var layers = try atmosphere_layers.build(allocator, scene);
-    defer layers.deinit(allocator);
-    var lines = try line_tables.build(allocator, scene);
-    defer lines.deinit(allocator);
+    var build_arena = std.heap.ArenaAllocator.init(allocator);
+    defer build_arena.deinit();
+    const scratch_allocator = build_arena.allocator();
+
+    const layers = try atmosphere_layers.build(scratch_allocator, scene);
+    const lines = try line_tables.build(scratch_allocator, scene);
 
     const wavelength_count = wavelengths_nm.len;
     const profile_node_count = if (build_layer_values) layers.layer_pressures_hpa.len else 0;
@@ -261,16 +263,14 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
     const support_profile_total_sigma = try allocator.alloc(f64, wavelength_count * support_profile_node_count);
     errdefer allocator.free(support_profile_total_sigma);
 
-    const cutoff_grid = try prepareCutoffGrid(allocator, cutoff_grid_wavelengths_nm);
-    defer cutoff_grid.deinit(allocator);
+    const cutoff_grid = try prepareCutoffGrid(scratch_allocator, cutoff_grid_wavelengths_nm);
     const runtime = RuntimeControls{
         .cutoff_cm1 = lines.cutoff_sim_cm1,
         .line_mixing_factor = lines.line_mixing_factor,
         .cutoff_grid_wavelengths_nm = cutoff_grid.wavelengths_nm,
         .cutoff_grid_wavenumbers_cm1 = cutoff_grid.wavenumbers_cm1,
     };
-    const total_lines = try collectRuntimeLines(allocator, lines.rows, lines.isotopes_sim);
-    defer allocator.free(total_lines);
+    const total_lines = try collectRuntimeLines(scratch_allocator, lines.rows, lines.isotopes_sim);
 
     const strong_sidecars = chooseStrongLineSidecars(lines);
 
@@ -282,13 +282,13 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
     if (build_layer_values) {
         const line_strength_threshold = thresholdStrength(lines.rows, lines.threshold_line_sim);
         active_lines = try collectActiveLines(
-            allocator,
+            scratch_allocator,
             lines.rows,
             lines.isotopes_sim,
             line_strength_threshold,
         );
         weak_states = try prepareLayerWeakLineStates(
-            allocator,
+            scratch_allocator,
             active_lines,
             layers.layer_temperatures_k,
             layers.layer_pressures_hpa,
@@ -296,7 +296,7 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
             cost_timing_active,
         );
         total_weak_states = try prepareLayerWeakLineStates(
-            allocator,
+            scratch_allocator,
             total_lines,
             layers.layer_temperatures_k,
             layers.layer_pressures_hpa,
@@ -304,7 +304,7 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
             cost_timing_active,
         );
         strong_states = try prepareLayerStrongLineStates(
-            allocator,
+            scratch_allocator,
             strong_sidecars.lines,
             strong_sidecars.relaxation_matrix,
             layers.layer_temperatures_k,
@@ -312,14 +312,8 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
             cost_timing_active,
         );
     }
-    defer if (build_layer_values) {
-        allocator.free(strong_states);
-        deinitWeakLineStates(allocator, total_weak_states);
-        deinitWeakLineStates(allocator, weak_states);
-        allocator.free(active_lines);
-    };
 
-    // The canonical temperature derivative is a centered finite difference at T +/- 0.5 K. The public O2 A
+    // The canonical temperature derivative is a centered finite difference at T +/- 0.5 K. The public
     // Jacobian states are surface/aerosol controls, so root spectrum runs do not read d_sigma/dT and skip
     // these two full weak-line state families. Explicit profile-line canonical builders still request the rows
     // directly, and the reuse stamp records the choice so mismatched session caches cannot mix.
@@ -327,16 +321,15 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
     var lower_weak_states: []WeakLinePreparedState = &.{};
     if (build_layer_values and include_temperature_derivatives) {
         upper_weak_states = try prepareLayerWeakLineStates(
-            allocator,
+            scratch_allocator,
             active_lines,
             layers.layer_temperatures_k,
             layers.layer_pressures_hpa,
             0.5,
             cost_timing_active,
         );
-        errdefer deinitWeakLineStates(allocator, upper_weak_states);
         lower_weak_states = try prepareLayerWeakLineStates(
-            allocator,
+            scratch_allocator,
             active_lines,
             layers.layer_temperatures_k,
             layers.layer_pressures_hpa,
@@ -344,25 +337,19 @@ pub fn buildProfileLineValuesForWavelengthsWithCutoffGrid(
             cost_timing_active,
         );
     }
-    defer if (build_layer_values and include_temperature_derivatives) {
-        deinitWeakLineStates(allocator, lower_weak_states);
-        deinitWeakLineStates(allocator, upper_weak_states);
-    };
     const support_total_weak_states = try prepareProfileWeakLineStates(
-        allocator,
+        scratch_allocator,
         total_lines,
         layers.spectroscopy_profile.rows,
         cost_timing_active,
     );
-    defer deinitWeakLineStates(allocator, support_total_weak_states);
     const support_strong_states = try prepareProfileStrongLineStates(
-        allocator,
+        scratch_allocator,
         strong_sidecars.lines,
         strong_sidecars.relaxation_matrix,
         layers.spectroscopy_profile.rows,
         cost_timing_active,
     );
-    defer allocator.free(support_strong_states);
 
     try buildProfileLineValuesByWavelength(
         pool,
@@ -524,7 +511,7 @@ fn buildProfileLineValuesByWavelength(
 
     // instrumentation: trace zone: profile spectroscopy cache build ----------------------------------------- |
     // captures: profile-line cache build wall time and exact-wavelength count                                 |
-    // why: shows setup cost that O2 A compares before forward prefetch starts.                                |
+    // why: shows setup cost that compares before forward prefetch starts.                                |
     const zone = Trace.staticZone(@src(), "profile_spectroscopy_cache.build");
     zone.value(@intCast(wavelengths_nm.len));
     defer zone.end();
@@ -969,17 +956,6 @@ const StrongLineSidecars = struct {
 const CutoffGrid = struct {
     wavelengths_nm: []f64 = &.{},
     wavenumbers_cm1: []f64 = &.{},
-
-    fn deinit(self: *const CutoffGrid, allocator: Allocator) void {
-        // CutoffGrid.deinit --------------------------------------------------------------------------------- |
-        // Release the paired weak-line cutoff grid arrays.                                                    |
-        //                                                                                                     |
-        // ownership                                                                                           |
-        //   Both slices are owned by CutoffGrid and are never borrowed after the parent setup object exits.   |
-        // ----------------------------------------------------------------------------------------------------|
-        allocator.free(self.wavenumbers_cm1);
-        allocator.free(self.wavelengths_nm);
-    }
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -1370,14 +1346,6 @@ fn fillProfileLineStateRows(worker: *ProfileLineStateWorker, start: usize, end: 
     }
 }
 
-fn deinitWeakLineStates(allocator: Allocator, states: []WeakLinePreparedState) void {
-    // deinitWeakLineStates -----------------------------------------------------------------------------------|
-    // Release a prepared weak-line state row set after setup evaluation completes.                            |
-    // --------------------------------------------------------------------------------------------------------|
-    for (states) |*state| state.deinit(allocator);
-    allocator.free(states);
-}
-
 fn emptyRelaxationMatrix() readers.RelaxationMatrixAsset {
     // emptyRelaxationMatrix ----------------------------------------------------------------------------------|
     // Provide an unused, well-formed relaxation-matrix view for weak-only profile-line state workers.         |
@@ -1391,7 +1359,7 @@ fn activeLine(
     line_strength_threshold: f64,
 ) bool {
     // activeLine ---------------------------------------------------------------------------------------------|
-    // Apply the O2 A line-gas isotope and weak-line threshold controls to one parsed HITRAN row.              |
+    // Apply the line-gas isotope and weak-line threshold controls to one parsed HITRAN row.              |
     // --------------------------------------------------------------------------------------------------------|
     if (line.gas_index != 7) return false;
 

@@ -46,7 +46,7 @@ test "IntegrationKernelRef keeps direct inline and side sample contracts" {
     try std.testing.expectApproxEqAbs(0.2, side_ref.weight(side_storage, 0), 0.0);
 }
 
-test "SpectrumSamplingTable summary matches O2 A aggregate sampling evidence shape" {
+test "SpectrumSamplingTable summary matches aggregate sampling evidence shape" {
     const side_offsets = [_]f64{ -0.02, 0.0, 0.02, -0.01, 0.01 };
     const side_weights = [_]f64{ 0.25, 0.5, 0.25, 0.5, 0.5 };
     const rows = [_]sampling_table.SpectrumSamplingRow{
@@ -90,7 +90,7 @@ test "SpectrumSamplingTable summary matches O2 A aggregate sampling evidence sha
     try std.testing.expectEqual(@as(usize, 5), summary.side_sample_count);
     try std.testing.expectEqual(@as(usize, 3), summary.max_kernel_sample_count);
 
-    // Source: canonical O2 A sampling evidence fixtures.
+    // Source: canonical sampling evidence fixtures.
     // Canonical expected values owned by this repository.
     try std.testing.expectEqual(@as(usize, 701), sampling_evidence.row_count);
     try std.testing.expectEqual(@as(usize, 565776), sampling_evidence.kernel_offsets_len);
@@ -98,7 +98,7 @@ test "SpectrumSamplingTable summary matches O2 A aggregate sampling evidence sha
     try std.testing.expectEqual(@as(usize, 3874), sampling_evidence.forward_miss_count);
 }
 
-test "O2 SpectrumSamplingTable builder matches O2 A aggregate and exact-key evidence" {
+test "SpectrumSamplingTable builder matches aggregate and exact-key evidence" {
     var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
         o2a_scene.reference(),
@@ -116,7 +116,7 @@ test "O2 SpectrumSamplingTable builder matches O2 A aggregate and exact-key evid
     const table = owned.view();
     const summary = sampling_table.summarize(table);
 
-    // Source: canonical O2 A sampling evidence fixtures.
+    // Source: canonical sampling evidence fixtures.
     // Canonical expected values owned by this repository.
     try std.testing.expectEqual(@as(usize, 701), summary.row_count);
     try std.testing.expectEqual(@as(usize, 701), summary.radiance_integrated_rows);
@@ -128,7 +128,7 @@ test "O2 SpectrumSamplingTable builder matches O2 A aggregate and exact-key evid
     var list = try radiance_wavelengths.buildRadianceWavelengthList(std.testing.allocator, table);
     defer list.deinit(std.testing.allocator);
 
-    // Source: same O2 A internal dump, sampling_table.forward_misses first/last rows.
+    // Source: same internal dump, sampling_table.forward_misses first/last rows.
     try std.testing.expectEqual(@as(usize, 3874), list.wavelengths.len);
     try std.testing.expectEqual(@as(u64, 4649845583965292708), list.wavelengths[0].key);
     try std.testing.expectApproxEqAbs(754.240334835155, list.wavelengths[0].wavelength_nm, 0.0);
@@ -136,7 +136,7 @@ test "O2 SpectrumSamplingTable builder matches O2 A aggregate and exact-key evid
     try std.testing.expectApproxEqAbs(776.8246811031544, list.wavelengths[list.wavelengths.len - 1].wavelength_nm, 0.0);
 }
 
-test "O2 SpectrumSamplingTable consumes explicit sparse measured wavelengths" {
+test "SpectrumSamplingTable consumes explicit sparse measured wavelengths" {
     const explicit_wavelengths = [_]f64{ 758.0, 758.06, 758.21, 758.27 };
     var scene = o2a_scene.reference();
     scene.spectral_grid = .{
@@ -168,7 +168,7 @@ test "O2 SpectrumSamplingTable consumes explicit sparse measured wavelengths" {
     }
 }
 
-test "O2 SpectrumSamplingTable parallel fill keeps resolved samples deterministic" {
+test "SpectrumSamplingTable parallel fill keeps resolved samples deterministic" {
     var tables = try internal.setup.run_tables.buildRunTables(
         std.testing.allocator,
         o2a_scene.reference(),
@@ -282,7 +282,7 @@ fn expectResolvedKernelEqual(
 }
 
 // SamplingEvidence ------------------------------------------------------------------------------------------ |
-// Aggregate canonical sampling-table evidence from the O2 A internal dump.                                    |
+// Aggregate canonical sampling-table evidence from the internal dump.                                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 32 B (0.031 KiB), align: 8 B                                                                          |

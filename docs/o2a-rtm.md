@@ -1,4 +1,4 @@
-# O2 A RTM
+# O2A RTM
 
 The Python package keeps wavelength-band scenes separate from radiative-transfer
 execution:
@@ -22,11 +22,11 @@ with rtm.SessionCache(scene) as cache:
 
 The public Python runtime surface is:
 
-- `zdisamar.wavelength_bands.o2a` for O2 A scene data classes and reference-scene
+- `zdisamar.wavelength_bands.o2a` for scene data classes and reference-scene
   construction,
 - `zdisamar.rtm` for radiance, reflectance, atmospheric-budget, instrument
   response, and collision-induced-absorption execution helpers,
-- `zdisamar.inverse_method.optimal_estimation` for inverse-method data classes
+- `zdisamar.optimal_estimation` for inverse-method data classes
   and the Rodgers-style optimal-estimation implementation.
 
 The Python package loads the Zig-built binding and reference data from packaged

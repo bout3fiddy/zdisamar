@@ -13,7 +13,7 @@ const allowed_channel_mask = channel_mask_radiance | channel_mask_irradiance;
 const integration_mode_disamar_hr_grid: u32 = 2;
 
 // instrument_response.zig ------------------------------------------------------------------------------------|
-// Public instrument-response support rows for the explicit O2 A route.                                        |
+// Public instrument-response support rows for the explicit route.                                        |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   The builder projects spectrum sampling kernels into the fixed Python C ABI row order. It owns no C        |

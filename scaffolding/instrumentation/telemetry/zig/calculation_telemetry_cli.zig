@@ -17,10 +17,10 @@ const default_sample_count: u32 = 21;
 const default_high_resolution_step_nm: f64 = 0.1;
 
 // instrumentation: calculation telemetry harness
-// captures: configured O2 A run and row counts
+// captures: configured run and row counts
 // why: make expression data reproducible.
 // Configuration remains CLI-owned. The forward model only sees the resolved
-// typed O2 A input and the compile-time telemetry facade.
+// typed input and the compile-time telemetry facade.
 const Config = struct {
     output_dir: []const u8 = default_output_dir,
     scene_id: ?[]const u8 = null,

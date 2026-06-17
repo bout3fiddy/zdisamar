@@ -9,7 +9,7 @@
 # ]
 # ///
 
-"""Validate retained O2 A fast-mode spectra outputs."""
+"""Validate retained fast-mode spectra outputs."""
 
 import copy
 import sys
@@ -420,7 +420,8 @@ def write_metrics(metrics: list[dict[str, Any]], output_path: Path) -> None:
             "method": "case.optimisation.fastmode.enabled = True",
             "overrides": fast_mode_overrides(),
             "note": (
-                "Fast mode preserves each case's physical scene and output wavelength grid, "
+                "Fast mode preserves each scene's physical configuration and output "
+                "wavelength grid, "
                 "then applies validated radiative-transfer and adaptive-reference-grid "
                 "performance overrides."
             ),

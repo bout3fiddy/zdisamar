@@ -9,8 +9,7 @@ const radiance_wavelengths = internal.spectrum.radiance_wavelengths;
 const sampling_table = internal.spectrum.sampling_table;
 const solve = internal.rtm.solve;
 
-test "scaleReflectanceToRadiance applies solar radiance scale and active Jacobian lanes" {
-    const mask = jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa);
+test "scaleReflectanceToRadiance applies solar radiance scale and fixed Jacobian lanes" {
     const reflectance = solve.ReflectanceResult{
         .reflectance = 0.42,
         .jacobian = .{ 0.1, 0.2 },
@@ -21,7 +20,7 @@ test "scaleReflectanceToRadiance applies solar radiance scale and active Jacobia
     const actual = radiance_results.scaleReflectanceToRadiance(
         .{
             .derivative_mode = .semi_analytical,
-            .derivative_state_mask = mask,
+            .wants_jacobian = true,
         },
         reflectance,
         solar_cosine,
@@ -30,7 +29,7 @@ test "scaleReflectanceToRadiance applies solar radiance scale and active Jacobia
 
     const scale = solar_cosine * solar_irradiance / std.math.pi;
     try std.testing.expectApproxEqAbs(0.42 * scale, actual.radiance, 1.0e-15);
-    try std.testing.expectApproxEqAbs(0.0, actual.jacobian[0], 0.0);
+    try std.testing.expectApproxEqAbs(0.1 * scale, actual.jacobian[0], 1.0e-15);
     try std.testing.expectApproxEqAbs(0.2 * scale, actual.jacobian[1], 1.0e-15);
 }
 
@@ -38,7 +37,7 @@ test "scaleReflectanceToRadiance zeros Jacobian when derivative mode is off" {
     const actual = radiance_results.scaleReflectanceToRadiance(
         .{
             .derivative_mode = .none,
-            .derivative_state_mask = jacobian_states.all_states_mask,
+            .wants_jacobian = true,
         },
         .{
             .reflectance = 0.25,
@@ -59,7 +58,7 @@ test "integratePrefetchedRadianceAtNominal returns direct prefetched row" {
     const actual = try radiance_results.integratePrefetchedRadianceAtNominal(
         .{
             .derivative_mode = .semi_analytical,
-            .derivative_state_mask = jacobian_states.all_states_mask,
+            .wants_jacobian = true,
         },
         .{ .radiance = radiance[0..], .jacobian = jacobian[0..] },
         .{ .start = 0 },
@@ -73,7 +72,7 @@ test "integratePrefetchedRadianceAtNominal returns direct prefetched row" {
     try std.testing.expectApproxEqAbs(0.5, actual.jacobian[1], 0.0);
 }
 
-test "integratePrefetchedRadianceAtNominal weights radiance and active Jacobian lanes" {
+test "integratePrefetchedRadianceAtNominal weights radiance and fixed Jacobian lanes" {
     var radiance = [_]f64{ 10.0, 20.0, 40.0 };
     var jacobian = [_]jacobian_states.Vector{ .{ 1.0, 100.0 }, .{ 2.0, 200.0 }, .{ 4.0, 400.0 } };
     const sample_indices = [_]u32{ 2, 0, 1 };
@@ -84,12 +83,10 @@ test "integratePrefetchedRadianceAtNominal weights radiance and active Jacobian 
         .sample_count = 3,
         .encoding = .side_samples,
     };
-    const mask = jacobian_states.stateMask(.aerosol_layer_mid_pressure_hpa);
-
     const actual = try radiance_results.integratePrefetchedRadianceAtNominal(
         .{
             .derivative_mode = .semi_analytical,
-            .derivative_state_mask = mask,
+            .wants_jacobian = true,
         },
         .{ .radiance = radiance[0..], .jacobian = jacobian[0..] },
         .{ .start = 0 },
@@ -102,7 +99,7 @@ test "integratePrefetchedRadianceAtNominal weights radiance and active Jacobian 
     );
 
     try std.testing.expectApproxEqAbs(20.0, actual.radiance, 0.0);
-    try std.testing.expectApproxEqAbs(0.0, actual.jacobian[0], 0.0);
+    try std.testing.expectApproxEqAbs(2.0, actual.jacobian[0], 0.0);
     try std.testing.expectApproxEqAbs(200.0, actual.jacobian[1], 0.0);
 }
 
@@ -119,7 +116,7 @@ test "integratePrefetchedRadianceAtNominal omits Jacobian when derivative mode i
     const actual = try radiance_results.integratePrefetchedRadianceAtNominal(
         controls.SolveConfig{
             .derivative_mode = .none,
-            .derivative_state_mask = jacobian_states.all_states_mask,
+            .wants_jacobian = true,
         },
         .{ .radiance = radiance[0..] },
         .{ .start = 0 },
@@ -165,7 +162,7 @@ test "integratePrefetchedRadianceAtNominal rejects missing Jacobian storage when
         radiance_results.integratePrefetchedRadianceAtNominal(
             .{
                 .derivative_mode = .semi_analytical,
-                .derivative_state_mask = jacobian_states.all_states_mask,
+                .wants_jacobian = true,
             },
             .{ .radiance = radiance[0..] },
             radiance_wavelengths.RadianceSampleIndexRef{ .start = 0 },

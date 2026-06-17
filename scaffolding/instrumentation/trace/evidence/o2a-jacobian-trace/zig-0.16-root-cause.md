@@ -1,7 +1,7 @@
 # Zig 0.16 Cached Jacobian Boundary
 
 This note captures the retained evidence for the Zig 0.16 migration draft. It
-uses the benchmark-shaped O2 A Jacobian case, not the heavier default retained
+uses the benchmark-shaped Jacobian case, not the heavier default retained
 trace case, because the fast canary regression is in the reused
 session/Jacobian boundary.
 

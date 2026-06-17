@@ -127,7 +127,7 @@ pub const LayerOptics = struct {
 // [ 520..1031] log_complex_vmr_fraction : [64]f64                                                             |
 // [1032..1543] second                   : [64]f64                                                             |
 //                                                                                                             |
-//   vertical setup profile. The O2 A diagnostic cross-section rows prove this cache is active for the O2 A    |
+//   vertical setup profile. The O2A diagnostic cross-section rows prove this cache is active for the         |
 //   reference scene.                                                                                          |
 pub const CollisionPairProfile = struct {
     node_count: usize = 0,
@@ -563,7 +563,6 @@ pub fn reduceLayerOpticsFromSupportRows(
 
 pub fn fillLayerAerosolJacobians(
     aerosol: aerosol_tables.AerosolLayerTable,
-    state_mask: jacobian_states.StateMask,
     layers: []LayerOptics,
 ) void {
     // fillLayerAerosolJacobians ----------------------------------------------------------------------------- |
@@ -585,7 +584,6 @@ pub fn fillLayerAerosolJacobians(
         layer.aerosol_phase_weight_jacobian = jacobian_states.zero();
     }
 
-    if (!jacobian_states.includes(state_mask, .aerosol_optical_depth)) return;
     if (aerosol.profile.len != 0) return;
     if (aerosol.optical_depth <= 0.0) return;
 

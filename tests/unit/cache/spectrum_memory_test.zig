@@ -47,18 +47,22 @@ test "SpectrumMemory rejects active prefixes beyond retained capacity" {
     try std.testing.expectError(error.ShapeMismatch, memory.table(1, 2));
 }
 
-test "SpectrumMemory publishes sampling table stamp when taking ownership" {
+test "SpectrumMemory publishes sampling table stamp when rebuilding from slices" {
     var memory = spectrum_memory.SpectrumMemory{};
     defer memory.deinit(std.testing.allocator);
 
     const allocator = std.testing.allocator;
-    var owned = sampling_table.OwnedSpectrumSamplingTable{
-        .rows = try allocator.alloc(sampling_table.SpectrumSamplingRow, 1),
-        .kernel_offsets_nm = try allocator.alloc(f64, 0),
-        .kernel_weights = try allocator.alloc(f64, 0),
+    const rows = try allocator.alloc(sampling_table.SpectrumSamplingRow, 1);
+    const kernel_offsets_nm = allocator.alloc(f64, 0) catch |err| {
+        allocator.free(rows);
+        return err;
     };
-    errdefer owned.deinit(allocator);
-    owned.rows[0] = .{
+    const kernel_weights = allocator.alloc(f64, 0) catch |err| {
+        allocator.free(rows);
+        allocator.free(kernel_offsets_nm);
+        return err;
+    };
+    rows[0] = .{
         .nominal_wavelength_nm = 760.0,
         .radiance_wavelength_nm = 760.0,
         .irradiance_wavelength_nm = 760.0,
@@ -67,8 +71,7 @@ test "SpectrumMemory publishes sampling table stamp when taking ownership" {
     };
 
     const stamp = ReuseStamp{ .value = 0xabc };
-    memory.takeTable(allocator, &owned, stamp);
-    try std.testing.expectEqual(@as(usize, 0), owned.rows.len);
+    memory.rebuildTable(allocator, rows, kernel_offsets_nm, kernel_weights, stamp);
     try std.testing.expect(memory.hasTable(stamp));
     try std.testing.expect(!memory.hasTable(.{ .value = 0xdef }));
 }

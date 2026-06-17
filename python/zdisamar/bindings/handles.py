@@ -32,9 +32,10 @@ from .structures import (
     COptimalEstimationBatchResult,
     COptimalEstimationControls,
     COptimalEstimationFastmodeBatchResult,
+    COptimalEstimationPressureSpec,
     COptimalEstimationRequest,
     COptimalEstimationResult,
-    COptimalEstimationStateSpec,
+    COptimalEstimationScalarSpec,
     CSpectrum,
     O2LineContributionsRaw,
     OxygenCollisionInducedAbsorptionDiagnosticsRaw,
@@ -43,6 +44,7 @@ from .structures import (
 _MAX_OPTIMAL_ESTIMATION_ITERATIONS = 1000
 _MAX_UINT32 = 2**32 - 1
 _NATIVE_PRESSURE_STATE = "aerosol_layer_mid_pressure_hpa"
+_OPTIMAL_ESTIMATION_STATE_NAMES = ("aerosol_optical_depth", _NATIVE_PRESSURE_STATE)
 _BATCH_RUN_STATUS_NAMES = ("pending", "ok", "failed")
 
 
@@ -68,20 +70,6 @@ def channel_mask(channels: tuple[str, ...]) -> int:
         raise ValueError("channels must not be empty")
 
     return mask
-
-
-def jacobian_state_ids(state_names: tuple[str, ...]):
-    """Translate retrieval names into model Jacobian selectors."""
-
-    ids = []
-
-    for state_name in state_names:
-        try:
-            ids.append(JACOBIAN_STATE_NAMES.index(state_name))
-        except ValueError as exc:
-            raise ValueError(f"unsupported Jacobian state: {state_name}") from exc
-
-    return (ctypes.c_uint8 * len(ids))(*ids)
 
 
 def batch_run_status(value: int) -> str:
@@ -148,17 +136,17 @@ class RtmHandle:
 
     @property
     def input(self) -> Scene | None:
-        """Return the wavelength-band case loaded into this handle."""
+        """Return the wavelength-band scene loaded into this handle."""
 
         return None if self._scene is None else copy.deepcopy(self._scene)
 
     def default_scene(self) -> Scene:
-        """Return the packaged O2 A reference case."""
+        """Return the packaged reference scene."""
 
         return default_o2a_scene()
 
     def load_scene(self, scene: Scene, *, copy_scene: bool = True) -> None:
-        """Load one O2 A wavelength-band case into the RTM handle."""
+        """Load one wavelength-band scene into the RTM handle."""
 
         rtm_scene = scene.with_rtm_optimisation_applied()
         resolved = rtm_scene.with_resolved_asset_resolver(reference_data.resolve_asset_path)
@@ -176,11 +164,11 @@ class RtmHandle:
         self._solar_mu0 = rtm_scene.geometry.solar_mu0
 
     def loaded_scene_matches(self, scene: Scene) -> bool:
-        """Return whether the native handle already owns this prepared case.
+        """Return whether the native handle already owns this prepared scene.
 
         The fingerprint uses the resolved deterministic payload passed to Zig.
         That lets session users avoid a duplicate prepare without retaining a
-        Python case copy solely for invalidation.
+        Python scene copy solely for invalidation.
         """
 
         if self._scene_fingerprint is None:
@@ -199,51 +187,26 @@ class RtmHandle:
     def warm_optimal_estimation_cache(self, state_names: tuple[str, ...]) -> None:
         """Build reusable RTM work arrays for the OE Jacobian route."""
 
-        state_ids = jacobian_state_ids(state_names)
-        self._check(
-            self._lib.zds_warm_o2a_optimal_estimation(
-                self._ctx,
-                state_ids,
-                len(state_ids),
+        if tuple(state_names) != _OPTIMAL_ESTIMATION_STATE_NAMES:
+            raise ValueError(
+                "optimal-estimation cache warming requires aerosol_optical_depth "
+                "and aerosol_layer_mid_pressure_hpa in that order"
             )
-        )
+
+        self._check(self._lib.zds_warm_o2a_optimal_estimation(self._ctx))
 
     def spectrum(
         self,
         *,
         jacobian: bool = False,
-        jacobian_state_names: tuple[str, ...] | None = None,
         include_scene: bool = False,
     ) -> Spectrum:
-        """Run the loaded wavelength-band case and return copied spectral arrays."""
+        """Run the loaded wavelength-band scene and return copied spectral arrays."""
 
         raw = CSpectrum()
 
-        if jacobian_state_names is not None and not jacobian:
-            raise ValueError("jacobian_state_names requires jacobian=True")
-
         if jacobian and self._loaded_has_multi_layer_aerosol_profile:
             raise ValueError("multi-layer aerosol profile Jacobians are not supported")
-
-        if jacobian_state_names is not None:
-            if len(jacobian_state_names) == 0:
-                raise ValueError("jacobian_state_names must not be empty")
-
-            state_ids = jacobian_state_ids(jacobian_state_names)
-            self._check(
-                self._lib.zds_run_spectrum_jacobian_for_states(
-                    self._ctx,
-                    ctypes.byref(raw),
-                    state_ids,
-                    len(state_ids),
-                )
-            )
-
-            return self._copied_spectrum(
-                raw,
-                jacobian_state_names=jacobian_state_names,
-                include_scene=include_scene,
-            )
 
         runner = self._lib.zds_run_spectrum_jacobian if jacobian else self._lib.zds_run_spectrum
         self._check(runner(self._ctx, ctypes.byref(raw)))
@@ -267,7 +230,7 @@ class RtmHandle:
         return AtmosphericBudget(self._copied_rows(raw, self._lib.zds_atmospheric_budget_free))
 
     def o2_line_contributions(self, wavelengths_nm, max_rows: int = 50_000) -> O2LineContributions:
-        """Return copied line-by-line O2 evidence rows."""
+        """Return copied line-by-line evidence rows."""
 
         wavelengths = contiguous_wavelengths(wavelengths_nm)
 
@@ -339,7 +302,7 @@ class RtmHandle:
         )
 
     def optimal_estimation(self, *, measurement, state_vector, controls):
-        """Run native O2 A optimal estimation for the loaded case."""
+        """Run native optimal estimation for the loaded scene."""
 
         return self._run_optimal_estimation(
             "zds_run_o2a_optimal_estimation",
@@ -349,7 +312,7 @@ class RtmHandle:
         )
 
     def optimal_estimation_correction(self, *, measurement, state_vector, controls):
-        """Run one native OE correction for the loaded prepared O2 A case."""
+        """Run one native OE correction for the loaded prepared scene."""
 
         return self._run_optimal_estimation(
             "zds_run_o2a_optimal_estimation_correction",
@@ -368,7 +331,7 @@ class RtmHandle:
         controls,
         batch_workers=1,
     ):
-        """Run many native O2 A retrievals against one loaded case and measurement."""
+        """Run many native retrievals against one loaded scene and measurement."""
 
         request, buffers = self._optimal_estimation_batch_request(
             measurement=measurement,
@@ -491,7 +454,15 @@ class RtmHandle:
         )
 
         state_buffers = []
-        state_specs = []
+        scalar_specs = []
+        pressure_interval_index_1based = 0
+        pressure_thickness_hpa = 0.0
+        pressure_profile_altitude = None
+        pressure_profile_pressure = None
+        pressure_profile_count = 0
+        parameters = tuple(state_vector.parameters)
+        parameter_names = tuple(parameter.name for parameter in parameters)
+
         raw_max_iterations = controls.max_iterations
 
         if not isinstance(raw_max_iterations, Integral) or isinstance(raw_max_iterations, bool):
@@ -505,7 +476,7 @@ class RtmHandle:
                 f"1 and {_MAX_OPTIMAL_ESTIMATION_ITERATIONS}"
             )
 
-        for parameter in state_vector.parameters:
+        for parameter in parameters:
             parameter_name = parameter.name
             state_name = getattr(parameter, "jacobian_name", parameter_name)
 
@@ -523,10 +494,8 @@ class RtmHandle:
                     "native optimal estimation does not support custom jacobian_scale transforms"
                 )
 
-            try:
-                state_id = JACOBIAN_STATE_NAMES.index(state_name)
-            except ValueError as exc:
-                raise ValueError(f"unsupported optimal-estimation state: {state_name}") from exc
+            if state_name not in _OPTIMAL_ESTIMATION_STATE_NAMES:
+                raise ValueError(f"unsupported optimal-estimation state: {state_name}")
 
             profile = getattr(parameter, "pressure_altitude_profile", None)
             profile_altitude = None
@@ -562,35 +531,45 @@ class RtmHandle:
                     "optimal-estimation state prior_uncertainty values must be finite and positive"
                 )
 
-            state_specs.append(
-                COptimalEstimationStateSpec(
-                    state_id=state_id,
+            scalar_specs.append(
+                COptimalEstimationScalarSpec(
                     has_lower=0 if lower is None else 1,
                     has_upper=0 if upper is None else 1,
-                    interval_index_1based=interval_index_1based,
                     initial=float(parameter.initial),
                     prior=float(parameter.prior),
                     variance=uncertainty * uncertainty,
                     lower=0.0 if lower is None else float(lower),
                     upper=0.0 if upper is None else float(upper),
-                    thickness_hpa=float(getattr(parameter, "thickness_hpa", 0.0)),
-                    pressure_profile_count=profile_count,
-                    pressure_profile_altitude_km=profile_altitude,
-                    pressure_profile_pressure_hpa=profile_pressure,
                 )
             )
 
-        if not state_specs:
-            raise ValueError("state vector must contain at least one parameter")
+            if state_name == _NATIVE_PRESSURE_STATE:
+                pressure_interval_index_1based = interval_index_1based
+                pressure_thickness_hpa = float(getattr(parameter, "thickness_hpa", 0.0))
+                pressure_profile_altitude = profile_altitude
+                pressure_profile_pressure = profile_pressure
+                pressure_profile_count = profile_count
 
-        state_spec_array = (COptimalEstimationStateSpec * len(state_specs))(*state_specs)
+        if parameter_names != _OPTIMAL_ESTIMATION_STATE_NAMES:
+            raise ValueError(
+                "state vector must contain aerosol_optical_depth and "
+                "aerosol_layer_mid_pressure_hpa in that order"
+            )
+
         request = COptimalEstimationRequest(
             sample_count=len(wavelength),
             wavelength_nm=wavelength,
             reflectance=reflectance,
             variance=measurement_covariance,
-            state_count=len(state_specs),
-            states=state_spec_array,
+            aerosol_optical_depth=scalar_specs[0],
+            aerosol_layer_pressure=COptimalEstimationPressureSpec(
+                scalar=scalar_specs[1],
+                interval_index_1based=pressure_interval_index_1based,
+                thickness_hpa=pressure_thickness_hpa,
+                pressure_profile_count=pressure_profile_count,
+                pressure_profile_altitude_km=pressure_profile_altitude,
+                pressure_profile_pressure_hpa=pressure_profile_pressure,
+            ),
             controls=COptimalEstimationControls(
                 max_iterations=max_iterations,
                 state_vector_convergence_threshold=float(
@@ -603,7 +582,6 @@ class RtmHandle:
             wavelength,
             reflectance,
             measurement_covariance,
-            state_spec_array,
             *state_buffers,
         )
 
@@ -625,7 +603,7 @@ class RtmHandle:
             state_vector=state_vector,
             controls=controls,
         )
-        state_count = len(state_vector.parameters)
+        state_count = len(_OPTIMAL_ESTIMATION_STATE_NAMES)
         initial_values, run_count = flattened_state_rows(
             initial_states,
             state_count,
@@ -655,8 +633,8 @@ class RtmHandle:
             wavelength_nm=template_request.wavelength_nm,
             reflectance=template_request.reflectance,
             variance=template_request.variance,
-            state_count=template_request.state_count,
-            state_template=template_request.states,
+            aerosol_optical_depth=template_request.aerosol_optical_depth,
+            aerosol_layer_pressure=template_request.aerosol_layer_pressure,
             run_count=run_count,
             initial=initial,
             prior=prior,
@@ -682,7 +660,6 @@ class RtmHandle:
         self,
         raw: CSpectrum,
         *,
-        jacobian_state_names: tuple[str, ...] | None = None,
         include_scene: bool = True,
     ) -> Spectrum:
 
@@ -692,7 +669,7 @@ class RtmHandle:
             radiance = self._copied_double_array(raw.radiance, length)
             irradiance = self._copied_double_array(raw.irradiance, length)
             reflectance = self._copied_double_array(raw.reflectance, length)
-            state_names = self._jacobian_names(raw, jacobian_state_names)
+            state_names = self._jacobian_names(raw)
             radiance_jacobian = None
 
             if raw.jacobian and raw.jacobian_state_count != 0:
@@ -731,20 +708,10 @@ class RtmHandle:
 
         return array("d", (float(pointer[index]) for index in range(count)))
 
-    def _jacobian_names(
-        self,
-        raw: CSpectrum,
-        requested: tuple[str, ...] | None,
-    ) -> tuple[str, ...]:
+    def _jacobian_names(self, raw: CSpectrum) -> tuple[str, ...]:
 
         if raw.jacobian_state_count == 0:
             return ()
-
-        if requested is not None:
-            if len(requested) != raw.jacobian_state_count:
-                raise RuntimeError("spectrum Jacobian state names do not match model output")
-
-            return requested
 
         return JACOBIAN_STATE_NAMES[0 : raw.jacobian_state_count]
 

@@ -226,7 +226,7 @@ pub const SpectrumSamplingTable = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // OwnedSpectrumSamplingTable -------------------------------------------------------------------------------- |
-// Owned sampling rows and side-array kernels returned by the O2 A sampling builder.                           |
+// Owned sampling rows and side-array kernels returned by the sampling builder.                           |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 48 B (0.047 KiB), align: 8 B                                                                          |
@@ -562,7 +562,7 @@ pub fn buildSpectrumSamplingTable(
     lines: line_tables.LineTable,
 ) !OwnedSpectrumSamplingTable {
     // buildSpectrumSamplingTable --------------------------------------------------------------------------   |
-    // Build the O2 A spectrum sampling plan from explicit setup tables.                                       |
+    // Build the spectrum sampling plan from explicit setup tables.                                       |
     //                                                                                                         |
     //   This module owns the sampling, integration-kernel, and adaptive-interval rows that feed spectrum      |
     //   transport.                                                                                            |
@@ -627,7 +627,7 @@ fn buildSpectrumSamplingTableWithNominals(
     errdefer allocator.free(rows);
 
     var kernel_storage_builder = KernelStorageBuilder.init(row_count * 2);
-    defer kernel_storage_builder.deinit(allocator);
+    errdefer kernel_storage_builder.deinit(allocator);
 
     try fillSamplingRows(
         allocator,
@@ -969,7 +969,7 @@ fn buildAdaptiveIntervalPlan(
     // buildAdaptiveIntervalPlan ----------------------------------------------------------------------------- |
     // Partition the expanded spectral support around strong O2 line centers and assign Gauss orders.          |
     //                                                                                                         |
-    //   Builds the adaptive interval plan for the DISAMAR reference case.                                     |
+    //   Builds the adaptive interval plan for the DISAMAR reference scene.                                     |
     // --------------------------------------------------------------------------------------------------------|
     const support_window = adaptiveKernelSupportWindow(grid, instrument, grid.start_nm);
     const fwhm_nm = @max(instrument.line_fwhm_nm, safe_fwhm_floor_nm);
