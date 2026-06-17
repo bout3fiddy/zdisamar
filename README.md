@@ -268,7 +268,7 @@ to the RTM, and pass it to optimal estimation when you want a retrieval.
 
 ```python
 from zdisamar import rtm
-from zdisamar.inverse_method import optimal_estimation as oe
+from zdisamar import optimal_estimation as oe
 from zdisamar.rtm import SessionCache
 from zdisamar.wavelength_bands import o2a
 ```
@@ -296,7 +296,6 @@ spectrum.plot.reflectance()
 jacobian_spectrum = rtm.spectrum(
     case,
     jacobian=True,
-    jacobian_state_names=("aerosol_optical_depth",),
 )
 jacobian_spectrum.plot.jacobian("aerosol_optical_depth")
 ```

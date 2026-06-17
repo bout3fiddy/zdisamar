@@ -63,10 +63,7 @@ def stats(values: list[float]) -> dict[str, float]:
     }
 
 
-def probe_rtm_calls(
-    probe_case: o2a.Scene,
-    jacobian_names: tuple[str, ...],
-) -> dict[str, Any]:
+def probe_rtm_calls(probe_case: o2a.Scene) -> dict[str, Any]:
 
     # Cold no-session forwards: a warm SessionCache fully memoizes the forward
     # result, so repeated identical calls would measure cache hits, not RTM
@@ -78,11 +75,7 @@ def probe_rtm_calls(
 
     def radiance_reflectance_and_jacobian() -> None:
 
-        spectrum = rtm.spectrum(
-            probe_case,
-            jacobian=True,
-            jacobian_state_names=jacobian_names,
-        )
+        spectrum = rtm.spectrum(probe_case, jacobian=True)
         _ = list(spectrum.reflectance)
 
     rtm_only_s = [time_call(radiance_reflectance_only) for _ in range(PROBE_RUNS)]
@@ -147,7 +140,7 @@ def main() -> int:
         _ = result.final_evaluation
         lazy_final_evaluation_s = time.perf_counter() - lazy_final_start
 
-        probe = probe_rtm_calls(probe_case, state_vector.jacobian_names)
+        probe = probe_rtm_calls(probe_case)
     finally:
         cache.close()
 
