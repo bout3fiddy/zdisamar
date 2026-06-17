@@ -7,6 +7,11 @@ test "fixed retrieval state rejects invalid scalar and pressure placement" {
     const altitude_km = [_]f64{ 0.0, 1.0 };
     const pressure_hpa = [_]f64{ 900.0, 800.0 };
     const second = [_]f64{ 0.0, 0.0 };
+    const pressure_altitude_profile = retrieval.PressureAltitudeProfile{
+        .altitude_km = altitude_km[0..],
+        .pressure_hpa = pressure_hpa[0..],
+        .second = second[0..],
+    };
 
     const invalid_aod: retrieval.RetrievalState = .{
         .aerosol_optical_depth = .{
@@ -27,11 +32,7 @@ test "fixed retrieval state rejects invalid scalar and pressure placement" {
             .placement = .{
                 .thickness_hpa = 10.0,
                 .interval_index_1based = 1,
-                .pressure_altitude_profile = .{
-                    .altitude_km = altitude_km[0..],
-                    .pressure_hpa = pressure_hpa[0..],
-                    .second = second[0..],
-                },
+                .pressure_altitude_profile = &pressure_altitude_profile,
             },
         },
     };
@@ -56,11 +57,7 @@ test "fixed retrieval state rejects invalid scalar and pressure placement" {
             .placement = .{
                 .thickness_hpa = std.math.nan(f64),
                 .interval_index_1based = 1,
-                .pressure_altitude_profile = .{
-                    .altitude_km = altitude_km[0..],
-                    .pressure_hpa = pressure_hpa[0..],
-                    .second = second[0..],
-                },
+                .pressure_altitude_profile = &pressure_altitude_profile,
             },
         },
     };

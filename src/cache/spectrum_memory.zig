@@ -73,23 +73,24 @@ pub const SpectrumMemory = struct {
         _ = try memory.ensureSliceCapacity(f64, allocator, &self.kernel_weights, side_sample_count);
     }
 
-    pub fn takeTable(
+    pub fn rebuildTable(
         self: *SpectrumMemory,
         allocator: Allocator,
-        owned_table: *sampling_table.OwnedSpectrumSamplingTable,
+        new_rows: []sampling_table.SpectrumSamplingRow,
+        new_kernel_offsets_nm: []f64,
+        new_kernel_weights: []f64,
         stamp: hashing.ReuseStamp,
     ) void {
-        // SpectrumMemory.takeTable ---------------------------------------------------------------------------|
-        // Move an owned sampling table into retained session memory without copying the row or side arrays.   |
+        // SpectrumMemory.rebuildTable ------------------------------------------------------------------------|
+        // Replace retained table storage with freshly built row and side-array slices.                        |
         // ----------------------------------------------------------------------------------------------------|
         allocator.free(self.rows);
         allocator.free(self.kernel_offsets_nm);
         allocator.free(self.kernel_weights);
-        self.rows = owned_table.rows;
-        self.kernel_offsets_nm = owned_table.kernel_offsets_nm;
-        self.kernel_weights = owned_table.kernel_weights;
+        self.rows = new_rows;
+        self.kernel_offsets_nm = new_kernel_offsets_nm;
+        self.kernel_weights = new_kernel_weights;
         self.table_stamp = stamp;
-        owned_table.* = .{};
     }
 
     pub fn hasTable(self: SpectrumMemory, stamp: hashing.ReuseStamp) bool {

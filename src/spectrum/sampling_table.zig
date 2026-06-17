@@ -627,7 +627,7 @@ fn buildSpectrumSamplingTableWithNominals(
     errdefer allocator.free(rows);
 
     var kernel_storage_builder = KernelStorageBuilder.init(row_count * 2);
-    defer kernel_storage_builder.deinit(allocator);
+    errdefer kernel_storage_builder.deinit(allocator);
 
     try fillSamplingRows(
         allocator,

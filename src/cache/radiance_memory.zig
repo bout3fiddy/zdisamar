@@ -60,27 +60,28 @@ pub const RadianceMemory = struct {
         self.* = .{};
     }
 
-    pub fn takeWavelengthList(
+    pub fn rebuildWavelengthList(
         self: *RadianceMemory,
         allocator: Allocator,
-        list: *radiance_wavelengths.OwnedRadianceWavelengthList,
+        new_rows: []radiance_wavelengths.RadianceSampleIndexRef,
+        new_sample_indices: []u32,
+        new_wavelengths: []radiance_wavelengths.RadianceWavelength,
         stamp: hashing.ReuseStamp,
     ) void {
-        // RadianceMemory.takeWavelengthList ----------------------------------------------------------------- |
-        // Move an owned exact wavelength list into reusable radiance memory and invalidate dense results.     |
+        // RadianceMemory.rebuildWavelengthList -------------------------------------------------------------- |
+        // Replace the exact wavelength route and invalidate dense results that indexed the old route.         |
         // ----------------------------------------------------------------------------------------------------|
         allocator.free(self.wavelength_rows);
         allocator.free(self.sample_indices);
         allocator.free(self.wavelengths);
-        self.wavelength_rows = list.rows;
-        self.sample_indices = list.sample_indices;
-        self.wavelengths = list.wavelengths;
-        self.active.wavelength_row_count = list.rows.len;
-        self.active.sample_index_count = list.sample_indices.len;
-        self.active.wavelength_count = list.wavelengths.len;
+        self.wavelength_rows = new_rows;
+        self.sample_indices = new_sample_indices;
+        self.wavelengths = new_wavelengths;
+        self.active.wavelength_row_count = new_rows.len;
+        self.active.sample_index_count = new_sample_indices.len;
+        self.active.wavelength_count = new_wavelengths.len;
         self.wavelength_stamp = stamp;
         self.result_stamp = .{};
-        list.* = .{};
     }
 
     pub fn hasWavelengthList(

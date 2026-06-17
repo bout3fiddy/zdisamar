@@ -705,26 +705,26 @@ pub fn partitionSampleMatchesEndpointSecant(isotopologue_code: i32, temperature_
     // prepared sample directly; this rebuilds the endpoint-secant curvature once for equality checks.         |
     // --------------------------------------------------------------------------------------------------------|
     const table = preparedPartitionTable(isotopologue_code) orelse return null;
+    const rebuilt = rebuildEndpointSecantSample(table, temperature_k);
+    const prepared = interpolatePartitionTable(table, temperature_k);
+    return rebuilt == prepared;
+}
 
+fn rebuildEndpointSecantSample(table: PreparedPartitionView, temperature_k: f64) f64 {
+    // rebuildEndpointSecantSample ----------------------------------------------------------------------------|
+    // Recompute the endpoint-secant oracle sample with the same clamped temperature route as production.      |
+    // --------------------------------------------------------------------------------------------------------|
     const safe_temperature = std.math.clamp(
         temperature_k,
         temperature_grid[0],
         temperature_grid[temperature_grid.len - 1],
     );
+    if (safe_temperature <= temperature_grid[0]) return table.values[0];
+    if (safe_temperature >= temperature_grid[temperature_grid.len - 1]) return table.values[table.values.len - 1];
 
-    const rebuilt = choose_rebuilt_sample: {
-        if (safe_temperature <= temperature_grid[0]) break :choose_rebuilt_sample table.values[0];
-        if (safe_temperature >= temperature_grid[temperature_grid.len - 1]) {
-            break :choose_rebuilt_sample table.values[table.values.len - 1];
-        }
-
-        break :choose_rebuilt_sample spline.sampleEndpointSecant(
-            temperature_grid[0..],
-            table.values,
-            safe_temperature,
-        ) catch unreachable;
-    };
-
-    const prepared = interpolatePartitionTable(table, temperature_k);
-    return rebuilt == prepared;
+    return spline.sampleEndpointSecant(
+        temperature_grid[0..],
+        table.values,
+        safe_temperature,
+    ) catch unreachable;
 }

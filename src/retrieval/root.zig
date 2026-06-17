@@ -66,12 +66,27 @@ pub const StateScalar = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // PressureLayerPlacement -------------------------------------------------------------------------------------|
-// Pressure-lane-only side data for moving the single retrieved aerosol layer.                                 |
+// Pressure-lane-only side data for moving the single retrieved aerosol layer. The profile is borrowed from    |
+// request-scoped storage that owns and frees the spline curvature.                                            |
 // ------------------------------------------------------------------------------------------------------------|
 pub const PressureLayerPlacement = struct {
     thickness_hpa: f64,
     interval_index_1based: u32,
-    pressure_altitude_profile: PressureAltitudeProfile,
+    pressure_altitude_profile: *const PressureAltitudeProfile,
+
+    pub fn hasPressureAltitudeProfile(self: PressureLayerPlacement) bool {
+        // PressureLayerPlacement.hasPressureAltitudeProfile --------------------------------------------------|
+        // Check whether the borrowed pressure-altitude profile has the rows needed for pressure conversion.   |
+        // ----------------------------------------------------------------------------------------------------|
+        return self.pressure_altitude_profile.*.hasSamples();
+    }
+
+    pub fn altitudeDerivativeAtPressure(self: PressureLayerPlacement, pressure_hpa: f64) !f64 {
+        // PressureLayerPlacement.altitudeDerivativeAtPressure ------------------------------------------------|
+        // Convert a retrieved pressure step through the borrowed pressure-altitude profile.                   |
+        // ----------------------------------------------------------------------------------------------------|
+        return self.pressure_altitude_profile.*.altitudeDerivativeAtPressure(pressure_hpa);
+    }
 };
 // ------------------------------------------------------------------------------------------------------------|
 
@@ -843,8 +858,7 @@ pub fn accumulateNormalSystem(
     const projection = JacobianProjection{
         .state_scale = .{
             1.0,
-            try retrieval_state.aerosol_layer_mid_pressure.placement.pressure_altitude_profile
-                .altitudeDerivativeAtPressure(previous[1]),
+            try retrieval_state.aerosol_layer_mid_pressure.placement.altitudeDerivativeAtPressure(previous[1]),
         },
     };
 
@@ -1017,7 +1031,7 @@ pub fn validateRetrievalState(retrieval_state: RetrievalState) Error!void {
     if (!std.math.isFinite(placement.thickness_hpa) or
         placement.thickness_hpa <= 0.0 or
         placement.interval_index_1based == 0 or
-        !placement.pressure_altitude_profile.hasSamples())
+        !placement.hasPressureAltitudeProfile())
     {
         return error.InvalidRetrievalState;
     }

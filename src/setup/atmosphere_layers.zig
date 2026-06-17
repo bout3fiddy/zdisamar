@@ -311,17 +311,17 @@ pub fn buildWithQuadrature(
         .{ .rows = raw_profile_rows },
         scene.atmosphere.surface_pressure_hpa,
     );
-    var dense_profile_owned = true;
-    errdefer if (dense_profile_owned) allocator.free(dense_profile_rows);
 
     const profile = ProfileView{ .rows = dense_profile_rows };
-    const spectroscopy_profile_rows = try buildSpectroscopyProfileRows(
+    const spectroscopy_profile_rows = buildSpectroscopyProfileRows(
         allocator,
         .{ .rows = raw_profile_rows },
         profile,
-    );
+    ) catch |err| {
+        allocator.free(dense_profile_rows);
+        return err;
+    };
 
-    dense_profile_owned = false;
     return buildWithOwnedProfiles(allocator, scene, dense_profile_rows, spectroscopy_profile_rows, quadrature);
 }
 
@@ -342,21 +342,18 @@ pub fn buildFromPreparedProfiles(
     // ownership                                                                                               |
     //   The returned LayerGrid owns duplicated profile rows so ordinary LayerGrid.deinit remains correct.     |
     // --------------------------------------------------------------------------------------------------------|
-    const owned_source_profile_rows = try allocator.dupe(readers.AtmosphereProfileRow, source_profile_rows);
-    var source_profile_owned = true;
-    errdefer if (source_profile_owned) allocator.free(owned_source_profile_rows);
-    const owned_spectroscopy_profile_rows =
-        try allocator.dupe(readers.AtmosphereProfileRow, spectroscopy_profile_rows);
-    var spectroscopy_profile_owned = true;
-    errdefer if (spectroscopy_profile_owned) allocator.free(owned_spectroscopy_profile_rows);
+    const duplicated_source_profile_rows = try allocator.dupe(readers.AtmosphereProfileRow, source_profile_rows);
+    const duplicated_spectroscopy_profile_rows =
+        allocator.dupe(readers.AtmosphereProfileRow, spectroscopy_profile_rows) catch |err| {
+            allocator.free(duplicated_source_profile_rows);
+            return err;
+        };
 
-    source_profile_owned = false;
-    spectroscopy_profile_owned = false;
     return buildWithOwnedProfiles(
         allocator,
         scene,
-        owned_source_profile_rows,
-        owned_spectroscopy_profile_rows,
+        duplicated_source_profile_rows,
+        duplicated_spectroscopy_profile_rows,
         quadrature,
     );
 }
@@ -391,24 +388,25 @@ fn buildWithOwnedProfiles(
     quadrature: LayerQuadrature,
 ) !LayerGrid {
     // buildWithOwnedProfiles ---------------------------------------------------------------------------------|
-    // Compute layer/support placement from caller-owned profile rows that transfer into the returned grid.    |
+    // Compute layer/support placement from profile rows now owned by the returned grid.                       |
     // --------------------------------------------------------------------------------------------------------|
-    var dense_profile_owned = true;
-    errdefer if (dense_profile_owned) allocator.free(dense_profile_rows);
-    var spectroscopy_profile_owned = true;
-    errdefer if (spectroscopy_profile_owned) allocator.free(spectroscopy_profile_rows);
+    const shape = layerGridShape(scene, quadrature) catch |err| {
+        allocator.free(dense_profile_rows);
+        allocator.free(spectroscopy_profile_rows);
+        return err;
+    };
 
-    const shape = try layerGridShape(scene, quadrature);
-
-    var grid = try allocate(
+    var grid = allocate(
         allocator,
         dense_profile_rows,
         spectroscopy_profile_rows,
         shape.layer_count,
         shape.support_count,
-    );
-    dense_profile_owned = false;
-    spectroscopy_profile_owned = false;
+    ) catch |err| {
+        allocator.free(dense_profile_rows);
+        allocator.free(spectroscopy_profile_rows);
+        return err;
+    };
     errdefer grid.deinit(allocator);
 
     try fillLayerGrid(&grid, scene, quadrature, shape.support_order);

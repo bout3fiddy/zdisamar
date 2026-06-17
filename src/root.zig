@@ -987,34 +987,54 @@ fn prepareSessionRows(
     //   stream and threshold controls, matching the prepared LABOS execution route.                           |
     // --------------------------------------------------------------------------------------------------------|
     const sampling_stamp = samplingTableReuseStamp(prepared);
-    const table = resolve_sampling_table: {
-        if (session.spectrum.hasTable(sampling_stamp)) {
-            break :resolve_sampling_table try session.spectrum.table(
-                session.spectrum.rows.len,
-                session.spectrum.kernel_offsets_nm.len,
-            );
-        }
-
-        var owned_sampling = try sampling_table.buildSpectrumSamplingTable(
+    if (!session.spectrum.hasTable(sampling_stamp)) {
+        const built_sampling = try sampling_table.buildSpectrumSamplingTable(
             allocator,
             prepared.scene,
             prepared.tables.instrument,
             prepared.tables.lines,
         );
-        defer owned_sampling.deinit(allocator);
-        const row_count = owned_sampling.rows.len;
-        const side_sample_count = owned_sampling.kernel_offsets_nm.len;
-        session.spectrum.takeTable(allocator, &owned_sampling, sampling_stamp);
-        break :resolve_sampling_table try session.spectrum.table(row_count, side_sample_count);
-    };
+        session.spectrum.rebuildTable(
+            allocator,
+            built_sampling.rows,
+            built_sampling.kernel_offsets_nm,
+            built_sampling.kernel_weights,
+            sampling_stamp,
+        );
+    }
+    const table = try session.spectrum.table(
+        session.spectrum.rows.len,
+        session.spectrum.kernel_offsets_nm.len,
+    );
 
-    var owned_wavelengths = try radiance_wavelengths.buildRadianceWavelengthList(allocator, table);
-    defer owned_wavelengths.deinit(allocator);
-    const wavelength_list_stamp = radianceWavelengthListReuseStamp(owned_wavelengths.view());
-    const dense_count = owned_wavelengths.wavelengths.len;
-    const exact_wavelengths = try allocator.alloc(f64, dense_count);
+    var built_wavelengths = try radiance_wavelengths.buildRadianceWavelengthList(allocator, table);
+    const wavelength_list_stamp = radianceWavelengthListReuseStamp(built_wavelengths.view());
+    const dense_count = built_wavelengths.wavelengths.len;
+    const exact_wavelengths = allocator.alloc(f64, dense_count) catch |err| {
+        built_wavelengths.deinit(allocator);
+        return err;
+    };
     defer allocator.free(exact_wavelengths);
-    for (owned_wavelengths.wavelengths, exact_wavelengths) |row, *wavelength_nm| {
+    const wavelength_list_matches = session.radiance.hasWavelengthList(
+        wavelength_list_stamp,
+        built_wavelengths.rows.len,
+        built_wavelengths.sample_indices.len,
+        built_wavelengths.wavelengths.len,
+    );
+    if (wavelength_list_matches) {
+        built_wavelengths.deinit(allocator);
+    } else {
+        session.radiance.rebuildWavelengthList(
+            allocator,
+            built_wavelengths.rows,
+            built_wavelengths.sample_indices,
+            built_wavelengths.wavelengths,
+            wavelength_list_stamp,
+        );
+    }
+
+    const active_wavelengths = session.radiance.wavelengthList().wavelengths;
+    for (active_wavelengths, exact_wavelengths) |row, *wavelength_nm| {
         wavelength_nm.* = row.wavelength_nm;
     }
     const worker_count = spectrum_run.preferredRadianceWorkerCount(dense_count);
@@ -1034,15 +1054,6 @@ fn prepareSessionRows(
         needs_temperature_derivatives,
     );
 
-    const wavelength_list_matches = session.radiance.hasWavelengthList(
-        wavelength_list_stamp,
-        owned_wavelengths.rows.len,
-        owned_wavelengths.sample_indices.len,
-        owned_wavelengths.wavelengths.len,
-    );
-    if (!wavelength_list_matches) {
-        session.radiance.takeWavelengthList(allocator, &owned_wavelengths, wavelength_list_stamp);
-    }
     const wants_dense_jacobian = radiance_results.wantsJacobian(prepared_solve_config);
     try session.radiance.ensureResultCapacity(allocator, dense_count, wants_dense_jacobian);
 

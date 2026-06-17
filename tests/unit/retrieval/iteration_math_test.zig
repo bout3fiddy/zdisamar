@@ -13,6 +13,11 @@ test "normal-system accumulation uses reflectance Jacobians directly" {
     );
     defer measurements.deinit(std.testing.allocator);
 
+    const pressure_altitude_profile = retrieval.PressureAltitudeProfile{
+        .altitude_km = &.{ 0.0, 1.0 },
+        .pressure_hpa = &.{ 900.0, 800.0 },
+        .second = &.{ 0.0, 0.0 },
+    };
     const retrieval_state: retrieval.RetrievalState = .{
         .aerosol_optical_depth = .{
             .initial = 0.3,
@@ -32,11 +37,7 @@ test "normal-system accumulation uses reflectance Jacobians directly" {
             .placement = .{
                 .thickness_hpa = 10.0,
                 .interval_index_1based = 2,
-                .pressure_altitude_profile = .{
-                    .altitude_km = &.{ 0.0, 1.0 },
-                    .pressure_hpa = &.{ 900.0, 800.0 },
-                    .second = &.{ 0.0, 0.0 },
-                },
+                .pressure_altitude_profile = &pressure_altitude_profile,
             },
         },
     };

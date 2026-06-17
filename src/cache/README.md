@@ -72,21 +72,21 @@ table without allocating, a miss rebuilds it.
 
 `SpectrumMemory` holds the high-resolution sampling rows and two side arrays, the
 offsets and weights that average the fine grid down to each product wavelength. A
-miss replaces it: `takeTable` frees the previous arrays, moves the freshly built
-arrays in by pointer without copying, and records the new stamp. A hit returns
-borrowed slices of the retained arrays through `table()`. The two side arrays are
-the large part of this table.
+miss replaces it: `rebuildTable` frees the previous arrays, adopts the freshly
+built row and side-array slices without copying, and records the new stamp. A hit
+returns borrowed slices of the retained arrays through `table()`. The two side
+arrays are the large part of this table.
 
 ## Radiance work (`radiance_memory.zig`)
 
 `RadianceMemory` holds two parts with different reuse rules. The wavelength list,
 the rows, sample indices, and dense wavelengths the radiative transfer runs over,
-moves in by pointer-swap in `takeWavelengthList`, which frees the old generation
-and is gated by `wavelength_stamp`. The dense radiance column and the optional
-Jacobian column grow through `ensureResultCapacity`, and the Jacobian column is
-freed when a run wants no derivatives. A second stamp, `result_stamp`, records
-whether the dense values are still valid and resets whenever the list moves or a
-column grows, so stale values are never read against fresh storage.
+is adopted by `rebuildWavelengthList`, which frees the old generation and is
+gated by `wavelength_stamp`. The dense radiance column and the optional Jacobian
+column grow through `ensureResultCapacity`, and the Jacobian column is freed when
+a run wants no derivatives. A second stamp, `result_stamp`, records whether the
+dense values are still valid and resets whenever the list changes or a column
+grows, so stale values are never read against fresh storage.
 
 ## Line cross-sections (`profile_line_memory.zig`)
 

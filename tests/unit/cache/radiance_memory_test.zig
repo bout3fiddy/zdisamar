@@ -8,7 +8,7 @@ const radiance_results = internal.spectrum.radiance_results;
 const radiance_wavelengths = internal.spectrum.radiance_wavelengths;
 const sampling_table = internal.spectrum.sampling_table;
 
-test "RadianceMemory takes exact wavelength list ownership and exposes active views" {
+test "RadianceMemory rebuilds exact wavelength list from slices and exposes active views" {
     const rows = [_]sampling_table.SpectrumSamplingRow{
         .{
             .nominal_wavelength_nm = 760.0,
@@ -25,18 +25,22 @@ test "RadianceMemory takes exact wavelength list ownership and exposes active vi
             .irradiance_integration = .disabled(),
         },
     };
-    var list = try radiance_wavelengths.buildRadianceWavelengthList(
+    const list = try radiance_wavelengths.buildRadianceWavelengthList(
         std.testing.allocator,
         .{ .rows = rows[0..] },
     );
-    errdefer list.deinit(std.testing.allocator);
 
     var memory = radiance_memory.RadianceMemory{};
     defer memory.deinit(std.testing.allocator);
     const stamp = hashing.ReuseStamp{ .value = 0x1234 };
-    memory.takeWavelengthList(std.testing.allocator, &list, stamp);
+    memory.rebuildWavelengthList(
+        std.testing.allocator,
+        list.rows,
+        list.sample_indices,
+        list.wavelengths,
+        stamp,
+    );
 
-    try std.testing.expectEqual(@as(usize, 0), list.rows.len);
     try std.testing.expectEqual(@as(usize, 2), memory.wavelength_rows.len);
     try std.testing.expectEqual(@as(usize, 2), memory.sample_indices.len);
     try std.testing.expectEqual(@as(usize, 1), memory.wavelengths.len);

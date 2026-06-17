@@ -759,14 +759,15 @@ const OptimalEstimationMeasurementSlices = struct {
 // Request-scoped fixed native state plus pressure-profile spline scratch.                                     |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
-// size: 312 B (0.305 KiB), align: 8 B                                                                         |
+// size: 200 B (0.195 KiB), align: 8 B                                                                         |
 //                                                                                                             |
 // memory                                                                                                      |
 // [ 0..95] profiles: [2]PressureAltitudeProfile                                                               |
-// [96..  ] state   : RetrievalState                                                                           |
+// [96..199] state   : RetrievalState                                                                          |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Pressure-profile second-derivative arrays are owned until the C call returns and deinit frees them.       |
+//   retrievalState refreshes borrowed profile pointers from this owner before native solver calls.            |
 const OptimalEstimationFixedState = struct {
     profiles: [zdisamar.optimal_estimation.max_state_count]zdisamar.RetrievalPressureAltitudeProfile =
         [_]zdisamar.RetrievalPressureAltitudeProfile{.{}} ** zdisamar.optimal_estimation.max_state_count,
@@ -788,7 +789,9 @@ const OptimalEstimationFixedState = struct {
         // OptimalEstimationFixedState.retrievalState ---------------------------------------------------------|
         // Return the fixed native state parsed from the named C request fields.                               |
         // ----------------------------------------------------------------------------------------------------|
-        return self.state;
+        var state = self.state;
+        state.aerosol_layer_mid_pressure.placement.pressure_altitude_profile = &self.profiles[1];
+        return state;
     }
 };
 // ------------------------------------------------------------------------------------------------------------|
@@ -1433,11 +1436,11 @@ fn optimalEstimationFixedStateFromRaw(
             .placement = .{
                 .thickness_hpa = request.aerosol_layer_pressure.thickness_hpa,
                 .interval_index_1based = request.aerosol_layer_pressure.interval_index_1based,
-                .pressure_altitude_profile = parsed.profiles[1],
+                .pressure_altitude_profile = &parsed.profiles[1],
             },
         },
     };
-    try zdisamar.optimal_estimation.validateRetrievalState(parsed.state);
+    try zdisamar.optimal_estimation.validateRetrievalState(parsed.retrievalState());
     return parsed;
 }
 
@@ -1584,7 +1587,7 @@ fn runWavelengthDiagnostic(
     };
     output.* = .{};
 
-    var result = buildWavelengthDiagnostic(
+    const result = buildWavelengthDiagnostic(
         diagnostic,
         prepared,
         wavelengths_ptr[0..wavelength_count],
@@ -1593,10 +1596,8 @@ fn runWavelengthDiagnostic(
         resolved.setError(@errorName(err));
         return @intFromEnum(ZdsStatus.failure);
     };
-    errdefer result.deinit(allocator);
 
-    marshalWavelengthDiagnostic(diagnostic, output, &result);
-    result.rows = &.{};
+    publishWavelengthDiagnostic(diagnostic, output, result);
     resolved.setError("");
     return @intFromEnum(ZdsStatus.ok);
 }
@@ -1630,12 +1631,12 @@ fn buildWavelengthDiagnostic(
     };
 }
 
-fn marshalWavelengthDiagnostic(
+fn publishWavelengthDiagnostic(
     comptime diagnostic: WavelengthDiagnostic,
     output: *DiagnosticOutput(diagnostic),
-    result: *const DiagnosticResult(diagnostic),
+    result: DiagnosticResult(diagnostic),
 ) void {
-    // marshalWavelengthDiagnostic --------------------------------------------------------------------------- |
+    // publishWavelengthDiagnostic --------------------------------------------------------------------------- |
     // Move native row ownership to the stable C-facing output struct without copying rows.                    |
     // --------------------------------------------------------------------------------------------------------|
     switch (diagnostic) {
