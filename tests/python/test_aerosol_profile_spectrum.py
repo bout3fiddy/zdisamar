@@ -5,10 +5,15 @@ from copy import deepcopy
 from unittest.mock import patch
 
 import pytest
+from rtm_scene import narrow
 from zdisamar import optimal_estimation, rtm
 from zdisamar.bindings.handles import RtmHandle
 
 pytestmark = [pytest.mark.integration, pytest.mark.native]
+
+# These tests assert serialization parity, "aerosol changes the spectrum", cache reuse, and
+# retrieval rejection -- all band-independent. They run on a narrow representative window so
+# every forward prepares ~4x faster. The canonical full-band physics lives in the Zig goldens.
 
 
 def one_layer_profile() -> rtm.AerosolProfileLayer:
@@ -46,11 +51,11 @@ def multi_layer_profile() -> tuple[rtm.AerosolProfileLayer, ...]:
 def profile_scene(profile: tuple[rtm.AerosolProfileLayer, ...]):
     scene = rtm.reference_scene()
     scene.set_aerosol_profile(profile)
-    return scene
+    return narrow(scene)
 
 
 def test_one_layer_aerosol_profile_serializes_as_legacy_layer_view() -> None:
-    scene = rtm.reference_scene()
+    scene = narrow(rtm.reference_scene())
     assert len(scene.aerosol.profile) == 1
     assert b'"profile"' not in scene.to_json_bytes()
 
@@ -85,7 +90,7 @@ def test_one_layer_aerosol_profile_serializes_as_legacy_layer_view() -> None:
 
 
 def test_invalid_aerosol_profile_placements_are_rejected() -> None:
-    scene = rtm.reference_scene()
+    scene = narrow(rtm.reference_scene())
     partially_off_grid_scene = deepcopy(scene)
     partially_off_grid_scene.set_aerosol_profile(
         (
@@ -124,7 +129,7 @@ def test_invalid_aerosol_profile_placements_are_rejected() -> None:
 
 
 def test_multi_layer_aerosol_profile_changes_spectrum_and_reuses_session_cache() -> None:
-    scene = rtm.reference_scene()
+    scene = narrow(rtm.reference_scene())
     profiled_scene = profile_scene(multi_layer_profile())
     assert b'"profile"' in profiled_scene.to_json_bytes()
 

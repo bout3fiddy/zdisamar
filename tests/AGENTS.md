@@ -29,3 +29,4 @@
 - Shard and focused-lane tests must assert the intended case set or semantic outcome directly, not merely that some cases ran.
 - When a change introduces derived hints, prepared metadata, or delayed config application, add at least one test that omits redundant legacy fields so stale fallback values cannot mask ordering bugs.
 - Wavelength-dependent controls need at least two-point coverage when they affect prepared optics or morphology, so reference-only sampling mistakes fail deterministically.
+- Use narrow bands for testing control flow and narrow-band physics; full band only for full-band-specific tests.

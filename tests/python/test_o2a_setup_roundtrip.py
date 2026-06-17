@@ -39,16 +39,23 @@ def spectrum_arrays(spectrum: Any) -> dict[str, np.ndarray]:
     }
 
 
-def run_roundtrip() -> dict[str, Any]:
+def run_roundtrip(scene_factory: Any = None) -> dict[str, Any]:
 
     from zdisamar import rtm
     from zdisamar.wavelength_bands import o2a
+
+    # scene_factory builds the scene under test. The contract checks below are all route
+    # parities and structural invariants (typed == reference, session == functional,
+    # jacobian shape/determinism), so they hold on any band; the test passes a narrow
+    # representative scene for speed while the CLI keeps the full default band.
+    if scene_factory is None:
+        scene_factory = o2a.reference_scene
 
     tolerance = 1.0e-12
     start_s = time.perf_counter()
 
     scene_start_s = time.perf_counter()
-    scene = o2a.reference_scene()
+    scene = scene_factory()
     scene_s = time.perf_counter() - scene_start_s
 
     typed_rtm_start_s = time.perf_counter()
@@ -58,7 +65,7 @@ def run_roundtrip() -> dict[str, Any]:
     typed_arrays = spectrum_arrays(typed_spectrum)
 
     reference_rtm_start_s = time.perf_counter()
-    reference_spectrum = rtm.spectrum(o2a.reference_scene())
+    reference_spectrum = rtm.spectrum(scene_factory())
     reference_rtm_s = time.perf_counter() - reference_rtm_start_s
     reference_report = reference_spectrum.diagnostic_report
     reference_arrays = spectrum_arrays(reference_spectrum)
@@ -279,10 +286,12 @@ if __name__ == "__main__":
 
 
 def test_o2a_setup_roundtrip_contracts() -> None:
-    summary = run_roundtrip()
+    from rtm_scene import narrow
+
+    summary = run_roundtrip(scene_factory=narrow)
     checks = summary["checks"]
     excluded = {"tolerance", "typed_sample_count", "reference_sample_count"}
 
     assert all(value for key, value in checks.items() if key not in excluded)
     assert summary["answer"]["matches"] is True
-    assert summary["answer"]["sample_count"] == 701
+    assert summary["answer"]["sample_count"] == 16

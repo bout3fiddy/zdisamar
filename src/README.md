@@ -72,7 +72,7 @@ output
 `rtm/` works one wavelength at a time and has no notion of the band; `spectrum/` is
 the loop that turns those single wavelengths into a spectrum.
 
-A retrieval wraps the whole pass and repeats it. The rest of the directories support 
+A retrieval wraps the whole pass and repeats it. The rest of the directories support
 the flow:
 
 - `cache/` — the reused memory (see below).

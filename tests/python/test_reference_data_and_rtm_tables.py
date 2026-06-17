@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import cast
 
 import pytest
+from rtm_scene import narrow
 
 pytestmark = [pytest.mark.integration, pytest.mark.native]
 
@@ -195,7 +196,12 @@ def test_reference_data_and_rtm_tables() -> None:
             else:
                 raise AssertionError("negative nominal spectral sample count was accepted")
 
-            mutable_scene = copy.deepcopy(scene)
+            # The config assertions above need the full band (fastmode windows reference
+            # specific wavelengths). The forward/budget/plot calls below only check structure
+            # and route behavior, so they run on a narrow representative copy for speed.
+            forward_scene = narrow(copy.deepcopy(scene))
+
+            mutable_scene = copy.deepcopy(forward_scene)
 
             with rtm.SessionCache() as cache:
                 cache.load(mutable_scene)
@@ -204,7 +210,7 @@ def test_reference_data_and_rtm_tables() -> None:
                 assert spectrum.scene is not None
                 assert spectrum.scene.geometry.solar_zenith_deg == scene.geometry.solar_zenith_deg
 
-            budget = rtm.atmospheric_budget(scene, np.array([760.76], dtype=np.float64))
+            budget = rtm.atmospheric_budget(forward_scene, np.array([760.76], dtype=np.float64))
             assert budget.row_count > 0
             assert len(budget.column("wavelength_nm")) == budget.row_count
             first_table = budget.table
@@ -215,7 +221,7 @@ def test_reference_data_and_rtm_tables() -> None:
             assert len(rows) == budget.row_count
             assert "support_row_kind_label" in rows[0]
 
-            spectrum = rtm.spectrum(scene)
+            spectrum = rtm.spectrum(forward_scene)
             output = Path(tmpdir) / "reflectance"
             chart = spectrum.plot.reflectance(save=output)
             assert chart is not None

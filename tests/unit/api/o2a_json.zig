@@ -167,6 +167,33 @@ const native_json =
     \\}
 ;
 
+// The full-band spectral grid block, verbatim from native_json (unique substring). narrowJson
+// swaps it for a ~1.5nm window on the O2 A-band R-branch so control-flow / structural tests
+// prepare ~4x faster. native_json itself is left byte-identical so the canonical full-band
+// golden tests keep their exact inputs.
+const full_grid_block =
+    \\    "end_nm": 776.0,
+    \\    "sample_count": 701,
+    \\    "start_nm": 755.0
+;
+const narrow_grid_block =
+    \\    "end_nm": 761.0,
+    \\    "sample_count": 16,
+    \\    "start_nm": 759.5
+;
+
 pub fn nativeJson(allocator: std.mem.Allocator) ![]u8 {
     return allocator.dupe(u8, native_json);
+}
+
+pub fn narrowJson(allocator: std.mem.Allocator) ![]u8 {
+    // narrowJson ------------------------------------------------------------------------------------------- |
+    // Default scene over a narrow representative band; use for tests that check control flow,                |
+    // batching/fastmode structure, or error paths rather than canonical full-band physics values.           |
+    // ------------------------------------------------------------------------------------------------------ |
+    const size = std.mem.replacementSize(u8, native_json, full_grid_block, narrow_grid_block);
+    const rendered = try allocator.alloc(u8, size);
+    const count = std.mem.replace(u8, native_json, full_grid_block, narrow_grid_block, rendered);
+    std.debug.assert(count == 1);
+    return rendered;
 }

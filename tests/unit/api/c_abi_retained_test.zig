@@ -18,7 +18,7 @@ test "warm optimal-estimation cache uses the fixed two-state Jacobian route" {
     const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
     defer c_api.zds_context_destroy(ctx);
 
-    try prepareDefault(ctx);
+    try prepareNarrow(ctx);
 
     try std.testing.expectEqual(
         @intFromEnum(c_api.ZdsStatus.ok),
@@ -184,7 +184,7 @@ test "correction optimal-estimation returns one-step result handle" {
 test "batch optimal-estimation returns run-major result handle" {
     const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
     defer c_api.zds_context_destroy(ctx);
-    try prepareDefault(ctx);
+    try prepareNarrow(ctx);
 
     var spectrum: c_api.ZdsSpectrum = .{};
     try std.testing.expectEqual(
@@ -192,7 +192,7 @@ test "batch optimal-estimation returns run-major result handle" {
         c_api.zds_run_spectrum(ctx, &spectrum),
     );
     defer c_api.zds_spectrum_free(ctx, &spectrum);
-    try expectDefaultProductSpectrum(spectrum);
+    try std.testing.expectEqual(@as(usize, 16), spectrum.len);
 
     const variance = try std.testing.allocator.alloc(f64, spectrum.len);
     defer std.testing.allocator.free(variance);
@@ -228,10 +228,13 @@ test "batch optimal-estimation returns run-major result handle" {
     try std.testing.expectEqual(@as(usize, 1), result.iteration_count.?[1]);
     try std.testing.expectEqual(@as(u8, 1), result.status.?[0]);
     try std.testing.expectEqual(@as(u8, 1), result.status.?[1]);
-    try std.testing.expectApproxEqRel(0.3815807881577048, result.state.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(848.0765436795413, result.state.?[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.3735949222795868, result.state.?[2], 1.0e-12);
-    try std.testing.expectApproxEqRel(847.8074099290603, result.state.?[3], 1.0e-12);
+    // Narrow-band goldens (regenerated for the 759.5-761nm window). Canonical full-band OE
+    // physics is pinned by the single-run and correction tests above; this test pins the
+    // run-major batch layout and that history mirrors the final state.
+    try std.testing.expectApproxEqRel(0.1651899607587543, result.state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(849.8922457984752, result.state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.16665664954904796, result.state.?[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(849.8774905141596, result.state.?[3], 1.0e-12);
     try std.testing.expectApproxEqRel(result.state.?[0], result.history_state.?[0], 0.0);
     try std.testing.expectApproxEqRel(result.state.?[1], result.history_state.?[1], 0.0);
     try std.testing.expectApproxEqRel(result.state.?[2], result.history_state.?[2], 0.0);
@@ -244,8 +247,8 @@ test "fastmode optimal-estimation batch returns per-stage metadata" {
     defer c_api.zds_context_destroy(fast_ctx);
     const correction_ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
     defer c_api.zds_context_destroy(correction_ctx);
-    try prepareDefault(fast_ctx);
-    try prepareDefault(correction_ctx);
+    try prepareNarrow(fast_ctx);
+    try prepareNarrow(correction_ctx);
 
     var spectrum: c_api.ZdsSpectrum = .{};
     try std.testing.expectEqual(
@@ -253,7 +256,7 @@ test "fastmode optimal-estimation batch returns per-stage metadata" {
         c_api.zds_run_spectrum(fast_ctx, &spectrum),
     );
     defer c_api.zds_spectrum_free(fast_ctx, &spectrum);
-    try expectDefaultProductSpectrum(spectrum);
+    try std.testing.expectEqual(@as(usize, 16), spectrum.len);
 
     const variance = try std.testing.allocator.alloc(f64, spectrum.len);
     defer std.testing.allocator.free(variance);
@@ -308,25 +311,29 @@ test "fastmode optimal-estimation batch returns per-stage metadata" {
     try std.testing.expectEqual(@as(usize, 1), result.full_correction_iteration_count.?[0]);
     try std.testing.expectEqual(@as(u8, 1), result.status.?[0]);
     try std.testing.expectEqual(@as(u8, 1), result.status.?[1]);
-    try std.testing.expectApproxEqRel(0.3212508722823766, result.state.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(829.2142546099802, result.state.?[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.3210901563847662, result.state.?[2], 1.0e-12);
-    try std.testing.expectApproxEqRel(829.6743599634119, result.state.?[3], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.3815807881577048, result.history_state.?[0], 1.0e-12);
-    try std.testing.expectApproxEqRel(848.0765436795413, result.history_state.?[1], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.3212508722823766, result.history_state.?[2], 1.0e-12);
-    try std.testing.expectApproxEqRel(829.2142546099802, result.history_state.?[3], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.3735949222795868, result.history_state.?[4], 1.0e-12);
-    try std.testing.expectApproxEqRel(847.8074099290603, result.history_state.?[5], 1.0e-12);
-    try std.testing.expectApproxEqRel(0.3210901563847662, result.history_state.?[6], 1.0e-12);
-    try std.testing.expectApproxEqRel(829.6743599634119, result.history_state.?[7], 1.0e-12);
+    // Narrow-band goldens (regenerated for the 759.5-761nm window). This test pins the
+    // two-stage fastmode history layout; canonical full-band physics lives in the single-run
+    // and correction tests. Final state and the stage-1 (batch) history rows are absolute;
+    // the full-correction history rows must mirror the final state, asserted relationally.
+    try std.testing.expectApproxEqRel(0.21803451863669004, result.state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(849.603112982948, result.state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.21821872416099974, result.state.?[2], 1.0e-12);
+    try std.testing.expectApproxEqRel(849.5992085372817, result.state.?[3], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.1651899607587543, result.history_state.?[0], 1.0e-12);
+    try std.testing.expectApproxEqRel(849.8922457984752, result.history_state.?[1], 1.0e-12);
+    try std.testing.expectApproxEqRel(0.16665664954904796, result.history_state.?[4], 1.0e-12);
+    try std.testing.expectApproxEqRel(849.8774905141596, result.history_state.?[5], 1.0e-12);
+    try std.testing.expectApproxEqRel(result.state.?[0], result.history_state.?[2], 0.0);
+    try std.testing.expectApproxEqRel(result.state.?[1], result.history_state.?[3], 0.0);
+    try std.testing.expectApproxEqRel(result.state.?[2], result.history_state.?[6], 0.0);
+    try std.testing.expectApproxEqRel(result.state.?[3], result.history_state.?[7], 0.0);
     try std.testing.expectEqualStrings("", std.mem.span(c_api.zds_last_error(fast_ctx)));
 }
 
 test "optimal-estimation pressure state requires profile rows" {
     const ctx = c_api.zds_context_create() orelse return error.OutOfMemory;
     defer c_api.zds_context_destroy(ctx);
-    try prepareDefault(ctx);
+    try prepareNarrow(ctx);
 
     const wavelength_nm = [_]f64{ 758.0, 760.0 };
     const reflectance = [_]f64{ 0.12, 0.13 };
@@ -349,10 +356,18 @@ test "optimal-estimation pressure state requires profile rows" {
 }
 
 fn prepareDefault(ctx: *c_api.Context) !void {
-    const allocator = std.testing.allocator;
-    const rendered = try o2a_json.nativeJson(allocator);
-    defer allocator.free(rendered);
+    try prepareJson(ctx, try o2a_json.nativeJson(std.testing.allocator));
+}
 
+// prepareNarrow feeds the default scene over a narrow representative band. Tests that exercise
+// control flow, batching/fastmode structure, or error paths use it so the one-time prepare is
+// ~4x cheaper; tests pinning canonical full-band physics keep prepareDefault.
+fn prepareNarrow(ctx: *c_api.Context) !void {
+    try prepareJson(ctx, try o2a_json.narrowJson(std.testing.allocator));
+}
+
+fn prepareJson(ctx: *c_api.Context, rendered: []u8) !void {
+    defer std.testing.allocator.free(rendered);
     try std.testing.expectEqual(
         @intFromEnum(c_api.ZdsStatus.ok),
         c_api.zds_prepare_o2a_json(ctx, rendered.ptr, rendered.len),

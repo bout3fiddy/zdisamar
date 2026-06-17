@@ -299,15 +299,17 @@ def test_native_oe_marshaling_bounds() -> None:
 
 def test_native_oe_runs_after_reference_scene_prepare() -> None:
 
+    from rtm_scene import narrow
     from zdisamar import optimal_estimation
     from zdisamar.bindings.handles import RtmHandle
     from zdisamar.optimal_estimation import o2a as o2a_oe
-    from zdisamar.wavelength_bands import o2a
 
     handle = RtmHandle()
 
     try:
-        scene = o2a.reference_scene()
+        # Narrow representative band: this test asserts retrieval STRUCTURE (iteration and
+        # state counts), not full-band physics values, so the band does not affect coverage.
+        scene = narrow()
         measurement = optimal_estimation.simulate_measurement(
             scene,
             signal_to_noise=100.0,
