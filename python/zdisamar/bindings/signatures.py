@@ -5,15 +5,12 @@ import ctypes
 from .structures import (
     CAtmosphericBudget,
     CDiagnosticReport,
-    CInstrumentResponse,
     COptimalEstimationBatchRequest,
     COptimalEstimationBatchResult,
     COptimalEstimationFastmodeBatchResult,
     COptimalEstimationRequest,
     COptimalEstimationResult,
     CSpectrum,
-    O2LineContributionsRaw,
-    OxygenCollisionInducedAbsorptionDiagnosticsRaw,
 )
 
 
@@ -64,41 +61,6 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
             ctypes.POINTER(ctypes.c_double),
             ctypes.c_size_t,
             ctypes.POINTER(CAtmosphericBudget),
-        ],
-        ctypes.c_int,
-    )
-    bind(
-        lib,
-        "zds_o2_line_contributions",
-        [
-            ctypes.c_void_p,
-            ctypes.POINTER(ctypes.c_double),
-            ctypes.c_size_t,
-            ctypes.c_size_t,
-            ctypes.POINTER(O2LineContributionsRaw),
-        ],
-        ctypes.c_int,
-    )
-    bind(
-        lib,
-        "zds_instrument_response_sampling",
-        [
-            ctypes.c_void_p,
-            ctypes.POINTER(ctypes.c_double),
-            ctypes.c_size_t,
-            ctypes.c_uint32,
-            ctypes.POINTER(CInstrumentResponse),
-        ],
-        ctypes.c_int,
-    )
-    bind(
-        lib,
-        "zds_o2_o2_cia_diagnostics",
-        [
-            ctypes.c_void_p,
-            ctypes.POINTER(ctypes.c_double),
-            ctypes.c_size_t,
-            ctypes.POINTER(OxygenCollisionInducedAbsorptionDiagnosticsRaw),
         ],
         ctypes.c_int,
     )
@@ -167,24 +129,6 @@ def configure(lib: ctypes.CDLL) -> ctypes.CDLL:
         lib,
         "zds_atmospheric_budget_free",
         [ctypes.c_void_p, ctypes.POINTER(CAtmosphericBudget)],
-        None,
-    )
-    bind(
-        lib,
-        "zds_o2_line_contributions_free",
-        [ctypes.c_void_p, ctypes.POINTER(O2LineContributionsRaw)],
-        None,
-    )
-    bind(
-        lib,
-        "zds_instrument_response_free",
-        [ctypes.c_void_p, ctypes.POINTER(CInstrumentResponse)],
-        None,
-    )
-    bind(
-        lib,
-        "zds_o2_o2_cia_diagnostics_free",
-        [ctypes.c_void_p, ctypes.POINTER(OxygenCollisionInducedAbsorptionDiagnosticsRaw)],
         None,
     )
     bind(lib, "zds_last_error", [ctypes.c_void_p], ctypes.c_char_p)

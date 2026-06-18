@@ -6,9 +6,6 @@ from typing import ClassVar
 
 from ..bindings.structures import (
     CAtmosphericBudgetRow,
-    CInstrumentResponseRow,
-    O2LineContributionRow,
-    OxygenCollisionInducedAbsorptionRow,
 )
 
 
@@ -88,69 +85,3 @@ class AtmosphericBudget(RtmTable):
         from ..plot.atmosphere import BudgetPlot
 
         return BudgetPlot(self)
-
-
-@dataclass(frozen=True)
-class O2LineContributions(RtmTable):
-    """O2 line-by-line contribution table for selected wavelengths."""
-
-    total_row_count: int = 0
-    truncated: bool = False
-
-    row_kind_labels = {
-        0: "weak_line",
-        1: "strong_line",
-    }
-    status_labels = {
-        0: "weak_included",
-        1: "weak_excluded_by_strong_line",
-        2: "strong_sidecar",
-        3: "weak_zero_after_cutoff",
-    }
-    columns = field_names(O2LineContributionRow)
-    label_columns = {
-        "row_kind_label": ("row_kind", row_kind_labels),
-        "status_label": ("status", status_labels),
-    }
-
-
-@dataclass(frozen=True)
-class InstrumentResponseTable(RtmTable):
-    """Instrument response support-weight table."""
-
-    channel_labels = {
-        0: "radiance",
-        1: "irradiance",
-    }
-    integration_mode_labels = {
-        0: "auto",
-        1: "explicit_hr_grid",
-        2: "disamar_hr_grid",
-        3: "adaptive",
-    }
-    columns = field_names(CInstrumentResponseRow)
-    label_columns = {
-        "channel_label": ("channel", channel_labels),
-        "integration_mode_label": ("integration_mode", integration_mode_labels),
-    }
-
-    @property
-    def plot(self):
-
-        from ..plot.instrument_response import InstrumentResponsePlot
-
-        return InstrumentResponsePlot(self)
-
-
-@dataclass(frozen=True)
-class OxygenCollisionInducedAbsorptionDiagnosticTable(RtmTable):
-    """O2-O2 collision-induced absorption diagnostic table."""
-
-    columns = field_names(OxygenCollisionInducedAbsorptionRow)
-
-    @property
-    def plot(self):
-
-        from ..plot.collision_induced_absorption import CollisionInducedAbsorptionPlot
-
-        return CollisionInducedAbsorptionPlot(self)

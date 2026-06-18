@@ -96,26 +96,6 @@ class SessionCache:
 
         return self._handle.atmospheric_budget(wavelengths_nm)
 
-    def instrument_response(
-        self,
-        wavelengths_nm,
-        channels: tuple[str, ...] = ("radiance", "irradiance"),
-    ):
-        """Return instrument response rows for the loaded scene."""
-
-        if not self._loaded:
-            raise RuntimeError("SessionCache has no loaded wavelength-band scene")
-
-        return self._handle.instrument_response_sampling(wavelengths_nm, channels=channels)
-
-    def collision_induced_absorption(self, wavelengths_nm):
-        """Return O2-O2 collision-induced absorption rows for the loaded scene."""
-
-        if not self._loaded:
-            raise RuntimeError("SessionCache has no loaded wavelength-band scene")
-
-        return self._handle.collision_induced_absorption(wavelengths_nm)
-
     def close(self) -> None:
         """Release cached RTM storage."""
 

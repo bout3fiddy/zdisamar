@@ -48,7 +48,6 @@ class PlotProperties:
         "irradiance": "#2F6B3F",
         "sun_normalized_radiance": "#2A5C7A",
         "total_optical_depth": "#222222",
-        "collision_induced_absorption": "#8C3F2D",
         "residual_positive": "#8B1A1A",
         "residual_negative": "#1F4E79",
     }

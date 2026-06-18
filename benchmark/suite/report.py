@@ -213,34 +213,9 @@ def build_compact_report(
 
 def memory_layout_rows(memory_layout: dict[str, Any]) -> list[dict[str, str]]:
 
-    instrument = memory_layout["instrument_sampling"]
     optical = memory_layout["optical_accumulation"]
-    support = instrument["support_count_stats"]
 
     return [
-        {
-            "area": "Instrument sampling plan",
-            "shape": (
-                f"{instrument['nominal_sample_count']} wavelengths, "
-                f"{instrument['kernel_count']} channel kernels, "
-                f"support count median {support['median']:.1f}, max {support['max']}"
-            ),
-            "memory": (
-                f"current owned plan {instrument['current_owned_wavelength_sampling_bytes']} B; "
-                "estimated row payload saved "
-                f"{instrument['estimated_row_payload_saved_mib']:.2f} MiB"
-            ),
-        },
-        {
-            "area": "Integration kernel scratch",
-            "shape": (
-                f"{instrument['estimated_sampling_worker_count']} sampling worker(s), "
-                f"{instrument['integration_kernel_scratch_bytes_per_worker']} B each"
-            ),
-            "memory": (
-                f"{instrument['integration_kernel_scratch_bytes_at_worker_count']} B transient"
-            ),
-        },
         {
             "area": "Collision-complex profile cache",
             "shape": (

@@ -18,16 +18,12 @@ from ..output.spectrum import (
 )
 from ..output.tables import (
     AtmosphericBudget,
-    InstrumentResponseTable,
-    O2LineContributions,
-    OxygenCollisionInducedAbsorptionDiagnosticTable,
 )
 from .loader import load_library
 from .signatures import configure
 from .structures import (
     CAtmosphericBudget,
     CDiagnosticReport,
-    CInstrumentResponse,
     COptimalEstimationBatchRequest,
     COptimalEstimationBatchResult,
     COptimalEstimationControls,
@@ -37,8 +33,6 @@ from .structures import (
     COptimalEstimationResult,
     COptimalEstimationScalarSpec,
     CSpectrum,
-    O2LineContributionsRaw,
-    OxygenCollisionInducedAbsorptionDiagnosticsRaw,
 )
 
 _MAX_OPTIMAL_ESTIMATION_ITERATIONS = 1000
@@ -52,24 +46,6 @@ def contiguous_wavelengths(wavelengths_nm):
     """Prepare a one-dimensional wavelength grid for the zdisamar model."""
 
     return double_array(wavelengths_nm, "wavelengths_nm")
-
-
-def channel_mask(channels: tuple[str, ...]) -> int:
-    """Translate requested spectral channels into model channel selection."""
-
-    masks = {"radiance": 1, "irradiance": 2}
-    mask = 0
-
-    for channel in channels:
-        try:
-            mask |= masks[channel]
-        except KeyError as exc:
-            raise ValueError(f"unsupported spectral channel: {channel}") from exc
-
-    if mask == 0:
-        raise ValueError("channels must not be empty")
-
-    return mask
 
 
 def batch_run_status(value: int) -> str:
@@ -228,78 +204,6 @@ class RtmHandle:
         )
 
         return AtmosphericBudget(self._copied_rows(raw, self._lib.zds_atmospheric_budget_free))
-
-    def o2_line_contributions(self, wavelengths_nm, max_rows: int = 50_000) -> O2LineContributions:
-        """Return copied line-by-line evidence rows."""
-
-        wavelengths = contiguous_wavelengths(wavelengths_nm)
-
-        if max_rows <= 0:
-            raise ValueError("max_rows must be positive")
-
-        raw = O2LineContributionsRaw()
-        self._check(
-            self._lib.zds_o2_line_contributions(
-                self._ctx,
-                wavelengths,
-                len(wavelengths),
-                max_rows,
-                ctypes.byref(raw),
-            )
-        )
-        total_row_count = int(raw.total_row_count)
-        truncated = bool(raw.truncated)
-        rows = self._copied_rows(raw, self._lib.zds_o2_line_contributions_free)
-
-        return O2LineContributions(
-            rows,
-            total_row_count=total_row_count,
-            truncated=truncated,
-        )
-
-    def instrument_response_sampling(
-        self,
-        wavelengths_nm,
-        channels: tuple[str, ...] = ("radiance", "irradiance"),
-    ) -> InstrumentResponseTable:
-        """Return copied instrument response support rows."""
-
-        wavelengths = contiguous_wavelengths(wavelengths_nm)
-        raw = CInstrumentResponse()
-        self._check(
-            self._lib.zds_instrument_response_sampling(
-                self._ctx,
-                wavelengths,
-                len(wavelengths),
-                channel_mask(channels),
-                ctypes.byref(raw),
-            )
-        )
-
-        return InstrumentResponseTable(
-            self._copied_rows(raw, self._lib.zds_instrument_response_free)
-        )
-
-    def collision_induced_absorption(
-        self,
-        wavelengths_nm,
-    ) -> OxygenCollisionInducedAbsorptionDiagnosticTable:
-        """Return copied O2-O2 CIA rows on the atmospheric layer grid."""
-
-        wavelengths = contiguous_wavelengths(wavelengths_nm)
-        raw = OxygenCollisionInducedAbsorptionDiagnosticsRaw()
-        self._check(
-            self._lib.zds_o2_o2_cia_diagnostics(
-                self._ctx,
-                wavelengths,
-                len(wavelengths),
-                ctypes.byref(raw),
-            )
-        )
-
-        return OxygenCollisionInducedAbsorptionDiagnosticTable(
-            self._copied_rows(raw, self._lib.zds_o2_o2_cia_diagnostics_free)
-        )
 
     def optimal_estimation(self, *, measurement, state_vector, controls):
         """Run native optimal estimation for the loaded scene."""
