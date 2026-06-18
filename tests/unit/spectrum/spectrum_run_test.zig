@@ -65,7 +65,7 @@ test "radianceAtWavelength wires optics direct transport and radiance scaling" {
         .end_nm = wavelength_nm,
         .sample_count = 1,
     };
-    var profile_lines = try internal.cache.profile_line_memory.buildProfileLineValues(
+    var profile_lines = try internal.cache.profile_line_build.buildProfileLineValues(
         allocator,
         scene,
     );
@@ -181,7 +181,7 @@ test "radianceAtWavelength checks caller-owned row shapes" {
         .end_nm = 760.0,
         .sample_count = 1,
     };
-    var profile_lines = try internal.cache.profile_line_memory.buildProfileLineValues(
+    var profile_lines = try internal.cache.profile_line_build.buildProfileLineValues(
         allocator,
         scene,
     );
@@ -240,7 +240,7 @@ test "radianceAtWavelength matches canonical transport probes" {
 
     const support_count = tables.layers.support_mid_altitudes_km.len;
     const layer_count = tables.layers.layer_pressures_hpa.len;
-    var profile_lines = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengths(
+    var profile_lines = try internal.cache.profile_line_build.buildProfileLineValuesForWavelengths(
         allocator,
         o2a_scene.reference(),
         transport_probe_wavelengths_nm[0..],
@@ -400,7 +400,7 @@ test "runForwardSpectrum matches canonical full spectrum" {
     }
 
     var profile_lines =
-        try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengthsWithCutoffGrid(
+        try internal.cache.profile_line_build.buildProfileLineValuesForWavelengthsWithCutoffGrid(
             allocator,
             scene,
             exact_wavelengths_nm,
@@ -607,7 +607,7 @@ test "runForwardSpectrum assembles direct-route product reflectance across worke
 
     const exact_wavelengths_nm = [_]f64{ 758.0, 760.0 };
     const scene = o2a_scene.reference();
-    var profile_lines = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengths(
+    var profile_lines = try internal.cache.profile_line_build.buildProfileLineValuesForWavelengths(
         allocator,
         scene,
         exact_wavelengths_nm[0..],
@@ -1060,7 +1060,7 @@ test "postprocessAndAssembleProductRows rejects inconsistent product shapes" {
 }
 
 // TransportProbeEvidence -------------------------------------------------------------------------------------|
-// One-wavelength transport result at one probe wavelength.                                               |
+// One-wavelength transport result at one probe wavelength.                                                    |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 64 B (0.062 KiB), align: 8 B                                                                          |
@@ -1168,7 +1168,7 @@ fn expectFullSpectrumApproxAbs(
 }
 
 // PublicPythonBaselineEvidence -------------------------------------------------------------------------------|
-// Minimal typed view of the public Python baseline JSON used by the full-spectrum canonical test.        |
+// Minimal typed view of the public Python baseline JSON used by the full-spectrum canonical test.             |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 312 B (0.305 KiB), align: 8 B                                                                         |
@@ -1181,7 +1181,7 @@ const PublicPythonBaselineEvidence = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // PublicPythonSpectrumEvidence -------------------------------------------------------------------------------|
-// Spectrum run variants recorded by the public Python baseline.                                          |
+// Spectrum run variants recorded by the public Python baseline.                                               |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 312 B (0.305 KiB), align: 8 B                                                                         |
@@ -1221,7 +1221,7 @@ const FullSpectrumEvidence = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // FullSpectrumReflectanceJacobianEvidence --------------------------------------------------------------------|
-// Two reflectance-space Jacobian columns requested by the public baseline capture.                       |
+// Two reflectance-space Jacobian columns requested by the public baseline capture.                            |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 32 B (0.031 KiB), align: 8 B                                                                          |

@@ -41,9 +41,6 @@ test {
     _ = @import("spectrum/solar_lookup_test.zig");
     _ = @import("spectrum/spectrum_run_test.zig");
     _ = @import("output/atmospheric_budget_test.zig");
-    _ = @import("output/instrument_response_test.zig");
-    _ = @import("output/line_contributions_test.zig");
-    _ = @import("output/cia_diagnostics_test.zig");
     _ = @import("retrieval/state_layout_test.zig");
     _ = @import("retrieval/pressure_profile_test.zig");
     _ = @import("retrieval/measured_reflectance_rows_test.zig");

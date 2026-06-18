@@ -1,5 +1,5 @@
 // internal.zig -----------------------------------------------------------------------------------------------|
-// Test access router for setup, asset, cache, common, input, and instrumentation modules.                |
+// Test access router for setup, asset, cache, common, input, and instrumentation modules.                     |
 //                                                                                                             |
 // Product callers use src/root.zig. Tests use this file to reach small table builders without widening API.   |
 // public package surface before later modules add public forward-model entry points.                          |
@@ -110,6 +110,7 @@ pub const setup = struct {
 pub const cache = struct {
     pub const forward_worker_pool = @import("cache/forward_worker_pool.zig");
     pub const session_memory = @import("cache/session_memory.zig");
+    pub const profile_line_build = @import("cache/profile_line_build.zig");
     pub const profile_line_memory = @import("cache/profile_line_memory.zig");
     pub const radiance_memory = @import("cache/radiance_memory.zig");
     pub const solar_irradiance_memory = @import("cache/solar_irradiance_memory.zig");
@@ -119,7 +120,7 @@ pub const cache = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // optics -----------------------------------------------------------------------------------------------------|
-// Namespace-only test import wrapper for optical-depth fill modules.                                     |
+// Namespace-only test import wrapper for optical-depth fill modules.                                          |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 0 B (0.000 KiB), align: 1 B                                                                           |
@@ -149,15 +150,12 @@ pub const optics = struct {
 // footprint: per instance = 0 B; this wrapper is used as a comptime namespace only                            |
 pub const output = struct {
     pub const atmospheric_budget = @import("output/atmospheric_budget.zig");
-    pub const instrument_response = @import("output/instrument_response.zig");
-    pub const line_contributions = @import("output/line_contributions.zig");
-    pub const cia_diagnostics = @import("output/cia_diagnostics.zig");
     pub const spectrum = @import("output/spectrum.zig");
 };
 // ------------------------------------------------------------------------------------------------------------|
 
 // retrieval --------------------------------------------------------------------------------------------------|
-// Namespace-only test import wrapper for retrieval state-space and result owners.                        |
+// Namespace-only test import wrapper for retrieval state-space and result owners.                             |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 0 B (0.000 KiB), align: 1 B                                                                           |
@@ -173,7 +171,7 @@ pub const retrieval = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // rtm --------------------------------------------------------------------------------------------------------|
-// Namespace-only test import wrapper for RTM state modules.                                              |
+// Namespace-only test import wrapper for RTM state modules.                                                   |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 0 B (0.000 KiB), align: 1 B                                                                           |
@@ -198,7 +196,7 @@ pub const rtm = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // spectrum ---------------------------------------------------------------------------------------------------|
-// Namespace-only test import wrapper for spectrum sampling and exact wavelength modules.                 |
+// Namespace-only test import wrapper for spectrum sampling and exact wavelength modules.                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 0 B (0.000 KiB), align: 1 B                                                                           |
@@ -218,7 +216,7 @@ pub const spectrum = struct {
 // ------------------------------------------------------------------------------------------------------------|
 
 // validation -------------------------------------------------------------------------------------------------|
-// Namespace-only test import wrapper for validation-only metric helpers.                                 |
+// Namespace-only test import wrapper for validation-only metric helpers.                                      |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 0 B (0.000 KiB), align: 1 B                                                                           |

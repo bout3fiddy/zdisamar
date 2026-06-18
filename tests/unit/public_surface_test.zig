@@ -11,12 +11,6 @@ test "public root exposes setup session and spectrum surface" {
     try std.testing.expect(@hasDecl(zdisamar, "SessionMemory"));
     try std.testing.expect(@hasDecl(zdisamar, "AtmosphericBudget"));
     try std.testing.expect(@hasDecl(zdisamar, "AtmosphericBudgetRow"));
-    try std.testing.expect(@hasDecl(zdisamar, "InstrumentResponse"));
-    try std.testing.expect(@hasDecl(zdisamar, "InstrumentResponseRow"));
-    try std.testing.expect(@hasDecl(zdisamar, "LineContributions"));
-    try std.testing.expect(@hasDecl(zdisamar, "LineContributionRow"));
-    try std.testing.expect(@hasDecl(zdisamar, "CiaDiagnostics"));
-    try std.testing.expect(@hasDecl(zdisamar, "CiaRow"));
     try std.testing.expect(@hasDecl(zdisamar, "Spectrum"));
     try std.testing.expect(@hasDecl(zdisamar, "SpectrumRunResult"));
     try std.testing.expect(@hasDecl(zdisamar, "optimal_estimation"));
@@ -35,9 +29,6 @@ test "public root exposes setup session and spectrum surface" {
     try std.testing.expect(@hasDecl(zdisamar, "buildRunTables"));
     try std.testing.expect(@hasDecl(zdisamar, "buildProfileLineValues"));
     try std.testing.expect(@hasDecl(zdisamar, "buildAtmosphericBudget"));
-    try std.testing.expect(@hasDecl(zdisamar, "buildInstrumentResponse"));
-    try std.testing.expect(@hasDecl(zdisamar, "buildLineContributions"));
-    try std.testing.expect(@hasDecl(zdisamar, "buildCiaDiagnostics"));
 
     try std.testing.expect(!@hasDecl(zdisamar, "Case"));
     try std.testing.expect(!@hasDecl(zdisamar, "PreparedOpticalState"));

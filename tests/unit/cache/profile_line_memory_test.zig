@@ -29,11 +29,29 @@ fn supportProfileLineSigma(
     return values.supportProfileTotalSigmaAt(wavelength_index, profile_node_index);
 }
 
+test "BENCH profile-line build same-boundary timing" {
+    if (builtin.mode == .Debug) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var best_ns: u64 = std.math.maxInt(u64);
+    var iteration: usize = 0;
+    while (iteration < 9) : (iteration += 1) {
+        var timer = try std.time.Timer.start();
+        var values = try internal.cache.profile_line_build.buildProfileLineValues(
+            allocator,
+            o2a_scene.reference(),
+        );
+        const elapsed_ns = timer.read();
+        values.deinit(allocator);
+        if (elapsed_ns < best_ns) best_ns = elapsed_ns;
+    }
+    std.debug.print("\n[BENCH] buildProfileLineValues reference best = {d} us\n", .{best_ns / 1000});
+}
+
 test "ProfileLineValues keep wavelength-major line values for each layer node" {
     var scene = o2a_scene.reference();
     scene.spectral_grid.sample_count = profile_line_test_sample_count;
 
-    var values = try internal.cache.profile_line_memory.buildProfileLineValues(
+    var values = try internal.cache.profile_line_build.buildProfileLineValues(
         std.testing.allocator,
         scene,
     );
@@ -76,7 +94,7 @@ test "ProfileLineValues contain computed finite weak-line sigma rows" {
     var scene = o2a_scene.reference();
     scene.spectral_grid.sample_count = profile_line_test_sample_count;
 
-    var values = try internal.cache.profile_line_memory.buildProfileLineValues(
+    var values = try internal.cache.profile_line_build.buildProfileLineValues(
         std.testing.allocator,
         scene,
     );
@@ -99,7 +117,7 @@ test "ProfileLineValues contain computed finite weak-line sigma rows" {
 test "ProfileLineValues build the full reference wavelength route in optimized mode" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
 
-    var values = try internal.cache.profile_line_memory.buildProfileLineValues(
+    var values = try internal.cache.profile_line_build.buildProfileLineValues(
         std.testing.allocator,
         o2a_scene.reference(),
     );
@@ -128,7 +146,7 @@ test "ProfileLineValues match profile-node line math evidence" {
             .sample_count = 1,
         };
 
-        var values = try internal.cache.profile_line_memory.buildProfileLineValues(
+        var values = try internal.cache.profile_line_build.buildProfileLineValues(
             std.testing.allocator,
             scene,
         );
@@ -172,7 +190,7 @@ test "ProfileLineValues match profile-node total line sidecar evidence" {
             .sample_count = 1,
         };
 
-        var values = try internal.cache.profile_line_memory.buildProfileLineValues(
+        var values = try internal.cache.profile_line_build.buildProfileLineValues(
             std.testing.allocator,
             scene,
         );
@@ -208,7 +226,7 @@ test "ProfileLineValues preserve caller-provided exact wavelength order" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
 
     const wavelengths_nm = [_]f64{ 760.0, 758.0, 776.0 };
-    var values = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengths(
+    var values = try internal.cache.profile_line_build.buildProfileLineValuesForWavelengths(
         std.testing.allocator,
         o2a_scene.reference(),
         wavelengths_nm[0..],
@@ -260,7 +278,7 @@ test "ProfileLineValues reuse stamp distinguishes line assets" {
     defer tables.deinit(allocator);
 
     const wavelengths_nm = [_]f64{760.0};
-    const baseline = internal.cache.profile_line_memory.profileLineReuseStamp(
+    const baseline = internal.cache.profile_line_build.profileLineReuseStamp(
         scene.id,
         tables.lines,
         tables.layers.spectroscopy_profile.rows,
@@ -274,7 +292,7 @@ test "ProfileLineValues reuse stamp distinguishes line assets" {
     isotope_scene.line_gas.isotopes_sim = isotope_two[0..];
     var isotope_tables = try internal.setup.run_tables.buildRunTables(allocator, isotope_scene);
     defer isotope_tables.deinit(allocator);
-    const isotope_stamp = internal.cache.profile_line_memory.profileLineReuseStamp(
+    const isotope_stamp = internal.cache.profile_line_build.profileLineReuseStamp(
         scene.id,
         isotope_tables.lines,
         isotope_tables.layers.spectroscopy_profile.rows,
@@ -294,7 +312,7 @@ test "ProfileLineValues reuse stamp distinguishes spectroscopy profile thermodyn
     defer tables.deinit(allocator);
 
     const wavelengths_nm = [_]f64{760.0};
-    const baseline = internal.cache.profile_line_memory.profileLineReuseStamp(
+    const baseline = internal.cache.profile_line_build.profileLineReuseStamp(
         scene.id,
         tables.lines,
         tables.layers.spectroscopy_profile.rows,
@@ -310,7 +328,7 @@ test "ProfileLineValues reuse stamp distinguishes spectroscopy profile thermodyn
     defer allocator.free(changed_rows);
     changed_rows[0].temperature_k += 1.0;
 
-    const changed = internal.cache.profile_line_memory.profileLineReuseStamp(
+    const changed = internal.cache.profile_line_build.profileLineReuseStamp(
         scene.id,
         tables.lines,
         changed_rows,
@@ -327,7 +345,7 @@ test "ProfileLineValues disable strong-line sidecars when isotope one is inactiv
     var scene = o2a_scene.reference();
     scene.line_gas.isotopes_sim = isotope_two[0..];
 
-    var values = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengths(
+    var values = try internal.cache.profile_line_build.buildProfileLineValuesForWavelengths(
         std.testing.allocator,
         scene,
         wavelengths_nm[0..],
@@ -350,7 +368,7 @@ test "ProfileLineValues parallel wavelength build matches serial rows" {
     const allocator = std.testing.allocator;
     const wavelengths_nm = [_]f64{ 758.0, 760.0, 765.0, 767.0, 776.0 };
 
-    var serial = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengthsWithCutoffGrid(
+    var serial = try internal.cache.profile_line_build.buildProfileLineValuesForWavelengthsWithCutoffGrid(
         allocator,
         o2a_scene.reference(),
         wavelengths_nm[0..],
@@ -363,7 +381,7 @@ test "ProfileLineValues parallel wavelength build matches serial rows" {
     );
     defer serial.deinit(allocator);
 
-    var parallel = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengthsWithCutoffGrid(
+    var parallel = try internal.cache.profile_line_build.buildProfileLineValuesForWavelengthsWithCutoffGrid(
         allocator,
         o2a_scene.reference(),
         wavelengths_nm[0..],
@@ -391,7 +409,7 @@ test "ProfileLineValues retain only output rows on the caller allocator" {
     if (builtin.mode == .Debug) return error.SkipZigTest;
 
     const wavelengths_nm = [_]f64{ 758.0, 760.0 };
-    var expected = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengthsWithCutoffGrid(
+    var expected = try internal.cache.profile_line_build.buildProfileLineValuesForWavelengthsWithCutoffGrid(
         std.testing.allocator,
         o2a_scene.reference(),
         wavelengths_nm[0..],
@@ -406,7 +424,7 @@ test "ProfileLineValues retain only output rows on the caller allocator" {
 
     var counter = CountingAllocator.init(std.testing.allocator);
     const counting_allocator = counter.allocator();
-    var actual = try internal.cache.profile_line_memory.buildProfileLineValuesForWavelengthsWithCutoffGrid(
+    var actual = try internal.cache.profile_line_build.buildProfileLineValuesForWavelengthsWithCutoffGrid(
         counting_allocator,
         o2a_scene.reference(),
         wavelengths_nm[0..],
@@ -453,7 +471,7 @@ test "ProfileLineValues fill support-row sigma from atmospheric-budget evidence"
             .end_nm = expected.wavelength_nm,
             .sample_count = 1,
         };
-        var values = try internal.cache.profile_line_memory.buildProfileLineValues(
+        var values = try internal.cache.profile_line_build.buildProfileLineValues(
             std.testing.allocator,
             scene,
         );

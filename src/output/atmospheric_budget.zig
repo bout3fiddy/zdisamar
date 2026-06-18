@@ -4,12 +4,12 @@ const layer_depths = @import("../optics/layer_depths.zig");
 const scene_input = @import("../input/scene.zig");
 const atmosphere_layers = @import("../setup/atmosphere_layers.zig");
 const run_tables = @import("../setup/run_tables.zig");
-const profile_line_memory = @import("../cache/profile_line_memory.zig");
+const profile_line_build = @import("../cache/profile_line_build.zig");
 
 const Allocator = std.mem.Allocator;
 
 // atmospheric_budget.zig -------------------------------------------------------------------------------------|
-// Public atmospheric support-row diagnostic table for the explicit route.                                    |
+// Public atmospheric support-row diagnostic table for the explicit route.                                     |
 //                                                                                                             |
 // boundary                                                                                                    |
 //   The builder projects existing setup/profile-line/optics rows into the fixed Python C ABI row order. It    |
@@ -138,7 +138,7 @@ pub fn build(
     const rows = try allocator.alloc(AtmosphericBudgetRow, row_count);
     errdefer allocator.free(rows);
 
-    var profile_values = try profile_line_memory.buildProfileLineValuesForWavelengths(
+    var profile_values = try profile_line_build.buildProfileLineValuesForWavelengths(
         allocator,
         scene,
         wavelengths_nm,
