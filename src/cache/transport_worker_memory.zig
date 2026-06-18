@@ -63,18 +63,20 @@ pub const Error = error{
 // [ 272.. 287] layer_phase_row_valid                    : []bool                                              |
 // [ 288.. 303] plm_basis_cache                          : []FourierPlmBasis                                   |
 // [ 304.. 319] plm_basis_cache_valid                    : []bool                                              |
-// [ 320.. 335] line_sigma_cm2_per_molecule       : []f64                                                      |
-// [ 336.. 351] support_optics                    : []SupportOptics                                            |
-// [ 352.. 367] layer_optics                      : []LayerOptics                                              |
-// [ 368.. 383] source_level_rows                 : []SourceLevel                                              |
-// [ 384.. 399] curved_samples                    : []CurvedSunPathSample                                      |
-// [ 400.. 415] curved_level_starts               : []usize                                                    |
-// [ 416.. 431] curved_level_altitudes_km         : []f64                                                      |
-// [ 432..3263] cached_geometry                   : GaussGeometry                                              |
-// [3264..3264] cached_geometry_valid             : bool                                                       |
-// [3265..3271] normal build trailing padding     : 7 B                                                        |
-// [3272..3727] cost build: stage_cost            : WorkerStageCost                                            |
-// [3728..3735] cost build: cost_timing_state     : WorkspaceState                                             |
+// [ 320.. 335] line_sigma_cm2_per_molecule              : []f64                                               |
+// [ 336.. 351] support_optics                           : []SupportOptics                                     |
+// [ 352.. 367] layer_optics                             : []LayerOptics                                       |
+// [ 368.. 383] source_level_rows                        : []SourceLevel                                       |
+// [ 384.. 399] curved_samples                           : []CurvedSunPathSample                               |
+// [ 400.. 415] curved_level_starts                      : []usize                                             |
+// [ 416.. 431] curved_level_altitudes_km                : []f64                                               |
+// [ 432..3263] cached_geometry                          : GaussGeometry                                       |
+// ------------------------------------------------------:
+// [3264..3264] cached_geometry_valid                    : bool                                                |
+// [3265..3271] normal build trailing padding            : 7 B                                                 |
+// ------------------------------------------------------:
+// [3272..3727] cost build: stage_cost                   : WorkerStageCost                                     |
+// [3728..3735] cost build: cost_timing_state            : WorkspaceState                                      |
 //                                                                                                             |
 // referenced storage                                                                                          |
 //   Every slice owns heap storage and is released by deinit. Optics rows are borrowed by spectrum prefetch;   |

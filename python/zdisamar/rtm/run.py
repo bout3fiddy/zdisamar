@@ -61,61 +61,6 @@ def atmospheric_budget(
         return temporary.atmospheric_budget(wavelengths_nm)
 
 
-def instrument_response(
-    scene: Scene,
-    wavelengths_nm=None,
-    *,
-    channels: tuple[str, ...] = ("radiance", "irradiance"),
-    cache: SessionCache | None = None,
-):
-    """Return instrument response support rows."""
-
-    grid = nominal_wavelengths(scene) if wavelengths_nm is None else wavelengths_nm
-
-    if cache is not None:
-        cache.load(scene)
-
-        return cache.instrument_response(grid, channels=channels)
-
-    with _temporary_cache(scene) as temporary:
-        return temporary.instrument_response(grid, channels=channels)
-
-
-def collision_induced_absorption(
-    scene: Scene,
-    wavelengths_nm,
-    *,
-    cache: SessionCache | None = None,
-):
-    """Return O2-O2 collision-induced absorption rows."""
-
-    if cache is not None:
-        cache.load(scene)
-
-        return cache.collision_induced_absorption(wavelengths_nm)
-
-    with _temporary_cache(scene) as temporary:
-        return temporary.collision_induced_absorption(wavelengths_nm)
-
-
-def o2_line_contributions(
-    scene: Scene,
-    wavelengths_nm,
-    *,
-    max_rows: int = 50_000,
-    cache: SessionCache | None = None,
-):
-    """Return line-by-line evidence rows."""
-
-    if cache is not None:
-        cache.load(scene)
-
-        return cache._handle.o2_line_contributions(wavelengths_nm, max_rows=max_rows)
-
-    with _temporary_cache(scene) as temporary:
-        return temporary._handle.o2_line_contributions(wavelengths_nm, max_rows=max_rows)
-
-
 def nominal_wavelengths(scene: Scene):
     """Recreate the nominal spectrum grid from a wavelength-band scene."""
 

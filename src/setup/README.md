@@ -70,7 +70,7 @@ line parameters together with the LISA line-mixing relaxation matrix and the
 strong-line sidecar, and carries the runtime line-filter controls (isotopes,
 strength threshold, wavenumber cutoff, mixing factor). It does not compute
 absorption here; the per-wavelength cross-section summation over every line is
-the expensive step and lives downstream in `cache/profile_line_memory.zig`. This
+the expensive step and lives downstream in `cache/profile_line_build.zig`. This
 module's job is to load and organize the rows that summation reads.
 
 `cia_table.zig` loads the O2-O2 collision-induced absorption coefficients from
@@ -121,7 +121,7 @@ here and then reused, so the rest of the model stays fast.
 
 - `run_tables.zig` — the entry point and the full list of tables setup builds.
 - `atmosphere_layers.zig` — the vertical discretization, the core of this stage.
-- `line_tables.zig` with `cache/profile_line_memory.zig` — where the line data is
+- `line_tables.zig` with `cache/profile_line_build.zig` — where the line data is
   loaded and where it is later turned into absorption.
 - the parent `src/README.md` for how these tables feed optics, rtm, and the
   reused session memory.

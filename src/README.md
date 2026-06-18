@@ -1,9 +1,18 @@
 # `src/` — forward model and retrieval
 
-`zdisamar` computes the top-of-atmosphere reflectance spectrum across the oxygen
-A band (about 755–775 nm) and fits it for aerosol parameters, specifically the
-aerosol optical thickness and the aerosol layer height. This directory holds the
-whole model.
+`zdisamar` fits a measured spectrum of the oxygen A band (about 755-775 nm) for
+two aerosol properties: the aerosol optical thickness, how much aerosol is in the
+air, and the height of the aerosol layer, given as its mid-layer pressure. Oxygen
+is evenly mixed through the atmosphere at a known concentration, so its absorption
+near 760 nm measures how far light travelled before it reached the instrument.
+Aerosol shortens that path by scattering light back out at its own altitude, so
+the depth and shape of the band in a measured spectrum pin down how much aerosol
+there is and how high it sits.
+
+The model has two halves. The forward pass takes a described scene and computes
+the top-of-atmosphere reflectance spectrum it would produce. The retrieval runs
+that forward pass over and over, adjusting the aerosol state until the computed
+spectrum matches a measured one. This directory holds both.
 
 Each subdirectory has its own README with the physics and the data flow for that
 stage. This file shows how the stages fit together.
@@ -19,101 +28,127 @@ Scene  ->  prepare  ->  warmSessionMemory  ->  runForwardWithSessionMemory
           Prepared          SessionMemory            SpectrumRunResult
 ```
 
-- A caller-provided or parsed JSON scene gives a `Scene` — atmosphere, geometry,
+- A caller-provided or parsed JSON scene gives a `Scene`: atmosphere, geometry,
   surface, spectroscopy, instrument, aerosol.
 - `prepare` builds the physics tables that stay fixed across runs of the same
   scene.
 - `warmSessionMemory` sets up the memory a run reuses.
-- `runForwardWithSessionMemory` runs one spectrum and returns the arrays: radiance,
-  reflectance, irradiance, and the Jacobian. `runForward` does the same with
-  throwaway memory, for a single run.
-
-A retrieval runs this forward pass many times — see below.
+- `runForwardWithSessionMemory` runs one spectrum and returns the arrays:
+  radiance, reflectance, irradiance, and the Jacobian. `runForward` does the same
+  with throwaway memory, for a one-off run.
 
 ## The forward pass
 
-Inside one forward pass, data flows one way:
+One forward pass is six stages, numbered the way each subdirectory README refers
+to itself. Data flows one way through them:
+
+1. [`input/`](input/README.md) reads and validates the scene into a `Scene`.
+2. [`setup/`](setup/README.md) builds the physics tables fixed for that scene:
+   absorption lines, CIA, aerosol, solar, phase, layers.
+3. [`optics/`](optics/README.md) turns those tables into per-layer optical depths
+   at one wavelength: Rayleigh, gas absorption, the O2-O2 continuum, aerosol.
+4. [`rtm/`](rtm/README.md) does the radiative transfer for one wavelength and
+   returns its reflectance and aerosol Jacobian.
+5. [`spectrum/`](spectrum/README.md) picks the wavelengths to evaluate, loops
+   `optics/` and `rtm/` over them, and averages the result through the instrument
+   slit.
+6. [`output/`](output) writes the spectrum and the diagnostics.
+
+`input/` and `setup/` run once per scene. Then `spectrum/` drives the rest: it
+loops the dense wavelength grid, calls `optics/` and `rtm/` at each wavelength,
+and gathers the per-wavelength results into the band.
 
 ```
-+-------+      +-------+      +--------+      +-----+      +----------+      +--------+
-| input |  ->  | setup |  ->  | optics |  ->  | rtm |  ->  | spectrum |  ->  | output |
-+-------+      +-------+      +--------+      +-----+      +----------+      +--------+
++----------+      +----------+
+|  input/  |  ->  |  setup/  |   once per scene: validate the Scene
++----------+      +----------+   and build the fixed physics tables
+                       |
+                       v
++------------------------------------------------------+
+|  spectrum/   loop the dense wavelength grid          |
+|                                                      |
+|     optics/  ->  per-layer optical depths            |
+|     rtm/     ->  reflectance + aerosol Jacobian      |
+|                                                      |
++--------------------------+---------------------------+
+                           |
+                           v
+gather onto the product grid  ->  slit average  ->  output/
 ```
 
-- `input/` — read and check the scene into a `Scene`.
-- `setup/` — build the physics tables: absorption lines, CIA, aerosol, solar, phase, layers.
-- `optics/` — optical properties at each wavelength sample: Rayleigh, CIA, curved
-  sun path, source levels.
-- `rtm/` — the radiative transfer for each wavelength sample, with Jacobians.
-- `spectrum/` — combine samples into radiance, average through the instrument slit.
-- `output/` — diagnostics and the written-out spectrum.
+`rtm/` works one wavelength at a time and has no notion of the band; `spectrum/`
+is the loop that turns those single wavelengths into a spectrum.
 
-`input/` and `setup/` run once. Then `spectrum/` loops the wavelengths, calling
-`optics/` and `rtm/` for each one, and averages the per-wavelength results into the
-spectrum:
+## The retrieval loop
+
+A retrieval inverts a measured spectrum. It is the Rodgers optimal-estimation
+loop in [`retrieval/`](retrieval), driven from `runOptimalEstimation` in
+`root.zig`. Each iteration runs one forward pass, compares the computed
+reflectance to the measurement, and updates the aerosol state from that mismatch
+and the Jacobian, then feeds the new state back in.
 
 ```
-input  ->  setup        (once per scene)
+measurement  +  prior aerosol state
    |
    v
-spectrum/
+repeat until converged:
    |
-   |   for each wavelength:
-   |       optics/  ->  layer optical depths
-   |       rtm/     ->  reflectance at that wavelength
-   |
-   v
-gather  ->  slit average  ->  product spectrum
+   |   forward pass    ->  reflectance + Jacobian
+   |   compare to the measurement
+   |   Rodgers update  ->  new aerosol state
+   |   write the state into the Scene, re-validate
    |
    v
-output
+retrieved aerosol optical depth + layer pressure,
+with posterior uncertainty
 ```
 
-`rtm/` works one wavelength at a time and has no notion of the band; `spectrum/` is
-the loop that turns those single wavelengths into a spectrum.
+The state vector is fixed at two elements, the aerosol optical depth and the
+aerosol layer's mid-pressure, set in `rtm/jacobian_states.zig` and shared by
+every stage. Each iteration writes the updated state back into the `Scene` and
+re-runs the same validation as the first, so a retrieval step can never run an
+invalid scene.
 
-A retrieval wraps the whole pass and repeats it. The rest of the directories support
-the flow:
+## Reused memory across iterations
 
-- `cache/` — the reused memory (see below).
-- `common/` — shared helpers: errors, hashing, math, units, memory, workers.
-- `assets/` — readers for the packaged reference data: HITRAN O2 line lists,
-  O2–O2 CIA tables, solar spectra, and atmosphere profiles.
-- `api/` — the C entry points the Python package calls.
-- `validation/` — band metrics.
-- `instrumentation/` — tracing and telemetry hooks, off by default.
+Between iterations only the aerosol state changes. Everything that does not depend
+on it, the wavelength grid, the gas spectroscopy, the solar spectrum, is built
+once and passed back in, so each iteration stays cheap. `SessionMemory`
+([`cache/session_memory.zig`](cache/session_memory.zig)) holds these:
 
-## Reused memory
+- [`SpectrumSamplingTable`](cache/spectrum_memory.zig) — the high-resolution
+  wavelengths to evaluate, dense around strong O2 lines and sparse elsewhere, with
+  the offsets and weights that average them down to each product wavelength.
+- [`RadianceWavelengthList`](cache/radiance_memory.zig) — the dense grid `rtm/`
+  loops over, the radiance at each entry, and the Jacobian column.
+- [`ProfileLineValues`](cache/profile_line_memory.zig) — the O2 absorption summed
+  from every line at each wavelength, the most expensive part of setup and the
+  largest table.
+- [`SolarIrradianceMemory`](cache/solar_irradiance_memory.zig) — the incoming
+  solar flux at each wavelength, needed to turn radiance into reflectance.
+- [`TransportWorkArrays`](cache/transport_worker_memory.zig) — per-worker scratch
+  for the radiative transfer: layer matrices, scattering orders, Fourier terms,
+  sized once per thread.
 
-A retrieval runs the forward model many times, and between runs only the aerosol
-state changes. Everything that does not depend on that state — the wavelength
-grid, the gas spectroscopy, the solar spectrum — is built once and passed back
-in, so each iteration stays cheap. `SessionMemory`
-(`cache/session_memory.zig`) holds these:
+Each table is rebuilt only when the inputs it depends on change; `prepareSessionRows`
+in `root.zig` hashes those inputs per table and reuses the table on a match.
+[`cache/`](cache/README.md) covers where each buffer lives and when it is touched.
 
-- `SpectrumSamplingTable` (`cache/spectrum_memory.zig`) — the high-resolution
-  wavelengths the model evaluates, placed densely around strong O2 lines and
-  sparsely elsewhere. It depends on the spectral grid, instrument, and line
-  positions, none of which change during a retrieval, so it is built once.
-- `RadianceWavelengthList` (`cache/radiance_memory.zig`) — the dense grid the
-  radiative transfer loops over, derived from the sampling table. `rtm/`
-  computes a radiance at each entry before the spectrum step gathers them onto
-  the output grid.
-- `ProfileLineValues` (`cache/profile_line_memory.zig`) — the O2 absorption from
-  summing every line at each wavelength, the most expensive part of setup.
-  Aerosol changes do not touch the gas spectroscopy, so this is reused across
-  iterations as long as the wavelengths match, which is what makes retrieval fast.
-- `SolarIrradianceMemory` (`cache/solar_irradiance_memory.zig`) — the incoming
-  solar flux at each wavelength, needed to turn radiance into reflectance. It
-  depends only on the grid, so it is looked up once and kept.
-- `TransportWorkArrays` (`cache/transport_worker_memory.zig`) — scratch space for
-  the radiative transfer: layer matrices, scattering orders, and Fourier terms.
-  These are large and overwritten on every sample, so they are sized once per
-  worker thread and reused instead of reallocated each sample.
+Because the tables are reused, the per-wavelength stages allocate nothing. A
+function in `optics/`, `rtm/`, `spectrum/`, or `retrieval/` takes the arrays it
+reads and the one it writes as arguments, so its inputs and outputs are visible in
+its signature.
 
-A function in `optics/`, `rtm/`, `spectrum/`, or `retrieval/` takes the arrays it
-reads and the one it writes as arguments, so its inputs and outputs are visible
-in its signature.
+## Supporting directories
+
+- [`common/`](common) — shared helpers: errors, hashing, math, units, memory,
+  worker partition.
+- [`assets/`](assets) — readers for the packaged reference data: HITRAN O2 line
+  lists, O2-O2 CIA tables, solar spectra, atmosphere profiles.
+- [`api/`](api) — the C entry points the Python package calls.
+- [`validation/`](validation) — band metrics.
+- [`instrumentation/`](instrumentation) — tracing and telemetry hooks, off by
+  default.
 
 ## Where to start
 

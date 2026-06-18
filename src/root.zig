@@ -8,10 +8,7 @@ const jacobian_states = @import("rtm/jacobian_states.zig");
 const scene_input = @import("input/scene.zig");
 const session_memory = @import("cache/session_memory.zig");
 const atmospheric_budget = @import("output/atmospheric_budget.zig");
-const instrument_response = @import("output/instrument_response.zig");
 const instrument_tables = @import("setup/instrument_tables.zig");
-const line_contributions = @import("output/line_contributions.zig");
-const cia_diagnostics = @import("output/cia_diagnostics.zig");
 const output_spectrum = @import("output/spectrum.zig");
 const retrieval = @import("retrieval/root.zig");
 const retrieval_algebra = @import("retrieval/algebra.zig");
@@ -25,6 +22,7 @@ const phase_table = @import("setup/phase_table.zig");
 const setup_tables = @import("setup/run_tables.zig");
 const line_tables = @import("setup/line_tables.zig");
 const solar_table = @import("setup/solar_table.zig");
+const profile_line_build = @import("cache/profile_line_build.zig");
 const profile_lines = @import("cache/profile_line_memory.zig");
 const sampling_table = @import("spectrum/sampling_table.zig");
 const solve = @import("rtm/solve.zig");
@@ -35,7 +33,7 @@ const Allocator = std.mem.Allocator;
 pub const geometry_direction_cosine_floor: f64 = 0.05;
 
 // root.zig ---------------------------------------------------------------------------------------------------|
-// Public explicit row surface for the forward model.                                                     |
+// Public explicit row surface for the forward model.                                                          |
 //                                                                                                             |
 // public flow                                                                                                 |
 //   Scene -> prepare -> warmSessionMemory -> runForwardWithSessionMemory                                      |
@@ -52,12 +50,6 @@ pub const ProfileLineValues = profile_lines.ProfileLineValues;
 pub const SessionMemory = session_memory.SessionMemory;
 pub const AtmosphericBudget = atmospheric_budget.AtmosphericBudget;
 pub const AtmosphericBudgetRow = atmospheric_budget.AtmosphericBudgetRow;
-pub const InstrumentResponse = instrument_response.InstrumentResponse;
-pub const InstrumentResponseRow = instrument_response.InstrumentResponseRow;
-pub const LineContributions = line_contributions.LineContributions;
-pub const LineContributionRow = line_contributions.LineContributionRow;
-pub const CiaDiagnostics = cia_diagnostics.CiaDiagnostics;
-pub const CiaRow = cia_diagnostics.CiaRow;
 pub const Spectrum = output_spectrum.Spectrum;
 pub const SpectrumRunResult = output_spectrum.SpectrumRunResult;
 pub const SpectrumRunSummary = output_spectrum.SpectrumRunSummary;
@@ -78,10 +70,10 @@ pub const jacobian_state_count = jacobian_states.state_count;
 
 pub const parseSceneJson = input_json.parseSceneJson;
 pub const buildRunTables = setup_tables.buildRunTables;
-pub const buildProfileLineValues = profile_lines.buildProfileLineValues;
+pub const buildProfileLineValues = profile_line_build.buildProfileLineValues;
 
 // Prepared ---------------------------------------------------------------------------------------------------|
-// Public owner for parsed or caller-provided controls and setup tables.                                  |
+// Public owner for parsed or caller-provided controls and setup tables.                                       |
 //                                                                                                             |
 // layout(64-bit)                                                                                              |
 // size: 2728 B (2.664 KiB), align: 8                                                                          |
@@ -91,14 +83,14 @@ pub const buildProfileLineValues = profile_lines.buildProfileLineValues;
 // [ 704..2727] tables: RunTables                                                                              |
 //                                                                                                             |
 // referenced storage                                                                                          |
-//   scene borrows control strings/slices. tables owns loaded physical setup arrays and scalar tables.          |
+//   scene borrows control strings/slices. tables owns loaded physical setup arrays and scalar tables.         |
 pub const Prepared = struct {
     scene: Scene,
     tables: RunTables,
 
     pub fn deinit(self: *Prepared, allocator: Allocator) void {
         // Prepared.deinit ------------------------------------------------------------------------------------|
-        // Release setup tables; scene strings and slices are borrowed from caller-owned storage.               |
+        // Release setup tables; scene strings and slices are borrowed from caller-owned storage.              |
         // ----------------------------------------------------------------------------------------------------|
         self.tables.deinit(allocator);
         self.* = undefined;
@@ -108,14 +100,14 @@ pub const Prepared = struct {
 
 pub fn initSessionMemory(allocator: Allocator) SessionMemory {
     // initSessionMemory --------------------------------------------------------------------------------------|
-    // Create an empty reusable session cache.                                                            |
+    // Create an empty reusable session cache.                                                                 |
     // --------------------------------------------------------------------------------------------------------|
     return SessionMemory.init(allocator);
 }
 
 pub fn prepare(allocator: Allocator, scene: Scene) !Prepared {
     // prepare ------------------------------------------------------------------------------------------------|
-    // Build the setup tables retained across forward runs.                                               |
+    // Build the setup tables retained across forward runs.                                                    |
     // --------------------------------------------------------------------------------------------------------|
     return .{
         .scene = scene,
@@ -130,7 +122,7 @@ pub fn warmSessionMemory(
     solve_config: SolveConfig,
 ) !void {
     // warmSessionMemory --------------------------------------------------------------------------------------|
-    // Materialize reusable spectrum, radiance, profile-line, solar, and transport memory for one scene.        |
+    // Materialize reusable spectrum, radiance, profile-line, solar, and transport memory for one scene.       |
     // --------------------------------------------------------------------------------------------------------|
     const prepared_solve_config = try controls.prepareSolveConfig(solve_config);
     _ = try prepareSessionRows(allocator, session, prepared, prepared_solve_config);
@@ -143,7 +135,7 @@ pub fn runForwardWithSessionMemory(
     solve_config: SolveConfig,
 ) !SpectrumRunResult {
     // runForwardWithSessionMemory ----------------------------------------------------------------------------|
-    // Run the product-grid spectrum through caller-retained session memory and return owned arrays.      |
+    // Run the product-grid spectrum through caller-retained session memory and return owned arrays.           |
     //                                                                                                         |
     //   Root-level orchestration follows the integrated transport route in                                    |
     //   `tests/unit/spectrum/spectrum_run_test.zig`                                                           |
@@ -181,7 +173,7 @@ pub fn runForwardWithSessionMemory(
 
     // runForward sampling policy -----------------------------------------------------------------------------|
     // Canonical expected values owned by this repository.                                                     |
-    // product row using integrated radiance and integrated irradiance sampling.                          |
+    // product row using integrated radiance and integrated irradiance sampling.                               |
     // `evidence/python-reference-case-native.json` exposes no Python-native key for calibration arrays, slit  |
     // kernels, or per-channel integration overrides. Keep this policy fixed here;                             |
     // user-configurable controls enter through Scene JSON and `solveConfig`.                                  |
@@ -230,7 +222,7 @@ pub fn runForwardWithSessionMemory(
 
 pub fn runForward(allocator: Allocator, prepared: *const Prepared, solve_config: SolveConfig) !SpectrumRunResult {
     // runForward ---------------------------------------------------------------------------------------------|
-    // Run one spectrum with a short-lived session memory owner.                                          |
+    // Run one spectrum with a short-lived session memory owner.                                               |
     // --------------------------------------------------------------------------------------------------------|
     var session = initSessionMemory(allocator);
     defer session.deinit(allocator);
@@ -248,7 +240,7 @@ pub fn runOptimalEstimation(
     retrieval_controls: retrieval.Controls,
 ) !retrieval.Result {
     // runOptimalEstimation -----------------------------------------------------------------------------------|
-    // Run one full-physics optimal-estimation solve through the explicit forward path.                   |
+    // Run one full-physics optimal-estimation solve through the explicit forward path.                        |
     //                                                                                                         |
     // steps                                                                                                   |
     //   1. copy measurement rows into dense retrieval SoA storage                                             |
@@ -403,7 +395,7 @@ pub fn runOptimalEstimationCorrection(
     retrieval_controls: retrieval.Controls,
 ) !retrieval.Result {
     // runOptimalEstimationCorrection ---------------------------------------------------------------------    |
-    // Apply one full-physics correction step to a prepared scene already written at the fast-stage state. |
+    // Apply one full-physics correction step to a prepared scene already written at the fast-stage state.     |
     //                                                                                                         |
     // contract                                                                                                |
     //   The correction path returns exactly one Rodgers update. Controls still validate solver thresholds,    |
@@ -540,8 +532,8 @@ pub fn runOptimalEstimationBatch(
     // Run a correctness-first full-physics OE batch over caller-provided start/prior rows.                    |
     //                                                                                                         |
     // boundary                                                                                                |
-    //   This is the single-worker batch slice. Each start reuses the same public measurement rows and    |
-    //   prepared scene, then copies compact result rows into the run-major BatchResult owner.                  |
+    //   This is the single-worker batch slice. Each start reuses the same public measurement rows and         |
+    //   prepared scene, then copies compact result rows into the run-major BatchResult owner.                 |
     //                                                                                                         |
     // failure model                                                                                           |
     //   OutOfMemory aborts the whole batch. Numerical or control failures mark only that start as failed,     |
@@ -634,7 +626,7 @@ pub fn runFastmodeOptimalEstimationBatch(
     // Run fast-stage starts, then run a full-physics correction batch seeded from the fast-stage states.      |
     //                                                                                                         |
     // boundary                                                                                                |
-    //   Python owns the fast and correction scene construction. Zig receives two prepared scenes, two     |
+    //   Python owns the fast and correction scene construction. Zig receives two prepared scenes, two         |
     //   measurement grids, and config-driven controls; no wavelength counts are hardcoded here.               |
     //                                                                                                         |
     //   converged flags keep fast-stage convergence when the correction stage returns ok.                     |
@@ -767,57 +759,14 @@ pub fn buildAtmosphericBudget(
     wavelengths_nm: []const f64,
 ) !AtmosphericBudget {
     // buildAtmosphericBudget ---------------------------------------------------------------------------------|
-    // Build public atmospheric support-row diagnostic rows for the prepared scene.                        |
+    // Build public atmospheric support-row diagnostic rows for the prepared scene.                            |
     // --------------------------------------------------------------------------------------------------------|
     return atmospheric_budget.build(allocator, prepared.scene, &prepared.tables, wavelengths_nm);
 }
 
-pub fn buildCiaDiagnostics(
-    allocator: Allocator,
-    prepared: *const Prepared,
-    wavelengths_nm: []const f64,
-) !CiaDiagnostics {
-    // buildCiaDiagnostics ------------------------------------------------------------------------------------|
-    // Build public O2-O2 CIA diagnostic rows from atmospheric-budget support rows.                            |
-    // --------------------------------------------------------------------------------------------------------|
-    var budget = try buildAtmosphericBudget(allocator, prepared, wavelengths_nm);
-    defer budget.deinit(allocator);
-    return cia_diagnostics.build(allocator, budget);
-}
-
-pub fn buildLineContributions(
-    allocator: Allocator,
-    prepared: *const Prepared,
-    wavelengths_nm: []const f64,
-    max_rows: usize,
-) !LineContributions {
-    // buildLineContributions ---------------------------------------------------------------------------------|
-    // Build public O2 line-by-line diagnostic rows for caller-selected wavelengths.                           |
-    // --------------------------------------------------------------------------------------------------------|
-    return line_contributions.build(allocator, &prepared.tables, wavelengths_nm, max_rows);
-}
-
-pub fn buildInstrumentResponse(
-    allocator: Allocator,
-    prepared: *const Prepared,
-    wavelengths_nm: []const f64,
-    channel_mask: u32,
-) !InstrumentResponse {
-    // buildInstrumentResponse --------------------------------------------------------------------------------|
-    // Build public instrument-response support rows for caller-selected wavelengths and channels.             |
-    // --------------------------------------------------------------------------------------------------------|
-    return instrument_response.build(
-        allocator,
-        prepared.scene,
-        &prepared.tables,
-        wavelengths_nm,
-        channel_mask,
-    );
-}
-
 pub fn solveConfig(scene: Scene) SolveConfig {
     // solveConfig --------------------------------------------------------------------------------------------|
-    // Build the exercised transport controls used by integrated transport evidence.                      |
+    // Build the exercised transport controls used by integrated transport evidence.                           |
     // --------------------------------------------------------------------------------------------------------|
     const performance_thresholds = performanceThresholdsWithFourierLimit(scene.rtm);
     return .{
@@ -879,7 +828,7 @@ fn evaluateRetrievalState(
     //                                                                                                         |
     // boundary                                                                                                |
     //   The retrieval driver owns one retained LayerGrid. This function refills its computed rows for the     |
-    //   current state while borrowing line, CIA, phase, instrument, and solar tables from the prepared scene.  |
+    //   current state while borrowing line, CIA, phase, instrument, and solar tables from the prepared scene. |
     //                                                                                                         |
     // refresh                                                                                                 |
     //   aerosol optical depth : rebuild inline AerosolLayerTable                                              |
@@ -920,7 +869,7 @@ fn writeRetrievalStateToScene(
     state: retrieval.StateVector,
 ) !void {
     // writeRetrievalStateToScene -----------------------------------------------------------------------------|
-    // Write active OE scalar values into the scene copy used for this iteration.                               |
+    // Write active OE scalar values into the scene copy used for this iteration.                              |
     //                                                                                                         |
     // pressure placement                                                                                      |
     //   target interval takes the new aerosol top/bottom pressures, the adjacent interval boundaries move     |
@@ -1045,7 +994,7 @@ fn prepareSessionRows(
     // Both mode bits remain in the reuse stamp so future diagnostic or temperature-profile paths split caches.
     const build_layer_values = false;
     const needs_temperature_derivatives = false;
-    const profile_stamp = profile_lines.profileLineReuseStamp(
+    const profile_stamp = profile_line_build.profileLineReuseStamp(
         prepared.scene.id,
         prepared.tables.lines,
         prepared.tables.layers.spectroscopy_profile.rows,
@@ -1088,7 +1037,7 @@ fn prepareSessionRows(
 
         session.profile_lines.deinit(allocator);
         session.profile_lines =
-            try profile_lines.buildProfileLineValuesForWavelengthsWithCutoffGrid(
+            try profile_line_build.buildProfileLineValuesForWavelengthsWithCutoffGrid(
                 allocator,
                 prepared.scene,
                 exact_wavelengths,
