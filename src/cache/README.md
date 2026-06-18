@@ -1,4 +1,4 @@
-# `cache/` — the memory a retrieval reuses
+# `cache/` — the memory system of zdisamar
 
 A retrieval runs the forward model many times, and between runs only the aerosol
 state changes. Everything that does not depend on that state, the wavelength grid,
@@ -88,20 +88,20 @@ a run wants no derivatives. A second stamp, `result_stamp`, records whether the
 dense values are still valid and resets whenever the list changes or a column
 grows, so stale values are never read against fresh storage.
 
-## Line cross-sections (`profile_line_memory.zig`)
+## Line cross-sections (`profile_line_memory.zig`, `profile_line_build.zig`)
 
-`profile_line_memory.zig` holds the largest table and the only arena in the
-subsystem. `ProfileLineValues` keeps the O2 line cross-section data: a dense
-support-profile sigma column, and, when diagnostics ask for it, a
-wavelength-by-layer-node grid. Building it sums Voigt and line-mixing terms over
-every line at every wavelength, the most expensive step in setup.
+`profile_line_memory.zig` holds the largest retained table in the subsystem.
+`ProfileLineValues` keeps the O2 line cross-section data: a dense support-profile
+sigma column, and, when diagnostics ask for it, a wavelength-by-layer-node grid.
+`profile_line_build.zig` builds that owner by summing Voigt and line-mixing terms
+over every line at every wavelength, the most expensive step in setup.
 
-The build runs only on a stamp miss. `profileLineReuseStamp` hashes the scene id,
-the exact wavelengths, the parsed line assets, and the fixed-node spectroscopy
-profile, and excludes the dynamic layer grid. This is possible because the line
-values sit at fixed spectroscopy nodes and are resampled per pressure state
-downstream, so the cache survives the pressure changes a retrieval makes each
-iteration.
+The build runs only on a stamp miss. `profile_line_build.profileLineReuseStamp`
+hashes the scene id, the exact wavelengths, the parsed line assets, and the
+fixed-node spectroscopy profile, and excludes the dynamic layer grid. This is
+possible because the line values sit at fixed spectroscopy nodes and are resampled
+per pressure state downstream, so the cache survives the pressure changes a
+retrieval makes each iteration.
 
 The build's scratch runs through one `std.heap.ArenaAllocator`. The layer grid,
 the line tables, the cutoff grid, the collected line lists, and every prepared
@@ -174,8 +174,10 @@ for nearly all of it:
   the map of the directory.
 - `common/memory.zig` — `ensureSliceCapacity`, the reuse primitive everything here
   is built on.
-- `profile_line_memory.zig` — the line cross-section cache, the one arena, and the
-  reuse stamp; read `profileLineReuseStamp` and the build function.
+- `profile_line_memory.zig` — the retained line cross-section owner and hot-path
+  support-row reader.
+- `profile_line_build.zig` — the build arena, reuse stamp, and line-summation
+  pipeline.
 - `transport_worker_memory.zig` — the per-worker scratch and the geometry and
   Fourier-basis caches.
 - `prepareSessionRows` in `root.zig` — where the stamps are checked and the

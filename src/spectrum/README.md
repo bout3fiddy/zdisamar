@@ -82,10 +82,10 @@ of the output; Performance covers how that stays race-free.
 
 `line_physics.zig` is the oxygen A-band line-by-line spectroscopy: given a
 temperature, a pressure, and a wavelength, it returns the O2 absorption cross-section
-per molecule. `cache/profile_line_memory.zig` sums it over the lines at every fine
-wavelength and caches the result; the per-wavelength loop reads that cache rather than
-calling this file, and `output/` calls it for per-line diagnostics. That is why it
-sits in the folder but not in the dataflow above.
+per molecule. `cache/profile_line_build.zig` sums it over the lines at every fine
+wavelength into `ProfileLineValues`; the per-wavelength loop reads that retained
+cache rather than calling this file. That is why it sits in the folder but not in
+the dataflow above.
 
 Each oxygen line absorbs in a profile around its center wavelength, and its width
 comes from two effects. Thermal motion of the molecules spreads it into a Gaussian
@@ -164,7 +164,7 @@ it down.
    of calls is set by the sampling table, and the adaptive grid is the gate: by
    sampling densely only where absorption varies fast, it keeps that count far below a
    uniform fine grid.
-2. The O2 line summation (`line_physics.zig`, through `cache/profile_line_memory.zig`)
+2. The O2 line summation (`line_physics.zig`, through `cache/profile_line_build.zig`)
    is the most expensive single build. For every fine wavelength and every profile
    node it sums the contribution of every nearby line, each one a Voigt evaluation,
    and the strong-line line-mixing prep builds a relaxation matrix once per node,
@@ -190,7 +190,8 @@ it down.
    `rtm/`.
 2. `sampling_table.zig`: how the fine grid is placed around the O2 lines.
 3. `line_physics.zig`: the line-by-line O2 spectroscopy, read with
-   `cache/profile_line_memory.zig`, which is where it is summed and cached.
+   `cache/profile_line_build.zig`, which is where it is summed into the retained
+   `ProfileLineValues` cache.
 4. `instrument_average.zig`: the slit average, calibration, and reflectance.
 5. the parent `src/README.md` for how this stage sits between `optics/`, `rtm/`, and
    the retrieval.

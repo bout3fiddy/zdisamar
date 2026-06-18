@@ -49,8 +49,9 @@ layer into one `LayerOptics` row per RTM layer. That coarse row is what `rtm/`
 reads.
 
 The O2 line cross-sections come in as an argument, already worked out in
-`cache/profile_line_memory.zig`, so the slow line-by-line summation happens once
-upstream and this loop just reads the result. Both `SupportOptics` and
+`cache/profile_line_build.zig` and retained by `cache/profile_line_memory.zig`, so
+the slow line-by-line summation happens once upstream and this loop just reads the
+result. Both `SupportOptics` and
 `LayerOptics` also carry Jacobian vectors, and `fillLayerAerosolJacobians` fills
 the aerosol derivative lanes the retrieval needs.
 
